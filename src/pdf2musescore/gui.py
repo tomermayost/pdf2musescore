@@ -31,10 +31,9 @@ MSCZ_TYPE = ("MuseScore file", "*.mscz")
 XML_TYPE = ("MusicXML file", "*.musicxml")
 
 PAGES_TOOLTIP = (
-    "Pages  (Default: all pages)\n"
-    "Examples: 2-3,  1, 4,  1-2, 5\n\n"
-    "Select specific 1-based page numbers or ranges from the PDF to convert. "
-    "Leave blank to convert all pages."
+    "Which Pages to Convert  (Default: all pages)\n"
+    "Examples: 2-3 (pages 2 to 3), 1, 4 (only pages 1 and 4)\n\n"
+    "Leave this box empty to convert the entire PDF, or type the page numbers you want."
 )
 
 
@@ -180,13 +179,13 @@ class App(ttk.Frame):
 
         r0 = ttk.Frame(opts_frame)
         r0.pack(fill="x", pady=2)
-        dpi_lbl = ttk.Label(r0, text="Render DPI:")
+        dpi_lbl = ttk.Label(r0, text="Scan Quality (DPI):")
         dpi_lbl.pack(side="left")
         self.dpi_entry = ttk.Entry(r0, textvariable=self.dpi_var, width=6)
         self.dpi_entry.pack(side="left", padx=(4, 14))
         self._attach_tip("render_dpi", self.dpi_entry, dpi_lbl)
 
-        prep_lbl = ttk.Label(r0, text="Preprocess:")
+        prep_lbl = ttk.Label(r0, text="Page Cleanup:")
         prep_lbl.pack(side="left")
         self.preprocess_combo = ttk.Combobox(
             r0, textvariable=self.preprocess_var, values=list(PREPROCESS_MODES), width=10, state="readonly"
@@ -194,19 +193,19 @@ class App(ttk.Frame):
         self.preprocess_combo.pack(side="left", padx=(4, 14))
         self._attach_tip("preprocess_mode", self.preprocess_combo, prep_lbl)
 
-        self.deskew_check = ttk.Checkbutton(r0, text="Auto-Deskew", variable=self.deskew_var)
+        self.deskew_check = ttk.Checkbutton(r0, text="Straighten Tilted Page", variable=self.deskew_var)
         self.deskew_check.pack(side="left")
         self._attach_tip("deskew", self.deskew_check)
 
         r1 = ttk.Frame(opts_frame)
         r1.pack(fill="x", pady=2)
-        step_lbl = ttk.Label(r1, text="SegNet Step (px):")
+        step_lbl = ttk.Label(r1, text="Reading Thoroughness (px):")
         step_lbl.pack(side="left")
         self.step_entry = ttk.Entry(r1, textvariable=self.step_size_var, width=6)
         self.step_entry.pack(side="left", padx=(4, 14))
         self._attach_tip("segnet_step_size", self.step_entry, step_lbl)
 
-        nh_lbl = ttk.Label(r1, text="Min Notehead (px):")
+        nh_lbl = ttk.Label(r1, text="Smallest Note Size (px):")
         nh_lbl.pack(side="left")
         self.notehead_entry = ttk.Entry(r1, textvariable=self.min_notehead_var, width=5)
         self.notehead_entry.pack(side="left", padx=(4, 14))
@@ -214,7 +213,7 @@ class App(ttk.Frame):
 
         r2 = ttk.Frame(opts_frame)
         r2.pack(fill="x", pady=2)
-        tr_lbl = ttk.Label(r2, text="Transpose:")
+        tr_lbl = ttk.Label(r2, text="Transpose (Half-Steps):")
         tr_lbl.pack(side="left")
         self.transpose_entry = ttk.Entry(r2, textvariable=self.transpose_var, width=5)
         self.transpose_entry.pack(side="left", padx=(4, 14))
@@ -238,7 +237,7 @@ class App(ttk.Frame):
 
         r3 = ttk.Frame(opts_frame)
         r3.pack(fill="x", pady=(4, 0))
-        title_lbl = ttk.Label(r3, text="Title Override:")
+        title_lbl = ttk.Label(r3, text="Custom Title:")
         title_lbl.pack(side="left")
         self.title_entry = ttk.Entry(r3, textvariable=self.title_var, width=28)
         self.title_entry.pack(side="left", padx=(4, 8), fill="x", expand=True)

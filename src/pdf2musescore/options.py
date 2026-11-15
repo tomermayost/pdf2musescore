@@ -25,82 +25,85 @@ PARAMETER_DOCS: tuple[ParameterDoc, ...] = (
     ParameterDoc(
         key="render_dpi",
         section="2. PDF Rendering & AI Engine",
-        label="Render DPI",
+        label="Scan Quality (DPI)",
         default="300",
-        examples="200 (fast), 300 (standard), 400 (small/dense staves)",
+        examples="200 (faster), 300 (normal), 400 (tiny or crowded notes)",
         description=(
-            "Resolution (dots per inch, 150-600) used to rasterize each PDF page before AI recognition. "
-            "Higher DPI (400) helps scores with tiny staves or grace notes; 200 DPI is faster."
+            "Controls how closely the app zooms in on each PDF page (100-600). "
+            "Keep at 300 for normal sheet music. Try 400 if the notes are very small or crowded together, "
+            "or 200 if you want a faster conversion."
         ),
     ),
     ParameterDoc(
         key="preprocess_mode",
         section="2. PDF Rendering & AI Engine",
-        label="Image Preprocessing",
+        label="Page Cleanup",
         default="auto",
         examples="auto, faded, binarize, none",
         description=(
-            "Enhances page contrast before the AI reads the score:\n"
-            "  - auto: Standard CLAHE local contrast (best for clean printed PDFs).\n"
-            "  - faded: Boosts contrast, darkens faint ink, and sharpens staff lines (best for old/faded scans).\n"
-            "  - binarize: Adaptive black-and-white thresholding (best for phone photos with uneven lighting).\n"
-            "  - none: Raw page image without pre-enhancement."
+            "Helps the app read difficult scans:\n"
+            "  - auto: Best for normal, clean PDFs.\n"
+            "  - faded: Darkens light or washed-out ink (great for old photocopies or faded scans).\n"
+            "  - binarize: Turns the page pure black & white (great for phone camera photos with shadows).\n"
+            "  - none: Uses the page picture as-is without any cleanup."
         ),
     ),
     ParameterDoc(
         key="deskew",
         section="2. PDF Rendering & AI Engine",
-        label="Auto-Deskew",
+        label="Straighten Tilted Page",
         default="False",
-        examples="False (off), True (straighten tilted scans)",
+        examples="Off (normal), On (straighten crooked scans)",
         description=(
-            "Automatically measures staff-line tilt on scanned pages (up to +/-10 degrees) and rotates "
-            "the page so staff lines are horizontal before recognition."
+            "Check this box if the sheet music was scanned or photographed slightly crooked. "
+            "The app will automatically straighten the staff lines before reading the notes."
         ),
     ),
     ParameterDoc(
         key="segnet_step_size",
         section="2. PDF Rendering & AI Engine",
-        label="SegNet Tile Step (px)",
+        label="Reading Thoroughness (px)",
         default="320",
-        examples="160 (max overlap/accuracy), 240 (balanced), 320 (fast default)",
+        examples="320 (normal speed), 240 (more careful), 160 (most careful, slower)",
         description=(
-            "Sliding-window step size (80-320 pixels) for the 320x320 neural segmentation network. "
-            "Smaller step sizes (e.g. 240 or 160) overlap adjacent tiles for smoother symbol edges at the cost of speed."
+            "The app reads the page in overlapping squares (80-320). Lower numbers (240 or 160) make the "
+            "squares overlap more so notes near the edges aren't missed - helpful on crowded pages, though "
+            "it takes a little longer."
         ),
     ),
     ParameterDoc(
         key="min_notehead_size",
         section="2. PDF Rendering & AI Engine",
-        label="Min Notehead Size (px)",
+        label="Smallest Note Size (px)",
         default="4",
-        examples="3 (catch tiny/faint notes), 4 (default), 6 (ignore paper noise/specks)",
+        examples="3 (keep tiny grace notes), 4 (normal), 6 (ignore paper dust/specks)",
         description=(
-            "Minimum pixel width/height (2-12) for a detected blob to be accepted as a notehead. "
-            "Lower values (3) catch very small or faint grace notes; higher values (6) filter out dust specks."
+            "Controls the smallest black dot (2-12) the app treats as a musical note. "
+            "Lower to 3 if small grace notes are being missed; raise to 6 if dusty spots on the paper "
+            "are turning into extra fake notes."
         ),
     ),
     # Section 3: Score Post-Processing (MusicXML / MuseScore)
     ParameterDoc(
         key="transpose_semitones",
         section="3. Score Post-Processing",
-        label="Transpose (Semitones)",
+        label="Transpose (Half-Steps)",
         default="0",
-        examples="0 (none), +2 (Concert -> Bb Trumpet/Tenor Sax), -12 (down 1 octave), +12 (up 1 octave)",
+        examples="0 (keep original), +2 (for Bb Trumpet/Clarinet/Tenor Sax), -12 (down 1 octave), +12 (up 1 octave)",
         description=(
-            "Transposes all notes and key signatures in the output score by N semitones (-24 to +24). "
-            "Use +2 for Bb instruments (Trumpet, Clarinet, Tenor Sax), +9 or -3 for Eb instruments, or +/-12 for octaves."
+            "Moves every note and the key signature up or down by the number of half-steps (semitones, -24 to +24) "
+            "you enter."
         ),
     ),
     ParameterDoc(
         key="clef_override",
         section="3. Score Post-Processing",
-        label="Clef Override",
+        label="Clef",
         default="auto",
         examples="auto, treble, bass, alto, tenor",
         description=(
-            "Keeps the AI-detected clef (auto) or forces the primary staff clef across the score: "
-            "treble (G2), bass (F4, e.g. Trombone/Cello), alto (C3, Viola), or tenor (C4, Trombone/Cello/Bassoon)."
+            "Keep at auto to use whatever clef is printed on the page, or pick a clef (bass or tenor for "
+            "Trombone/Cello, treble for Violin/Flute, alto for Viola) if the scan misread the clef sign."
         ),
     ),
     ParameterDoc(
@@ -110,19 +113,19 @@ PARAMETER_DOCS: tuple[ParameterDoc, ...] = (
         default="auto",
         examples="auto, Piano, Trombone, Violin, Flute, Trumpet, Cello",
         description=(
-            "Sets the <part-name> and <instrument-name> in the generated MusicXML/MuseScore file so MuseScore "
-            "labels the staff and selects the matching playback instrument."
+            "Sets the instrument name and playback sound in MuseScore. Pick one from the list or type any "
+            "instrument name you like."
         ),
     ),
     ParameterDoc(
         key="title_override",
         section="3. Score Post-Processing",
-        label="Title Override",
+        label="Custom Title",
         default="",
-        examples="Telemann - Sonata in F Minor (leave blank for auto)",
+        examples="Telemann - Sonata in F Minor (leave blank for automatic)",
         description=(
-            "Custom score title written to the top of the output score. Leave blank to automatically use "
-            "the PDF filename / OCR title."
+            "Type a title here if you want to set the heading at the top of the sheet music. "
+            "Leave blank to use the PDF's title automatically."
         ),
     ),
 )
