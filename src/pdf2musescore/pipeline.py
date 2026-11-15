@@ -16,6 +16,7 @@ from .engines.base import OmrEngine, OmrError
 from .engines.homr_engine import CancelledError, HomrEngine
 from .exporters.musescore import ExportError, MuseScoreExporter
 from .musicxml import MergeError, merge_files
+from .options import ConversionOptions, OptionsError
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,26 @@ class ConversionError(RuntimeError):
         self.detail = detail
 
 
+def _default_engine_factory(
+    dpi: int,
+    cb: Optional[Callable[[int, int], None]],
+    pages_spec: Optional[str] = None,
+    is_cancelled: CancelFn = lambda: False,
+    options: Optional[ConversionOptions] = None,
+) -> OmrEngine:
+    opts = options or ConversionOptions(render_dpi=dpi)
+    return HomrEngine(
+        dpi=opts.render_dpi,
+        pages_spec=pages_spec,
+        is_cancelled=is_cancelled,
+        preprocess_mode=opts.preprocess_mode,
+        deskew=opts.deskew,
+        segnet_step_size=opts.segnet_step_size,
+        min_notehead_size=opts.min_notehead_size,
+        page_callback=cb,
+    )
+
+
 @dataclass
 class Pipeline:
     config: AppConfig
@@ -41,11 +62,7 @@ class Pipeline:
     progress: ProgressFn = lambda pct, msg: None
     is_cancelled: CancelFn = lambda: False
     ensure: Callable[..., Path] = ensure_tool
-    engine_factory: Callable[..., OmrEngine] = field(
-        default=lambda dpi, cb, pages_spec=None, is_cancelled=lambda: False: HomrEngine(
-            dpi=dpi, pages_spec=pages_spec, is_cancelled=is_cancelled, page_callback=cb
-        )
-    )
+    engine_factory: Callable[..., OmrEngine] = field(default=_default_engine_factory)
     exporter_factory: Callable[[Path], MuseScoreExporter] = MuseScoreExporter
 
     def _step(self, pct: int, msg: str) -> None:
@@ -54,7 +71,8 @@ class Pipeline:
         log.info("[%3d%%] %s", pct, msg)
         self.progress(pct, msg)
 
-    def convert(self, pdf: Path, output: Path, pages_spec: Optional[str] = None) -> Path:
+    def convert(self, pdf: Path, output: Path, pages_spec: Optional[str] = None,
+                options: Optional[ConversionOptions] = None) -> Path:
         pdf, output = Path(pdf), Path(output)
         suffix = output.suffix.lower()
         if suffix not in SUPPORTED_OUTPUTS:
@@ -62,9 +80,13 @@ class Pipeline:
         if not pdf.is_file():
             raise ConversionError("The selected PDF file could not be found.", str(pdf))
 
+        opts = options or ConversionOptions(render_dpi=self.config.render_dpi)
         safe_root = ascii_safe_base_dir(Path(self.config.work_dir).resolve())
         work = safe_root / f"job-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
-        log.info("Converting %s (pages=%r) -> %s (work dir %s)", pdf, pages_spec or "all", output, work)
+        log.info(
+            "Converting %s (pages=%r, options=%s) -> %s (work dir %s)",
+            pdf, pages_spec or "all", opts, output, work,
+        )
         try:
             work.mkdir(parents=True, exist_ok=True)
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -77,20 +99,23 @@ class Pipeline:
             shutil.copy2(pdf, staged_pdf)
 
             self._step(15, "Reading the music with AI (first run downloads models once)...")
-            engine = self.engine_factory(
-                self.config.render_dpi,
-                lambda idx, total: self._step(
-                    15 + int(55 * (idx - 1) / max(total, 1)),
-                    f"Reading page {idx} of {total} with AI...",
-                ),
-                pages_spec,
-                self.is_cancelled,
+            page_cb = lambda idx, total: self._step(
+                15 + int(55 * (idx - 1) / max(total, 1)),
+                f"Reading page {idx} of {total} with AI...",
             )
+            if self.engine_factory is _default_engine_factory:
+                engine = self.engine_factory(
+                    opts.render_dpi, page_cb, pages_spec, self.is_cancelled, opts
+                )
+            else:
+                engine = self.engine_factory(
+                    opts.render_dpi, page_cb, pages_spec, self.is_cancelled
+                )
             pages_xml = engine.recognize(staged_pdf, work / "omr")
 
             self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
             staged_xml = work / "score.musicxml"
-            xml = merge_files(pages_xml, staged_xml, title=pdf.stem)
+            xml = merge_files(pages_xml, staged_xml, title=pdf.stem, options=opts)
 
             if musescore is not None:
                 self._step(85, "Saving MuseScore file...")
@@ -105,6 +130,8 @@ class Pipeline:
         except CancelledError:
             log.info("Conversion aborted by user")
             raise
+        except OptionsError as exc:
+            raise ConversionError(str(exc)) from exc
         except ToolNotFoundError as exc:
             raise ConversionError("MuseScore is not installed, so the conversion was cancelled.",
                                   str(exc)) from exc

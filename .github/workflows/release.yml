@@ -44,13 +44,10 @@ jobs:
         run: |
           powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-      - name: Run self-test on packaged executable
+      - name: Run packaging integration test (--version, --self-test, size check)
         shell: pwsh
         run: |
-          .\tmp\dist\pdf2musescore\pdf2musescore.exe --version
-          if ($LASTEXITCODE -ne 0) { throw "Version check failed" }
-          .\tmp\dist\pdf2musescore\pdf2musescore.exe --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Self-test failed" }
+          .\.venv\Scripts\pytest.exe tests/integration/test_packaging.py -o addopts=""
 
       - name: Upload unsigned installer artifact
         id: upload-unsigned

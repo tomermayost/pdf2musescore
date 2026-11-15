@@ -1,4 +1,4 @@
-"""Read MusicXML (.mxl / .musicxml), sanitize tuplets/tremolos, and merge multiple pages/movements."""
+"""Read MusicXML (.mxl / .musicxml), sanitize tuplets/tremolos, merge pages, and apply score post-processing."""
 
 from __future__ import annotations
 
@@ -7,13 +7,39 @@ import logging
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
+
+from .options import ConversionOptions
 
 log = logging.getLogger(__name__)
 
 
 class MergeError(ValueError):
     pass
+
+
+_STEP_TO_SEMITONE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+_SEMITONE_TO_STEP_ALTER: dict[int, tuple[str, int]] = {
+    0: ("C", 0),
+    1: ("C", 1),
+    2: ("D", 0),
+    3: ("E", -1),
+    4: ("E", 0),
+    5: ("F", 0),
+    6: ("F", 1),
+    7: ("G", 0),
+    8: ("A", -1),
+    9: ("A", 0),
+    10: ("B", -1),
+    11: ("B", 0),
+}
+_CLEF_MAP: dict[str, tuple[str, str]] = {
+    "treble": ("G", "2"),
+    "bass": ("F", "4"),
+    "alto": ("C", "3"),
+    "tenor": ("C", "4"),
+}
+_SEMITONE_FIFTHS_SHIFT = (0, -5, 2, -3, 4, -1, 6, 1, -4, 3, -2, 5)
 
 
 def sanitize_score(root: ET.Element) -> ET.Element:
@@ -102,7 +128,126 @@ def _mark_movement_start(measure: ET.Element, title: str, new_page: bool) -> Non
     measure.insert(pos, direction)
 
 
-def merge_scores(roots: Sequence[ET.Element], title: str | None = None) -> ET.Element:
+def transpose_score(root: ET.Element, semitones: int) -> ET.Element:
+    """Shift all <pitch> elements and <key><fifths> signatures by ``semitones``."""
+    if semitones == 0:
+        return root
+
+    for pitch in root.findall(".//note/pitch"):
+        step_el = pitch.find("step")
+        oct_el = pitch.find("octave")
+        if step_el is None or oct_el is None or not step_el.text or not oct_el.text:
+            continue
+        step = step_el.text.strip().upper()
+        if step not in _STEP_TO_SEMITONE:
+            continue
+        octave = int(oct_el.text.strip())
+        alter_el = pitch.find("alter")
+        alter = int(round(float(alter_el.text.strip()))) if (alter_el is not None and alter_el.text) else 0
+
+        midi = (octave + 1) * 12 + _STEP_TO_SEMITONE[step] + alter + semitones
+        new_octave = (midi // 12) - 1
+        new_step, new_alter = _SEMITONE_TO_STEP_ALTER[midi % 12]
+        step_el.text = new_step
+        oct_el.text = str(new_octave)
+        if new_alter == 0:
+            if alter_el is not None:
+                pitch.remove(alter_el)
+        else:
+            if alter_el is None:
+                alter_el = ET.Element("alter")
+                # MusicXML order inside <pitch>: step, alter, octave
+                idx = list(pitch).index(step_el) + 1
+                pitch.insert(idx, alter_el)
+            alter_el.text = str(new_alter)
+
+    shift_fifths = _SEMITONE_FIFTHS_SHIFT[semitones % 12]
+    if shift_fifths != 0:
+        for fifths_el in root.findall(".//attributes/key/fifths"):
+            if fifths_el.text and fifths_el.text.strip().lstrip("+-").isdigit():
+                val = int(fifths_el.text.strip()) + shift_fifths
+                while val > 6:
+                    val -= 12
+                while val < -6:
+                    val += 12
+                fifths_el.text = str(val)
+    return root
+
+
+def apply_clef_override(root: ET.Element, clef_override: str) -> ET.Element:
+    """Force the primary staff clef across the score ('treble', 'bass', 'alto', 'tenor')."""
+    key = (clef_override or "auto").strip().lower()
+    if key == "auto" or key not in _CLEF_MAP:
+        return root
+    sign_val, line_val = _CLEF_MAP[key]
+    clefs = root.findall(".//attributes/clef")
+    if not clefs:
+        first_attr = root.find(".//measure/attributes")
+        if first_attr is not None:
+            c = ET.SubElement(first_attr, "clef")
+            ET.SubElement(c, "sign").text = sign_val
+            ET.SubElement(c, "line").text = line_val
+        return root
+    for clef in clefs:
+        num = clef.get("number")
+        if num not in (None, "1"):
+            continue
+        sign_el = clef.find("sign")
+        if sign_el is None:
+            sign_el = ET.SubElement(clef, "sign")
+        sign_el.text = sign_val
+        line_el = clef.find("line")
+        if line_el is None:
+            line_el = ET.SubElement(clef, "line")
+        line_el.text = line_val
+    return root
+
+
+def apply_instrument_override(root: ET.Element, instrument_name: str) -> ET.Element:
+    """Set <part-name> and <instrument-name> on all score parts."""
+    inst = (instrument_name or "auto").strip()
+    if not inst or inst.lower() == "auto":
+        return root
+    for sp in root.findall("./part-list/score-part"):
+        pn = sp.find("part-name")
+        if pn is None:
+            pn = ET.SubElement(sp, "part-name")
+        pn.text = inst
+        si = sp.find("score-instrument")
+        if si is None:
+            part_id = sp.get("id", "P1")
+            si = ET.SubElement(sp, "score-instrument", {"id": f"{part_id}-I1"})
+        iname = si.find("instrument-name")
+        if iname is None:
+            iname = ET.SubElement(si, "instrument-name")
+        iname.text = inst
+    return root
+
+
+def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) -> ET.Element:
+    """Apply Section 3 post-processing options (transpose, clef, instrument, title) to ``root``."""
+    if options is None:
+        return root
+    if options.transpose_semitones != 0:
+        transpose_score(root, options.transpose_semitones)
+    if options.clef_override != "auto":
+        apply_clef_override(root, options.clef_override)
+    if options.instrument_name.lower() != "auto":
+        apply_instrument_override(root, options.instrument_name)
+    if options.title_override:
+        work = root.find("work")
+        if work is None:
+            work = ET.Element("work")
+            root.insert(0, work)
+        wt = work.find("work-title")
+        if wt is None:
+            wt = ET.SubElement(work, "work-title")
+        wt.text = options.title_override
+    return root
+
+
+def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
+                 options: Optional[ConversionOptions] = None) -> ET.Element:
     """Concatenate pages/movements part-by-part into a single score-partwise tree."""
     if not roots:
         raise MergeError("No scores to merge")
@@ -134,7 +279,8 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None) -> ET.El
         log.info("Merged section %d: %s (%d measures)", idx, mtitle,
                  len(parts[0].findall("measure")) if parts else 0)
 
-    if title:
+    effective_title = (options.title_override if (options and options.title_override) else title)
+    if effective_title:
         for xp in ("movement-title",):
             el = merged.find(xp)
             if el is not None:
@@ -146,7 +292,9 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None) -> ET.El
         wt = work.find("work-title")
         if wt is None:
             wt = ET.SubElement(work, "work-title")
-        wt.text = title
+        wt.text = effective_title
+
+    apply_score_options(merged, options)
     return merged
 
 
@@ -159,7 +307,8 @@ def write_musicxml(root: ET.Element, path: Path) -> Path:
     return path
 
 
-def merge_files(files: Sequence[Path], out: Path, title: str | None = None) -> Path:
+def merge_files(files: Sequence[Path], out: Path, title: str | None = None,
+                options: Optional[ConversionOptions] = None) -> Path:
     files = sorted(Path(f) for f in files)
     log.info("Merging %d file(s) into %s", len(files), out)
-    return write_musicxml(merge_scores([read_score(f) for f in files], title), out)
+    return write_musicxml(merge_scores([read_score(f) for f in files], title, options=options), out)

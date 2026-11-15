@@ -11,10 +11,31 @@ Optical music recognition is powered by [homr](https://github.com/liebharc/homr)
 
 1. Download and run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
    - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**.
-   - **SHA-256 (`v0.2.0`):** `B2987D1162C231EC2AD22831FE43FF858C9B20EB78FD004CEA3FD473C502DBC1`
+   - **SHA-256 (`v0.2.0`):** `279C44E7B8A23C5DC3EFCB39DDDE02710D9C7D5470DC4953A43B0101ADB08A72`
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
-3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`), then click **Convert & Save as...**.
+3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`) or adjust **Engine & Score Parameters** (see table below, or click **? Parameter Guide & Examples** in the app), then click **Convert & Save as...**.
 4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
+
+## Engine & Score Parameters
+
+All parameters are available directly in the **Engine & Score Parameters** panel in the GUI (with a **Reset Defaults** button and a **? Parameter Guide & Examples** button):
+
+### PDF Rendering, Image Preprocessing & AI Engine
+| Parameter | Default | Examples | Description & When to Adjust |
+|---|---|---|---|
+| **Render DPI** (`render_dpi`) | `300` | `200` (fast), `300` (standard), `400` (small/dense staves) | Resolution (`100`–`600` DPI) used to rasterize each PDF page before AI recognition. Increase to `400` for miniature scores or dense staves with small grace notes; lower to `200` for faster rendering on large PDFs. |
+| **Preprocess** (`preprocess_mode`) | `auto` | `auto`, `faded`, `binarize`, `none` | Page contrast enhancement before the neural network reads the score:<br>• **`auto`** *(default)*: Standard CLAHE local contrast (best for clean printed PDFs).<br>• **`faded`**: Boosts contrast (`alpha=1.35`), darkens faint ink, and sharpens staff lines (ideal for old or faded scans).<br>• **`binarize`**: Adaptive Gaussian black-and-white thresholding (ideal for phone photos with uneven lighting/shadows).<br>• **`none`**: Raw page image without pre-enhancement. |
+| **Auto-Deskew** (`deskew`) | `False` | `False` (off), `True` (on) | Measures staff-line tilt on scanned pages (up to `±10°`) via Hough line detection and rotates the page so staff lines are horizontal before recognition. Enable for crooked scanner/camera pages. |
+| **SegNet Tile Step (px)** (`segnet_step_size`) | `320` | `160` (max overlap), `240` (balanced), `320` (fast default) | Sliding-window step size (`80`–`320` px) for the `320×320` neural segmentation network. Smaller step sizes (`240` or `160`) overlap adjacent tiles for smoother symbol edges on dense pages at the cost of extra CPU time. |
+| **Min Notehead Size (px)** (`min_notehead_size`) | `4` | `3` (catch tiny/faint notes), `4` (default), `6` (ignore specks) | Minimum pixel width & height (`2`–`12` px) for a detected blob to be accepted as a notehead. Lower (`3`) catches tiny grace notes; higher (`6`) filters out paper dust/specks. |
+
+### Score Post-Processing (MusicXML / MuseScore)
+| Parameter | Default | Examples | Description & When to Adjust |
+|---|---|---|---|
+| **Transpose (Semitones)** (`transpose_semitones`) | `0` | `0` (none), `+2` (Concert → B♭), `-12` (down 1 octave), `+12` (up 1 octave) | Shifts all pitches and key signatures (`<fifths>`) in the output score by `N` semitones (`-24` to `+24`). Examples: `+2` for B♭ instruments (Trumpet, Clarinet, Tenor Sax), `+9` or `-3` for E♭ instruments, `±12` for octave shifts. |
+| **Clef Override** (`clef_override`) | `auto` | `auto`, `treble`, `bass`, `alto`, `tenor` | Keeps the AI-detected clef (`auto`) or forces the primary staff clef across the score: `treble` (G2), `bass` (F4, e.g. Trombone/Cello), `alto` (C3, Viola), or `tenor` (C4, Trombone/Cello/Bassoon). |
+| **Instrument** (`instrument_name`) | `auto` | `auto`, `Piano`, `Trombone`, `Violin`, `Flute`, `Trumpet`, `Cello` | Sets `<part-name>` and `<instrument-name>` in the generated MusicXML/MuseScore file so MuseScore labels the staff and selects the matching playback sound. You can pick a preset or type any custom instrument name. |
+| **Title Override** (`title_override`) | `""` *(auto)* | `Telemann - Sonata in F Minor` | Custom score title written to `<work-title>` at the top of the score. Leave blank to automatically use the PDF filename / OCR title. |
 
 ## Development & Testing
 

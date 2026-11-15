@@ -133,9 +133,38 @@ def test_errors_mapped(tmp_path, pdf, kwargs, match):
     assert ei.value.user_message
 
 
+def test_default_engine_branch_and_options_error(tmp_path, pdf, monkeypatch):
+    from pdf2musescore.options import ConversionOptions, OptionsError
+    import pdf2musescore.pipeline as pl_mod
+
+    p = Pipeline(
+        AppConfig(work_dir=tmp_path / "work"),
+        ensure=lambda spec, cfg, confirm: Path("ms.exe"),
+        exporter_factory=FakeExporter,
+    )
+    monkeypatch.setattr(
+        pl_mod,
+        "_default_engine_factory",
+        lambda dpi, cb, pages_spec=None, is_cancelled=None, options=None: FakeEngine(cb=cb, pages_spec=pages_spec),
+    )
+    p.engine_factory = pl_mod._default_engine_factory
+    opts = ConversionOptions(render_dpi=350, preprocess_mode="faded", transpose_semitones=2)
+    out = p.convert(pdf, tmp_path / "out.mscz", options=opts)
+    assert out.is_file()
+
+    # OptionsError raised inside convert is mapped to ConversionError
+    p_err, _ = make(tmp_path, engine=FakeEngine(exc=OptionsError("bad option value")))
+    with pytest.raises(ConversionError, match="bad option value"):
+        p_err.convert(pdf, tmp_path / "o.mscz")
+
+
 def test_default_factories():
+    from pdf2musescore.options import ConversionOptions
     p = Pipeline(AppConfig())
-    eng = p.engine_factory(300, None, "1-2", lambda: False)
-    assert eng.dpi == 300 and eng.pages_spec == "1-2"
+    eng = p.engine_factory(
+        300, None, "1-2", lambda: False,
+        ConversionOptions(render_dpi=400, preprocess_mode="faded", deskew=True, segnet_step_size=240, min_notehead_size=3),
+    )
+    assert eng.dpi == 400 and eng.pages_spec == "1-2" and eng.preprocess_mode == "faded" and eng.deskew is True
     assert p.confirm("x") is False
     p.progress(1, "x")

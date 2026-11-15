@@ -3,7 +3,19 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from pdf2musescore.musicxml import MergeError, merge_files, merge_scores, read_score, sanitize_score, write_musicxml
+from pdf2musescore.musicxml import (
+    MergeError,
+    apply_clef_override,
+    apply_instrument_override,
+    apply_score_options,
+    merge_files,
+    merge_scores,
+    read_score,
+    sanitize_score,
+    transpose_score,
+    write_musicxml,
+)
+from pdf2musescore.options import ConversionOptions
 
 
 def score(n_measures=2, parts=1, mtitle=None, wtitle=None):
@@ -52,10 +64,77 @@ def test_sanitize_tuplets_and_tremolos():
     assert root.find(".//tremolo") is None
     tuplets = [(t.get("type")) for t in root.findall(".//tuplet")]
     assert tuplets == ["start", "stop"]
-    # Trailing incomplete 2-note tuplet had time-modification stripped and duration restored to 12
     notes = root.findall(".//note")
     assert notes[-1].find("time-modification") is None
     assert notes[-1].find("duration").text == "12"
+
+
+def test_transpose_clef_instrument_and_score_options():
+    xml = """<score-partwise>
+      <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+      <part id="P1"><measure number="1">
+        <attributes>
+          <key><fifths>5</fifths></key>
+          <clef number="1"><sign>G</sign><line>2</line></clef>
+          <clef number="2"><sign>F</sign><line>4</line></clef>
+        </attributes>
+        <note><pitch><step>C</step><octave>4</octave></pitch></note>
+        <note><pitch><step>C</step><alter>1</alter><octave>4</octave></pitch></note>
+        <note><pitch><step>B</step><octave>3</octave></pitch></note>
+        <note><pitch><step>X</step><octave>4</octave></pitch></note>
+        <note><pitch><step>C</step></pitch></note>
+      </measure></part>
+    </score-partwise>"""
+    root = ET.fromstring(xml)
+    assert transpose_score(root, 0) is root
+
+    # Transpose +2 semitones: C4 -> D4, C#4 -> Eb4 (alter -1), B3 -> C#4 (alter 1), fifths 5+2=7 -> -5
+    transpose_score(root, 2)
+    pitches = root.findall(".//note/pitch")
+    assert (pitches[0].find("step").text, pitches[0].find("octave").text, pitches[0].find("alter")) == ("D", "4", None)
+    assert (pitches[1].find("step").text, pitches[1].find("alter").text) == ("E", "-1")
+    assert (pitches[2].find("step").text, pitches[2].find("alter").text, pitches[2].find("octave").text) == ("C", "1", "4")
+    assert root.find(".//attributes/key/fifths").text == "-5"
+
+    # Transpose -4 semitones so fifths wraps around <-6
+    root.find(".//attributes/key/fifths").text = "-5"
+    transpose_score(root, 3)  # shift_fifths = -3 -> -8 -> +4
+    assert root.find(".//attributes/key/fifths").text == "4"
+
+    # Clef override on existing clef + no-op on auto
+    assert apply_clef_override(root, "auto") is root
+    apply_clef_override(root, "tenor")
+    c1 = root.find(".//attributes/clef[@number='1']")
+    assert (c1.find("sign").text, c1.find("line").text) == ("C", "4")
+
+    # Clef override when no <clef> exists yet and when <clef> has empty children
+    s_no_clef = score(1)
+    apply_clef_override(s_no_clef, "bass")
+    assert s_no_clef.find(".//attributes/clef/sign").text == "F"
+
+    s_empty_clef = score(1)
+    ET.SubElement(s_empty_clef.find(".//attributes"), "clef")
+    apply_clef_override(s_empty_clef, "alto")
+    assert s_empty_clef.find(".//attributes/clef/sign").text == "C"
+
+    # Instrument override
+    assert apply_instrument_override(root, "auto") is root
+    apply_instrument_override(root, "Trombone")
+    assert root.find("./part-list/score-part/part-name").text == "Trombone"
+    assert root.find("./part-list/score-part/score-instrument/instrument-name").text == "Trombone"
+
+    # apply_score_options end-to-end
+    s_opts = score(1)
+    assert apply_score_options(s_opts, None) is s_opts
+    opts = ConversionOptions(
+        transpose_semitones=2,
+        clef_override="bass",
+        instrument_name="Trombone",
+        title_override="Custom Work Title",
+    )
+    apply_score_options(s_opts, opts)
+    assert s_opts.find("work/work-title").text == "Custom Work Title"
+    assert s_opts.find("./part-list/score-part/part-name").text == "Trombone"
 
 
 def test_read_errors(tmp_path):
