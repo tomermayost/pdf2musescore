@@ -5,11 +5,13 @@
 Minimal Windows desktop app (Windows 10 Home & upwards, Windows 11): **Load PDF → Convert & Save as** MuseScore (`.mscz`) or MusicXML (`.musicxml`).
 Optical music recognition is powered by [homr](https://github.com/liebharc/homr) deep-learning AI (ONNX Runtime on CPU), with multi-page merging and automatic tuplet/tremolo sanitization for MuseScore 4.
 
-## End-User Installation (No Python or Java Required)
+## Download & End-User Installation (No Python or Java Required)
 
-1. Run **`tmp\dist\pdf2musescore-setup.exe`** and follow the Setup Wizard.
+👉 **[Download Windows Installer (`pdf2musescore-setup.exe`)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** *(or view all [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases))*
+
+1. Download and run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
-3. Click **Load PDF...**, choose your sheet music PDF, then click **Convert & Save as...**.
+3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`), then click **Convert & Save as...**.
 4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
 
 ## Development & Testing
