@@ -72,6 +72,8 @@ def pump(app, root, until, timeout=5):
 def test_initial_state(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path)
     assert str(app.convert_btn["state"]) == "disabled"
+    assert app.credit_label.cget("text") == "By Tomer Mayost"
+    assert "By Tomer Mayost" in root.title()
     app.on_convert()  # no pdf -> no-op
     app.destroy()
 

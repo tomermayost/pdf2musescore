@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import sys
 from pathlib import Path
 
 from . import APP_NAME
@@ -25,10 +26,11 @@ def setup_logging(level: str = "INFO", log_dir: Path | None = None) -> logging.L
 
     formatter = logging.Formatter(LOG_FORMAT)
 
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-    setattr(console, _HANDLER_TAG, True)
-    logger.addHandler(console)
+    if sys.stderr is not None:
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        setattr(console, _HANDLER_TAG, True)
+        logger.addHandler(console)
 
     if log_dir is not None:
         log_dir = Path(log_dir)

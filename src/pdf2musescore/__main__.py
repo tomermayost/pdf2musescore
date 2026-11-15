@@ -5,12 +5,17 @@ from __future__ import annotations
 import logging
 import sys
 
-from . import __version__
-from .config import ConfigError, load_config
-from .logging_setup import setup_logging
+from pdf2musescore import AUTHOR_CREDIT, __version__
+from pdf2musescore.config import ConfigError, load_config
+from pdf2musescore.logging_setup import setup_logging
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else list(argv)
+    if "--version" in args:
+        if sys.stdout is not None:
+            print(f"pdf2musescore {__version__} ({AUTHOR_CREDIT})")
+        return 0
     try:
         config = load_config()
     except ConfigError as exc:
@@ -21,7 +26,7 @@ def main() -> int:
     log = setup_logging(config.log_level, config.log_dir)
     log.info("pdf2musescore %s starting (python %s, frozen=%s)", __version__, sys.version.split()[0],
              getattr(sys, "frozen", False))
-    from .gui import run_gui
+    from pdf2musescore.gui import run_gui
     try:
         run_gui(config)
     except Exception as exc:

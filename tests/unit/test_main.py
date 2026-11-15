@@ -10,7 +10,12 @@ def test_main_ok(monkeypatch, tmp_path):
     monkeypatch.setenv("PDF2MSCZ_LOG_DIR", str(tmp_path / "logs"))
     seen = []
     monkeypatch.setattr(gui, "run_gui", lambda c: seen.append(c))
-    assert entry.main() == 0 and seen
+    assert entry.main([]) == 0 and seen
+
+
+def test_main_version(capsys):
+    assert entry.main(["--version"]) == 0
+    assert "By Tomer Mayost" in capsys.readouterr().out
 
 
 def test_main_bad_config(monkeypatch, tmp_path):

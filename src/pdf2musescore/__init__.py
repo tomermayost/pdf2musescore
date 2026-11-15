@@ -2,3 +2,4 @@
 
 __version__ = "0.1.0"
 APP_NAME = "pdf2musescore"
+AUTHOR_CREDIT = "By Tomer Mayost"

@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Callable, Optional
 
-from . import APP_NAME, __version__
+from . import APP_NAME, AUTHOR_CREDIT, __version__
 from .config import AppConfig
 from .deps import MUSESCORE, find_tool
 from .pipeline import ConversionError, Pipeline
@@ -70,7 +70,7 @@ class App(ttk.Frame):
 
     # ---------- UI ----------
     def _build(self) -> None:
-        self.master.title(f"PDF to MuseScore {__version__}")
+        self.master.title(f"PDF to MuseScore {__version__} — {AUTHOR_CREDIT}")
         self.master.minsize(560, 380)
         row = ttk.Frame(self)
         row.pack(fill="x")
@@ -90,7 +90,11 @@ class App(ttk.Frame):
 
         self.log_text = scrolledtext.ScrolledText(self, height=12, state="disabled", font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
-        ttk.Button(self, text="Open log folder", command=self.on_open_logs).pack(anchor="e", pady=(6, 0))
+        footer = ttk.Frame(self)
+        footer.pack(fill="x", pady=(6, 0))
+        self.credit_label = ttk.Label(footer, text=AUTHOR_CREDIT)
+        self.credit_label.pack(side="left")
+        ttk.Button(footer, text="Open log folder", command=self.on_open_logs).pack(side="right")
 
     def _set_busy(self, busy: bool) -> None:
         state = "disabled" if busy else "normal"
