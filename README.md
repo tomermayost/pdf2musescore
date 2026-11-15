@@ -7,9 +7,11 @@ Optical music recognition is powered by [homr](https://github.com/liebharc/homr)
 
 ## Download & End-User Installation (No Python or Java Required)
 
-👉 **[Download Windows Installer (`pdf2musescore-setup.exe`)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** *(or view all [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases))*
+👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~100 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** *(or view all [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases))*
 
 1. Download and run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
+   - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**.
+   - **SHA-256 (`v0.2.0`):** `B2987D1162C231EC2AD22831FE43FF858C9B20EB78FD004CEA3FD473C502DBC1`
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
 3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`), then click **Convert & Save as...**.
 4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.

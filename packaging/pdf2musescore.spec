@@ -9,7 +9,8 @@ binaries = []
 hiddenimports = ["pdf2musescore.gui"]
 
 for pkg in ("homr", "musicxml", "rapidocr_onnxruntime", "pypdfium2", "pypdfium2_raw"):
-    datas += collect_data_files(pkg, excludes=["*.onnx", "*.pth", "*.zip"])
+    pkg_excludes = ["**/*.onnx", "**/*.pth", "**/*.zip"] if pkg == "homr" else []
+    datas += collect_data_files(pkg, excludes=pkg_excludes)
     binaries += collect_dynamic_libs(pkg)
     hiddenimports += collect_submodules(pkg)
 
@@ -43,7 +44,23 @@ a = Analysis(
     noarchive=False,
 )
 
-a.binaries = [b for b in a.binaries if b[0].lower() not in vc_dll_names]
+# Strip any downloaded homr model weights (.onnx / .pth / .zip) from datas so
+# the installer stays lightweight and homr downloads/updates models on first run.
+a.datas = [
+    d for d in a.datas
+    if not (
+        d[0].replace("/", "\\").lower().startswith("homr\\")
+        and d[0].lower().endswith((".onnx", ".pth", ".zip"))
+    )
+]
+
+# Strip unused OpenCV video/FFmpeg DLL (~30 MB) — we only process still images.
+a.binaries = [
+    b for b in a.binaries
+    if "opencv_videoio_ffmpeg" not in b[0].lower()
+    and b[0].lower() not in vc_dll_names
+]
+
 for dll_name in sorted(vc_dll_names):
     dll_path = sys32 / dll_name
     if dll_path.is_file():
@@ -63,6 +80,7 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=True,
+    version=str(ROOT / "packaging" / "version_info.txt"),
 )
 
 coll = COLLECT(

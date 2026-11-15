@@ -24,8 +24,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\tmp\dist
 OutputBaseFilename=pdf2musescore-setup
-Compression=lzma2
-SolidCompression=yes
+Compression=zip
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
