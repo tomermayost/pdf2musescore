@@ -32,6 +32,19 @@ class ConfigError(ValueError):
     """Raised when configuration is invalid."""
 
 
+def is_frozen() -> bool:
+    """True when running as a packaged (PyInstaller) executable."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def default_data_dir() -> Path:
+    """Writable base dir: ``tmp/`` in development, ``%LOCALAPPDATA%/pdf2musescore`` when packaged."""
+    if is_frozen():
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / APP_NAME
+    return Path("tmp")
+
+
 def default_config_path() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home())
     return Path(base) / APP_NAME / "config.toml"
@@ -40,8 +53,8 @@ def default_config_path() -> Path:
 @dataclass(frozen=True)
 class AppConfig:
     log_level: str = "INFO"
-    log_dir: Path = field(default_factory=lambda: Path("tmp") / "logs")
-    work_dir: Path = field(default_factory=lambda: Path("tmp") / "work")
+    log_dir: Path = field(default_factory=lambda: default_data_dir() / "logs")
+    work_dir: Path = field(default_factory=lambda: default_data_dir() / "work")
     audiveris_path: Optional[Path] = None
     musescore_path: Optional[Path] = None
     audiveris_timeout_sec: int = 1800
