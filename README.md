@@ -3,14 +3,14 @@
 **By Tomer Mayost**
 
 Minimal Windows desktop app (Windows 10 Home & upwards, Windows 11): **Load PDF → Convert & Save as** MuseScore (`.mscz`) or MusicXML (`.musicxml`).
-Optical music recognition is powered by [Audiveris](https://github.com/Audiveris/audiveris), with multi-movement merging and automatic partial-sheet recovery if individual pages fail.
+Optical music recognition is powered by [homr](https://github.com/liebharc/homr) deep-learning AI (ONNX Runtime on CPU), with multi-page merging and automatic tuplet/tremolo sanitization for MuseScore 4.
 
-## End-User Installation (No Python Required)
+## End-User Installation (No Python or Java Required)
 
 1. Run **`tmp\dist\pdf2musescore-setup.exe`** and follow the Setup Wizard.
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
 3. Click **Load PDF...**, choose your sheet music PDF, then click **Convert & Save as...**.
-4. If Audiveris or MuseScore is not yet installed on the laptop, the app will ask permission and install it automatically.
+4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
 
 ## Development & Testing
 
@@ -47,6 +47,5 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 | `log_level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `log_dir` | `%LOCALAPPDATA%\pdf2musescore\logs` (or `tmp/logs` in dev) | Rotating log files |
 | `work_dir` | `%LOCALAPPDATA%\pdf2musescore\work` (or `tmp/work` in dev) | Temporary working directory |
-| `audiveris_path` | auto-detect | Path to `Audiveris.exe` |
 | `musescore_path` | auto-detect | Path to `MuseScore4.exe` |
-| `audiveris_timeout_sec` | `1800` | Maximum OMR time per PDF |
+| `render_dpi` | `300` | PDF page rendering DPI for OMR |

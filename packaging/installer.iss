@@ -2,7 +2,7 @@
 ; Supports Windows 10 (Home and upwards) and Windows 11
 
 #define MyAppName "PDF to MuseScore"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Tomer Mayost"
 #define MyAppCredit "By Tomer Mayost"
 #define MyAppExeName "pdf2musescore.exe"
@@ -16,10 +16,9 @@ AppCopyright={#MyAppCredit}
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} ({#MyAppCredit})
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 MinVersion=10.0
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

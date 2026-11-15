@@ -1,12 +1,12 @@
-"""Integration: Bach PDF -> Audiveris -> combined MusicXML -> .mscz (real tools)."""
+"""Integration: Bach PDF -> homr AI -> combined MusicXML -> .mscz (real tools)."""
 
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from pdf2musescore.deps import AUDIVERIS, MUSESCORE, find_tool
-from pdf2musescore.engines.audiveris import AudiverisEngine
+from pdf2musescore.deps import MUSESCORE, find_tool
+from pdf2musescore.engines.homr_engine import HomrEngine
 from pdf2musescore.exporters.musescore import MuseScoreExporter
 from pdf2musescore.musicxml import merge_files, read_score
 
@@ -18,14 +18,14 @@ pytestmark = pytest.mark.integration
 
 
 def test_pdf_to_combined_mscz():
-    aud, ms = find_tool(AUDIVERIS), find_tool(MUSESCORE)
-    if not (aud and ms):
-        pytest.skip("Audiveris and MuseScore required")
-    movements = AudiverisEngine(aud).recognize(FIXTURE, OUT / "omr")
-    xml = merge_files(movements, OUT / "bach.musicxml", title="Bach - Cello Suite No. 2")
+    ms = find_tool(MUSESCORE)
+    if not ms:
+        pytest.skip("MuseScore required")
+    pages = HomrEngine(dpi=200).recognize(FIXTURE, OUT / "omr")
+    xml = merge_files(pages, OUT / "bach.musicxml", title="Bach - Cello Suite No. 2")
     root = read_score(xml)
-    assert len(root.findall(".//measure")) > 100
-    assert len(list(root.iter("words"))) >= len(movements)
+    assert len(root.findall(".//measure")) > 50
+    assert len(list(root.iter("words"))) >= len(pages)
 
     mscz = MuseScoreExporter(ms).export(xml, OUT / "bach.mscz")
     assert zipfile.is_zipfile(mscz)

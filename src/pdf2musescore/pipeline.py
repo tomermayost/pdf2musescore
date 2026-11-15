@@ -1,4 +1,4 @@
-"""Conversion pipeline: PDF -> Audiveris -> combined MusicXML -> (optional) MuseScore .mscz."""
+"""Conversion pipeline: PDF -> homr AI -> combined MusicXML -> (optional) MuseScore .mscz."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .config import AppConfig, ascii_safe_base_dir
-from .deps import AUDIVERIS, MUSESCORE, InstallError, ToolNotFoundError, ensure_tool
-from .engines.audiveris import AudiverisEngine
+from .deps import MUSESCORE, InstallError, ToolNotFoundError, ensure_tool
 from .engines.base import OmrEngine, OmrError
+from .engines.homr_engine import HomrEngine
 from .exporters.musescore import ExportError, MuseScoreExporter
 from .musicxml import MergeError, merge_files
 
@@ -39,8 +39,8 @@ class Pipeline:
     confirm: ConfirmFn = lambda msg: False
     progress: ProgressFn = lambda pct, msg: None
     ensure: Callable[..., Path] = ensure_tool
-    engine_factory: Callable[[Path, int], OmrEngine] = field(
-        default=lambda exe, timeout: AudiverisEngine(exe, timeout))
+    engine_factory: Callable[[int, Optional[Callable[[int, int], None]]], OmrEngine] = field(
+        default=lambda dpi, cb: HomrEngine(dpi=dpi, page_callback=cb))
     exporter_factory: Callable[[Path], MuseScoreExporter] = MuseScoreExporter
 
     def _step(self, pct: int, msg: str) -> None:
@@ -63,21 +63,25 @@ class Pipeline:
             output.parent.mkdir(parents=True, exist_ok=True)
 
             self._step(5, "Checking required programs...")
-            audiveris = self.ensure(AUDIVERIS, self.config.audiveris_path, self.confirm)
             musescore = (self.ensure(MUSESCORE, self.config.musescore_path, self.confirm)
                          if suffix == ".mscz" else None)
 
-            # Copy input PDF to an ASCII-safe path so Java/Audiveris CLI never chokes on Unicode paths
             staged_pdf = work / "input.pdf"
             shutil.copy2(pdf, staged_pdf)
 
-            self._step(15, "Reading the music from the PDF (this can take a few minutes)...")
-            engine = self.engine_factory(audiveris, self.config.audiveris_timeout_sec)
-            movements = engine.recognize(staged_pdf, work / "omr")
+            self._step(15, "Reading the music with AI (first run downloads models once)...")
+            engine = self.engine_factory(
+                self.config.render_dpi,
+                lambda idx, total: self._step(
+                    15 + int(55 * (idx - 1) / max(total, 1)),
+                    f"Reading page {idx} of {total} with AI...",
+                ),
+            )
+            pages_xml = engine.recognize(staged_pdf, work / "omr")
 
-            self._step(75, f"Combining {len(movements)} movement(s) into one score...")
+            self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
             staged_xml = work / "score.musicxml"
-            xml = merge_files(movements, staged_xml, title=pdf.stem)
+            xml = merge_files(pages_xml, staged_xml, title=pdf.stem)
 
             if musescore is not None:
                 self._step(85, "Saving MuseScore file...")
@@ -90,10 +94,10 @@ class Pipeline:
             self._step(100, f"Done! Saved {output.name}")
             return output
         except ToolNotFoundError as exc:
-            raise ConversionError("A required program is not installed, so the conversion was cancelled.",
+            raise ConversionError("MuseScore is not installed, so the conversion was cancelled.",
                                   str(exc)) from exc
         except InstallError as exc:
-            raise ConversionError("Installing a required program failed. Check your internet connection "
+            raise ConversionError("Installing MuseScore failed. Check your internet connection "
                                   "and try again.", str(exc)) from exc
         except OmrError as exc:
             raise ConversionError("The music could not be read from this PDF. Clear, printed scores "

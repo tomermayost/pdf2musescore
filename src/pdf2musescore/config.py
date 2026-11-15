@@ -64,21 +64,20 @@ class AppConfig:
     log_level: str = "INFO"
     log_dir: Path = field(default_factory=lambda: default_data_dir() / "logs")
     work_dir: Path = field(default_factory=lambda: default_data_dir() / "work")
-    audiveris_path: Optional[Path] = None
     musescore_path: Optional[Path] = None
-    audiveris_timeout_sec: int = 1800
+    render_dpi: int = 300
 
     def __post_init__(self) -> None:
         level = str(self.log_level).upper()
         if level not in VALID_LOG_LEVELS:
             raise ConfigError(f"Invalid log_level {self.log_level!r}; expected one of {VALID_LOG_LEVELS}")
         object.__setattr__(self, "log_level", level)
-        if int(self.audiveris_timeout_sec) <= 0:
-            raise ConfigError("audiveris_timeout_sec must be > 0")
+        if int(self.render_dpi) < 72:
+            raise ConfigError("render_dpi must be >= 72")
 
 
-_PATH_FIELDS = {"log_dir", "work_dir", "audiveris_path", "musescore_path"}
-_INT_FIELDS = {"audiveris_timeout_sec"}
+_PATH_FIELDS = {"log_dir", "work_dir", "musescore_path"}
+_INT_FIELDS = {"render_dpi"}
 
 
 def _coerce(name: str, value: Any) -> Any:
@@ -99,7 +98,7 @@ def _from_mapping(base: AppConfig, data: Mapping[str, Any], source: str) -> AppC
     updates: dict[str, Any] = {}
     for key, value in data.items():
         if key not in known:
-            log.warning("Unknown config key %r in %s - ignored", key, source)
+            log.warning("Unknown config key %r in %r - ignored", key, source)
             continue
         updates[key] = _coerce(key, value)
         log.debug("Config %s=%r (from %s)", key, updates[key], source)

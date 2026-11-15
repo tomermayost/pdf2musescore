@@ -13,11 +13,11 @@ def test_defaults_when_no_file(tmp_path):
 
 def test_file_values_loaded(tmp_path):
     f = tmp_path / "c.toml"
-    f.write_text('log_level = "debug"\naudiveris_path = "C:/A/Audiveris.exe"\naudiveris_timeout_sec = 60\n')
+    f.write_text('log_level = "debug"\nmusescore_path = "C:/M/MuseScore4.exe"\nrender_dpi = 250\n')
     cfg = load_config(f, environ={})
     assert cfg.log_level == "DEBUG"
-    assert cfg.audiveris_path == Path("C:/A/Audiveris.exe")
-    assert cfg.audiveris_timeout_sec == 60
+    assert cfg.musescore_path == Path("C:/M/MuseScore4.exe")
+    assert cfg.render_dpi == 250
 
 
 def test_env_overrides_file(tmp_path):
@@ -40,8 +40,8 @@ def test_empty_env_value_becomes_none(tmp_path):
     assert cfg.musescore_path is None
 
 
-@pytest.mark.parametrize("content", ['log_level = "LOUD"\n', "audiveris_timeout_sec = 0\n",
-                                     'audiveris_timeout_sec = "abc"\n', "not = valid = toml\n"])
+@pytest.mark.parametrize("content", ['log_level = "LOUD"\n', "render_dpi = 50\n",
+                                     'render_dpi = "abc"\n', "not = valid = toml\n"])
 def test_invalid_values_raise(tmp_path, content):
     f = tmp_path / "c.toml"
     f.write_text(content)

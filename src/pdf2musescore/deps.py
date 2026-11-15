@@ -1,14 +1,11 @@
-"""Detection and installation of external tools (Audiveris, MuseScore)."""
+"""Detection and installation of MuseScore."""
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
 import subprocess
-import tempfile
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Sequence
@@ -22,7 +19,6 @@ class ToolSpec:
     exe_names: Sequence[str]
     install_dir_globs: Sequence[str]
     winget_id: str
-    github_repo: Optional[str] = None  # fallback installer source ("owner/repo")
 
 
 def _program_dirs() -> list[Path]:
@@ -33,14 +29,6 @@ def _program_dirs() -> list[Path]:
             dirs.append(Path(val))
     return dirs
 
-
-AUDIVERIS = ToolSpec(
-    name="Audiveris",
-    exe_names=("Audiveris.exe",),
-    install_dir_globs=("Audiveris*",),
-    winget_id="audiveris.org.Audiveris",
-    github_repo="Audiveris/audiveris",
-)
 
 MUSESCORE = ToolSpec(
     name="MuseScore",
@@ -107,39 +95,6 @@ def install_with_winget(spec: ToolSpec, runner: Runner = subprocess.run) -> bool
     return True
 
 
-def _latest_github_installer(repo: str, opener=urllib.request.urlopen) -> str:
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    log.debug("Querying %s", url)
-    with opener(url, timeout=30) as resp:
-        data = json.load(resp)
-    for asset in data.get("assets", []):
-        name = asset.get("name", "").lower()
-        if name.endswith((".msi", ".exe")) and "win" in name:
-            return asset["browser_download_url"]
-    raise InstallError(f"No Windows installer found in latest release of {repo}")
-
-
-def install_from_github(spec: ToolSpec, runner: Runner = subprocess.run,
-                        opener=urllib.request.urlopen, download=urllib.request.urlretrieve) -> bool:
-    if not spec.github_repo:
-        return False
-    try:
-        url = _latest_github_installer(spec.github_repo, opener)
-        target = Path(tempfile.gettempdir()) / url.rsplit("/", 1)[-1]
-        log.info("%s: downloading %s -> %s", spec.name, url, target)
-        download(url, target)
-    except Exception as exc:  # network errors of many kinds
-        log.error("%s: GitHub download failed: %s", spec.name, exc)
-        return False
-    cmd = (["msiexec", "/i", str(target), "/passive"] if target.suffix == ".msi" else [str(target)])
-    log.info("%s: running installer %s", spec.name, cmd)
-    res = runner(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        log.error("%s: installer failed (code %s)", spec.name, res.returncode)
-        return False
-    return True
-
-
 def ensure_tool(spec: ToolSpec, configured: Optional[Path] = None,
                 confirm: Callable[[str], bool] = lambda msg: False,
                 runner: Runner = subprocess.run, search_dirs: Optional[Iterable[Path]] = None) -> Path:
@@ -149,7 +104,7 @@ def ensure_tool(spec: ToolSpec, configured: Optional[Path] = None,
         return path
     if not confirm(f"{spec.name} is not installed. Install it now?"):
         raise ToolNotFoundError(f"{spec.name} is required but not installed")
-    if not install_with_winget(spec, runner) and not install_from_github(spec, runner):
+    if not install_with_winget(spec, runner):
         raise InstallError(f"Could not install {spec.name}")
     path = find_tool(spec, configured, search_dirs)
     if not path:

@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from pdf2musescore.musicxml import MergeError, merge_files, merge_scores, read_score, write_musicxml
+from pdf2musescore.musicxml import MergeError, merge_files, merge_scores, read_score, sanitize_score, write_musicxml
 
 
 def score(n_measures=2, parts=1, mtitle=None, wtitle=None):
@@ -38,6 +38,26 @@ def test_read_mxl_and_xml(tmp_path):
     assert len(read_score(p).findall(".//measure")) == 2
 
 
+def test_sanitize_tuplets_and_tremolos():
+    xml = """<score-partwise><part id="P1"><measure number="1">
+      <note><duration>48</duration><notations><ornaments><tremolo type="start">3</tremolo></ornaments></notations></note>
+      <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification><notations><tuplet type="start"/></notations></note>
+      <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>
+      <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification><notations/></note>
+      <note><duration>12</duration></note>
+      <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>
+      <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>
+    </measure></part></score-partwise>"""
+    root = sanitize_score(ET.fromstring(xml))
+    assert root.find(".//tremolo") is None
+    tuplets = [(t.get("type")) for t in root.findall(".//tuplet")]
+    assert tuplets == ["start", "stop"]
+    # Trailing incomplete 2-note tuplet had time-modification stripped and duration restored to 12
+    notes = root.findall(".//note")
+    assert notes[-1].find("time-modification") is None
+    assert notes[-1].find("duration").text == "12"
+
+
 def test_read_errors(tmp_path):
     bad = tmp_path / "b.mxl"
     with zipfile.ZipFile(bad, "w") as z:
@@ -55,7 +75,7 @@ def test_merge_basic():
     measures = merged.findall("part/measure")
     assert [m.get("number") for m in measures] == [str(i) for i in range(1, 7)]
     words = [w.text for w in merged.iter("words")]
-    assert words == ["Prelude", "W", "Movement 3"]
+    assert words == ["Prelude", "W", "Page 3"]
     assert len(merged.findall(".//print[@new-page='yes']")) == 2
     first = measures[0]
     assert [c.tag for c in first][:2] == ["attributes", "direction"]
