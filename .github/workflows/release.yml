@@ -2,6 +2,8 @@ name: Build, Sign & Release Windows Installer
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
   workflow_dispatch:
