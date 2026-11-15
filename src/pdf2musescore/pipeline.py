@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from .config import AppConfig
+from .config import AppConfig, ascii_safe_base_dir
 from .deps import AUDIVERIS, MUSESCORE, InstallError, ToolNotFoundError, ensure_tool
 from .engines.audiveris import AudiverisEngine
 from .engines.base import OmrEngine, OmrError
@@ -54,25 +55,37 @@ class Pipeline:
         if not pdf.is_file():
             raise ConversionError("The selected PDF file could not be found.", str(pdf))
 
-        work = Path(self.config.work_dir) / f"job-{time.strftime('%Y%m%d-%H%M%S')}-{pdf.stem}"
+        safe_root = ascii_safe_base_dir(Path(self.config.work_dir).resolve())
+        work = safe_root / f"job-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
         log.info("Converting %s -> %s (work dir %s)", pdf, output, work)
         try:
+            work.mkdir(parents=True, exist_ok=True)
+            output.parent.mkdir(parents=True, exist_ok=True)
+
             self._step(5, "Checking required programs...")
             audiveris = self.ensure(AUDIVERIS, self.config.audiveris_path, self.confirm)
             musescore = (self.ensure(MUSESCORE, self.config.musescore_path, self.confirm)
                          if suffix == ".mscz" else None)
 
+            # Copy input PDF to an ASCII-safe path so Java/Audiveris CLI never chokes on Unicode paths
+            staged_pdf = work / "input.pdf"
+            shutil.copy2(pdf, staged_pdf)
+
             self._step(15, "Reading the music from the PDF (this can take a few minutes)...")
             engine = self.engine_factory(audiveris, self.config.audiveris_timeout_sec)
-            movements = engine.recognize(pdf, work / "omr")
+            movements = engine.recognize(staged_pdf, work / "omr")
 
             self._step(75, f"Combining {len(movements)} movement(s) into one score...")
-            xml_target = output if suffix == ".musicxml" else work / f"{pdf.stem}.musicxml"
-            xml = merge_files(movements, xml_target, title=pdf.stem)
+            staged_xml = work / "score.musicxml"
+            xml = merge_files(movements, staged_xml, title=pdf.stem)
 
             if musescore is not None:
                 self._step(85, "Saving MuseScore file...")
-                self.exporter_factory(musescore).export(xml, output)
+                staged_mscz = work / "score.mscz"
+                self.exporter_factory(musescore).export(xml, staged_mscz)
+                shutil.copy2(staged_mscz, output)
+            else:
+                shutil.copy2(xml, output)
 
             self._step(100, f"Done! Saved {output.name}")
             return output

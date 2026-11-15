@@ -69,6 +69,24 @@ def test_convert_musicxml_skips_musescore(tmp_path, pdf):
     assert seen == ["Audiveris"] and out.is_file()
 
 
+def test_convert_unicode_paths(tmp_path):
+    heb_dir = tmp_path / "תווים" / "מנחם"
+    heb_dir.mkdir(parents=True)
+    pdf = heb_dir / "באך סוויטה 2.pdf"
+    pdf.write_bytes(b"%PDF")
+    seen_inputs = []
+
+    class InspectEngine(FakeEngine):
+        def recognize(self, p, out_dir):
+            seen_inputs.append((str(p), str(out_dir)))
+            return super().recognize(p, out_dir)
+
+    p, _ = make(tmp_path, engine=InspectEngine())
+    out = p.convert(pdf, heb_dir / "תוצאה.mscz")
+    assert out.is_file()
+    assert seen_inputs[0][0].isascii() and seen_inputs[0][1].isascii()
+
+
 def test_debug_keeps_work_dir(tmp_path, pdf):
     p, _ = make(tmp_path, level="DEBUG")
     p.convert(pdf, tmp_path / "out.mscz")

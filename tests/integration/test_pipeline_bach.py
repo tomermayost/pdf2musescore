@@ -20,7 +20,12 @@ def test_pipeline_mscz():
     if not (find_tool(AUDIVERIS) and find_tool(MUSESCORE)):
         pytest.skip("Audiveris and MuseScore required")
     steps = []
+    heb_in = OUT / "תווים" / "מנחם" / "bach cello suite 2.pdf"
+    heb_in.parent.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copy2(FIXTURE, heb_in)
+    heb_out = OUT / "תווים" / "מנחם" / "bach cello suite 2.mscz"
     out = Pipeline(AppConfig(work_dir=OUT / "work"), progress=lambda p, m: steps.append(p)) \
-        .convert(FIXTURE, OUT / "bach.mscz")
+        .convert(heb_in, heb_out)
     assert zipfile.is_zipfile(out)
     assert steps[-1] == 100

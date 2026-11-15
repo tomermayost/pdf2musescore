@@ -37,11 +37,20 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def ascii_safe_base_dir(preferred: Path) -> Path:
+    """Return ``preferred`` if ASCII-only, otherwise an ASCII-safe fallback directory."""
+    if str(preferred).isascii():
+        return preferred
+    fallback = Path(os.environ.get("PROGRAMDATA") or r"C:\Users\Public") / APP_NAME
+    log.info("Path %s contains non-ASCII characters; using ASCII-safe %s", preferred, fallback)
+    return fallback
+
+
 def default_data_dir() -> Path:
     """Writable base dir: ``tmp/`` in development, ``%LOCALAPPDATA%/pdf2musescore`` when packaged."""
     if is_frozen():
         base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-        return Path(base) / APP_NAME
+        return ascii_safe_base_dir(Path(base) / APP_NAME)
     return Path("tmp")
 
 

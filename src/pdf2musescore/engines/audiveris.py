@@ -44,7 +44,8 @@ class AudiverisEngine(OmrEngine):
             log.debug("[audiveris:err] %s", line)
 
         if res.returncode != 0:
-            raise OmrError(f"Audiveris exited with code {res.returncode}: {(res.stderr or '').strip()[-500:]}")
+            combined_out = "\n".join(filter(None, [(res.stderr or "").strip(), (res.stdout or "").strip()]))
+            raise OmrError(f"Audiveris exited with code {res.returncode}: {combined_out[-500:]}")
 
         outputs = sorted(p for p in out_dir.rglob("*") if p.suffix.lower() in (".mxl", ".musicxml"))
         if not outputs:

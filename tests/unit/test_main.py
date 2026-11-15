@@ -40,3 +40,9 @@ def test_frozen_data_dir(monkeypatch, tmp_path):
 
 def test_dev_data_dir():
     assert cfgmod.default_data_dir() == Path("tmp")
+
+
+def test_ascii_safe_base_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path))
+    assert cfgmod.ascii_safe_base_dir(Path(r"C:\Users\תומר\AppData")) == tmp_path / "pdf2musescore"
+    assert cfgmod.ascii_safe_base_dir(Path(r"C:\Users\tmayo\AppData")) == Path(r"C:\Users\tmayo\AppData")

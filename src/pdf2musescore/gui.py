@@ -79,7 +79,7 @@ class App(ttk.Frame):
         self.file_var = tk.StringVar(value="No file selected")
         ttk.Label(row, textvariable=self.file_var).pack(side="left", padx=8)
 
-        self.convert_btn = ttk.Button(self, text="Convert && Save as...", command=self.on_convert,
+        self.convert_btn = ttk.Button(self, text="Convert & Save as...", command=self.on_convert,
                                       state="disabled")
         self.convert_btn.pack(fill="x", pady=(10, 4))
 
