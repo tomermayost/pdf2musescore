@@ -53,3 +53,14 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 | `work_dir` | `%LOCALAPPDATA%\pdf2musescore\work` (or `tmp/work` in dev) | Temporary working directory |
 | `musescore_path` | auto-detect | Path to `MuseScore4.exe` |
 | `render_dpi` | `300` | PDF page rendering DPI for OMR |
+
+## Code Signing Policy
+
+Free code signing is provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- **Committers and Reviewers:** [Tomer Mayost](https://github.com/tomermayost)
+- **Privacy Policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it (on the first conversion run, the app downloads the open-source `homr` ONNX optical music recognition model weights from GitHub Releases and caches them locally).
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Tomer Mayost.

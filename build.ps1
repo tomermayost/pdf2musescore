@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 Write-Host "==> Building standalone app with PyInstaller into tmp/dist..."
-.\.venv\Scripts\pyinstaller.exe packaging\pdf2musescore.spec `
+$pyinstaller = if (Test-Path ".\.venv\Scripts\pyinstaller.exe") { ".\.venv\Scripts\pyinstaller.exe" } else { "pyinstaller" }
+& $pyinstaller packaging\pdf2musescore.spec `
     --distpath tmp\dist `
     --workpath tmp\build `
     --noconfirm `
