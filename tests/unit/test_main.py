@@ -18,6 +18,10 @@ def test_main_version(capsys):
     assert "By Tomer Mayost" in capsys.readouterr().out
 
 
+def test_main_self_test():
+    assert entry.main(["--self-test"]) == 0
+
+
 def test_main_bad_config(monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("PDF2MSCZ_LOG_LEVEL", "LOUD")

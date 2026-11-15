@@ -16,6 +16,20 @@ for pkg in ("homr", "musicxml", "rapidocr_onnxruntime", "pypdfium2", "pypdfium2_
 binaries += collect_dynamic_libs("onnxruntime")
 hiddenimports += collect_submodules("onnxruntime")
 
+# Bundle the latest VC++ 14.40+ redistributable DLLs from System32 so they override
+# Python 3.10's older 14.29 msvcp140.dll (required by onnxruntime 1.23+ on Windows).
+sys32 = Path(r"C:\Windows\System32")
+vc_dll_names = {
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll",
+    "msvcp140_codecvt_ids.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "concrt140.dll",
+}
+
 a = Analysis(
     [str(ROOT / "src" / "pdf2musescore" / "__main__.py")],
     pathex=[str(ROOT / "src")],
@@ -28,6 +42,13 @@ a = Analysis(
     excludes=["pytest", "torch", "torchvision"],
     noarchive=False,
 )
+
+a.binaries = [b for b in a.binaries if b[0].lower() not in vc_dll_names]
+for dll_name in sorted(vc_dll_names):
+    dll_path = sys32 / dll_name
+    if dll_path.is_file():
+        a.binaries.append((dll_name, str(dll_path), "BINARY"))
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

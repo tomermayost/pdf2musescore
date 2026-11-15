@@ -33,5 +33,7 @@ def test_build_and_smoke_run():
     assert EXE.is_file()
     res = subprocess.run([str(EXE), "--version"], capture_output=True, text=True, timeout=30)
     assert res.returncode == 0
+    res_self = subprocess.run([str(EXE), "--self-test"], capture_output=True, text=True, timeout=60)
+    assert res_self.returncode == 0
     if SETUP_EXE.is_file():
         assert SETUP_EXE.stat().st_size > 1_000_000

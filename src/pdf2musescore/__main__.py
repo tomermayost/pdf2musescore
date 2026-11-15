@@ -16,6 +16,14 @@ def main(argv: list[str] | None = None) -> int:
         if sys.stdout is not None:
             print(f"pdf2musescore {__version__} ({AUTHOR_CREDIT})")
         return 0
+    if "--self-test" in args:
+        import cv2  # noqa: F401
+        import homr.main  # noqa: F401
+        import onnxruntime as ort  # noqa: F401
+        import pypdfium2  # noqa: F401
+
+        assert ort.get_available_providers()
+        return 0
     try:
         config = load_config()
     except ConfigError as exc:
