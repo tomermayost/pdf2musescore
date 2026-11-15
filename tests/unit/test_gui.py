@@ -102,9 +102,14 @@ def test_initial_state(root, calls, tmp_path):
 def test_options_guide_reset_and_validation(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path)
     app.on_load()
-    app.on_show_parameter_guide()
-    assert any("2. PDF Rendering & AI Engine" in msg for msg in calls["info"])
-    calls["info"].clear()
+    # Verify hover tooltips are attached to all parameters and show/hide cleanly
+    assert "render_dpi" in app.tooltips and "pages" in app.tooltips
+    dpi_tip = app.tooltips["render_dpi"]
+    dpi_tip.show()
+    dpi_tip.show()  # idempotent when already shown
+    assert dpi_tip.tip_window is not None
+    dpi_tip.hide()
+    assert dpi_tip.tip_window is None
 
     # Set custom values then reset
     app.dpi_var.set("400")

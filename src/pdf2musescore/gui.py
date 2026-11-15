@@ -1,4 +1,4 @@
-"""Tkinter desktop window: Load PDF -> Pages & Engine/Score Options -> Convert & Save as / Abort."""
+"""Tkinter desktop window: Load PDF -> Pages & Engine/Score Options (with hover tooltips) -> Convert & Save as / Abort."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .options import (
     PREPROCESS_MODES,
     ConversionOptions,
     OptionsError,
-    format_parameter_guide,
+    get_parameter_tooltip,
 )
 from .pipeline import ConversionError, Pipeline
 
@@ -29,6 +29,57 @@ log = logging.getLogger(__name__)
 
 MSCZ_TYPE = ("MuseScore file", "*.mscz")
 XML_TYPE = ("MusicXML file", "*.musicxml")
+
+PAGES_TOOLTIP = (
+    "Pages  (Default: all pages)\n"
+    "Examples: 2-3,  1, 4,  1-2, 5\n\n"
+    "Select specific 1-based page numbers or ranges from the PDF to convert. "
+    "Leave blank to convert all pages."
+)
+
+
+class ToolTip:
+    """Clean hover tooltip attached to one or more Tkinter widgets."""
+
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self.tip_window: Optional[tk.Toplevel] = None
+        widget.bind("<Enter>", self.show, add="+")
+        widget.bind("<Leave>", self.hide, add="+")
+        widget.bind("<ButtonPress>", self.hide, add="+")
+
+    def show(self, _event: Optional[tk.Event] = None) -> None:
+        if self.tip_window is not None or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 16
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            tw,
+            text=self.text,
+            justify="left",
+            background="#ffffe1",
+            foreground="#1a1a1a",
+            relief="solid",
+            borderwidth=1,
+            font=("Segoe UI", 9),
+            padx=8,
+            pady=6,
+            wraplength=380,
+        )
+        label.pack()
+        self.tip_window = tw
+
+    def hide(self, _event: Optional[tk.Event] = None) -> None:
+        if self.tip_window is not None:
+            try:
+                self.tip_window.destroy()
+            except Exception:
+                pass
+            self.tip_window = None
 
 
 class QueueLogHandler(logging.Handler):
@@ -72,6 +123,7 @@ class App(ttk.Frame):
         self._cancel_event = threading.Event()
         self._confirm_answer = False
         self._confirm_event = threading.Event()
+        self.tooltips: dict[str, ToolTip] = {}
 
         self.log_handler = QueueLogHandler(self.q)
         logging.getLogger(APP_NAME).addHandler(self.log_handler)
@@ -80,10 +132,17 @@ class App(ttk.Frame):
         self.pack(fill="both", expand=True)
         self._after_id: Optional[str] = self.after(self.POLL_MS, self._poll)
 
+    def _attach_tip(self, key: str, *widgets: tk.Widget, custom_text: Optional[str] = None) -> None:
+        text = custom_text if custom_text is not None else get_parameter_tooltip(key)
+        for idx, w in enumerate(widgets):
+            tip = ToolTip(w, text)
+            if idx == 0:
+                self.tooltips[key] = tip
+
     # ---------- UI ----------
     def _build(self) -> None:
         self.master.title(f"PDF to MuseScore {__version__} — {AUTHOR_CREDIT}")
-        self.master.minsize(680, 560)
+        self.master.minsize(620, 520)
         row = ttk.Frame(self)
         row.pack(fill="x")
         self.load_btn = ttk.Button(row, text="Load PDF...", command=self.on_load)
@@ -93,14 +152,17 @@ class App(ttk.Frame):
 
         pages_row = ttk.Frame(self)
         pages_row.pack(fill="x", pady=(8, 0))
-        ttk.Label(pages_row, text="Pages (optional, e.g. 2-3 or 1, 4):").pack(side="left")
+        pages_lbl = ttk.Label(pages_row, text="Pages:")
+        pages_lbl.pack(side="left")
         self.pages_var = tk.StringVar(self, value="")
         self.pages_entry = ttk.Entry(pages_row, textvariable=self.pages_var, width=16)
         self.pages_entry.pack(side="left", padx=6)
-        ttk.Label(pages_row, text="(leave blank for all pages)").pack(side="left")
+        pages_hint = ttk.Label(pages_row, text="(optional, e.g. 2-3 or 1, 4 — hover any field for help)")
+        pages_hint.pack(side="left")
+        self._attach_tip("pages", self.pages_entry, pages_lbl, custom_text=PAGES_TOOLTIP)
 
         # Section 2 & 3 Parameters Frame
-        opts_frame = ttk.LabelFrame(self, text="Engine & Score Parameters", padding=8)
+        opts_frame = ttk.LabelFrame(self, text="Engine & Score Parameters (hover any option for details)", padding=8)
         opts_frame.pack(fill="x", pady=(8, 4))
 
         # Section 2: PDF Rendering & AI Engine
@@ -118,57 +180,72 @@ class App(ttk.Frame):
 
         r0 = ttk.Frame(opts_frame)
         r0.pack(fill="x", pady=2)
-        ttk.Label(r0, text="Render DPI (100-600, e.g. 300/400):").pack(side="left")
+        dpi_lbl = ttk.Label(r0, text="Render DPI:")
+        dpi_lbl.pack(side="left")
         self.dpi_entry = ttk.Entry(r0, textvariable=self.dpi_var, width=6)
-        self.dpi_entry.pack(side="left", padx=(4, 12))
+        self.dpi_entry.pack(side="left", padx=(4, 14))
+        self._attach_tip("render_dpi", self.dpi_entry, dpi_lbl)
 
-        ttk.Label(r0, text="Preprocess:").pack(side="left")
+        prep_lbl = ttk.Label(r0, text="Preprocess:")
+        prep_lbl.pack(side="left")
         self.preprocess_combo = ttk.Combobox(
             r0, textvariable=self.preprocess_var, values=list(PREPROCESS_MODES), width=10, state="readonly"
         )
-        self.preprocess_combo.pack(side="left", padx=(4, 12))
+        self.preprocess_combo.pack(side="left", padx=(4, 14))
+        self._attach_tip("preprocess_mode", self.preprocess_combo, prep_lbl)
 
-        self.deskew_check = ttk.Checkbutton(r0, text="Auto-Deskew tilted scan", variable=self.deskew_var)
+        self.deskew_check = ttk.Checkbutton(r0, text="Auto-Deskew", variable=self.deskew_var)
         self.deskew_check.pack(side="left")
+        self._attach_tip("deskew", self.deskew_check)
 
         r1 = ttk.Frame(opts_frame)
         r1.pack(fill="x", pady=2)
-        ttk.Label(r1, text="SegNet Tile Step px (80-320, e.g. 240/320):").pack(side="left")
+        step_lbl = ttk.Label(r1, text="SegNet Step (px):")
+        step_lbl.pack(side="left")
         self.step_entry = ttk.Entry(r1, textvariable=self.step_size_var, width=6)
-        self.step_entry.pack(side="left", padx=(4, 12))
+        self.step_entry.pack(side="left", padx=(4, 14))
+        self._attach_tip("segnet_step_size", self.step_entry, step_lbl)
 
-        ttk.Label(r1, text="Min Notehead px (2-12, default 4):").pack(side="left")
+        nh_lbl = ttk.Label(r1, text="Min Notehead (px):")
+        nh_lbl.pack(side="left")
         self.notehead_entry = ttk.Entry(r1, textvariable=self.min_notehead_var, width=5)
-        self.notehead_entry.pack(side="left", padx=(4, 12))
+        self.notehead_entry.pack(side="left", padx=(4, 14))
+        self._attach_tip("min_notehead_size", self.notehead_entry, nh_lbl)
 
         r2 = ttk.Frame(opts_frame)
         r2.pack(fill="x", pady=2)
-        ttk.Label(r2, text="Transpose semitones (-24..+24, e.g. +2):").pack(side="left")
+        tr_lbl = ttk.Label(r2, text="Transpose:")
+        tr_lbl.pack(side="left")
         self.transpose_entry = ttk.Entry(r2, textvariable=self.transpose_var, width=5)
-        self.transpose_entry.pack(side="left", padx=(4, 12))
+        self.transpose_entry.pack(side="left", padx=(4, 14))
+        self._attach_tip("transpose_semitones", self.transpose_entry, tr_lbl)
 
-        ttk.Label(r2, text="Clef:").pack(side="left")
+        clef_lbl = ttk.Label(r2, text="Clef:")
+        clef_lbl.pack(side="left")
         self.clef_combo = ttk.Combobox(
             r2, textvariable=self.clef_var, values=list(CLEF_CHOICES), width=8, state="readonly"
         )
-        self.clef_combo.pack(side="left", padx=(4, 12))
+        self.clef_combo.pack(side="left", padx=(4, 14))
+        self._attach_tip("clef_override", self.clef_combo, clef_lbl)
 
-        ttk.Label(r2, text="Instrument:").pack(side="left")
+        inst_lbl = ttk.Label(r2, text="Instrument:")
+        inst_lbl.pack(side="left")
         self.instrument_combo = ttk.Combobox(
             r2, textvariable=self.instrument_var, values=list(INSTRUMENT_PRESETS), width=11
         )
         self.instrument_combo.pack(side="left", padx=(4, 0))
+        self._attach_tip("instrument_name", self.instrument_combo, inst_lbl)
 
         r3 = ttk.Frame(opts_frame)
         r3.pack(fill="x", pady=(4, 0))
-        ttk.Label(r3, text="Title Override (blank = auto):").pack(side="left")
+        title_lbl = ttk.Label(r3, text="Title Override:")
+        title_lbl.pack(side="left")
         self.title_entry = ttk.Entry(r3, textvariable=self.title_var, width=28)
         self.title_entry.pack(side="left", padx=(4, 8), fill="x", expand=True)
+        self._attach_tip("title_override", self.title_entry, title_lbl)
 
         self.reset_opts_btn = ttk.Button(r3, text="Reset Defaults", command=self.on_reset_options)
-        self.reset_opts_btn.pack(side="right", padx=(4, 0))
-        self.help_opts_btn = ttk.Button(r3, text="? Parameter Guide & Examples", command=self.on_show_parameter_guide)
-        self.help_opts_btn.pack(side="right")
+        self.reset_opts_btn.pack(side="right")
 
         self._option_widgets = (
             self.dpi_entry,
@@ -214,9 +291,6 @@ class App(ttk.Frame):
         self.clef_var.set("auto")
         self.instrument_var.set("auto")
         self.title_var.set("")
-
-    def on_show_parameter_guide(self) -> None:
-        self.show_info("Parameter Guide & Examples", format_parameter_guide())
 
     def collect_options(self) -> ConversionOptions:
         try:
@@ -382,6 +456,8 @@ class App(ttk.Frame):
         self._after_id = self.after(self.POLL_MS, self._poll)
 
     def destroy(self) -> None:
+        for tip in self.tooltips.values():
+            tip.hide()
         if getattr(self, "_after_id", None):
             try:
                 self.after_cancel(self._after_id)

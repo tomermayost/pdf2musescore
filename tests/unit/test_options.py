@@ -8,6 +8,7 @@ from pdf2musescore.options import (
     ConversionOptions,
     OptionsError,
     format_parameter_guide,
+    get_parameter_tooltip,
 )
 
 
@@ -70,6 +71,10 @@ def test_parameter_guide_and_constants():
     for doc in PARAMETER_DOCS:
         assert doc.label in guide
         assert doc.examples in guide
+        tip = get_parameter_tooltip(doc.key)
+        assert doc.label in tip and doc.examples in tip
+    with pytest.raises(KeyError):
+        get_parameter_tooltip("nonexistent")
     assert "faded" in PREPROCESS_MODES
     assert "tenor" in CLEF_CHOICES
     assert "Trombone" in INSTRUMENT_PRESETS

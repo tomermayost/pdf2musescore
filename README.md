@@ -13,12 +13,12 @@ Optical music recognition is powered by [homr](https://github.com/liebharc/homr)
    - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**.
    - **SHA-256 (`v0.2.0`):** `279C44E7B8A23C5DC3EFCB39DDDE02710D9C7D5470DC4953A43B0101ADB08A72`
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
-3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`) or adjust **Engine & Score Parameters** (see table below, or click **? Parameter Guide & Examples** in the app), then click **Convert & Save as...**.
+3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`) or adjust **Engine & Score Parameters** (hover over any option in the app to see a tooltip with examples and defaults), then click **Convert & Save as...**.
 4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
 
 ## Engine & Score Parameters
 
-All parameters are available directly in the **Engine & Score Parameters** panel in the GUI (with a **Reset Defaults** button and a **? Parameter Guide & Examples** button):
+All parameters are available directly in the **Engine & Score Parameters** panel in the GUI (hover over any label or input box for a tooltip with default values and examples, or click **Reset Defaults**):
 
 ### PDF Rendering, Image Preprocessing & AI Engine
 | Parameter | Default | Examples | Description & When to Adjust |

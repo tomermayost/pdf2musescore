@@ -175,6 +175,19 @@ class ConversionOptions:
         object.__setattr__(self, "title_override", title if title else None)
 
 
+def get_parameter_tooltip(key: str) -> str:
+    """Return a formatted tooltip string (title, default, examples, description) for ``key``."""
+    for doc in PARAMETER_DOCS:
+        if doc.key == key:
+            default_disp = doc.default if doc.default != "" else "(blank / auto)"
+            return (
+                f"{doc.label}  (Default: {default_disp})\n"
+                f"Examples: {doc.examples}\n\n"
+                f"{doc.description}"
+            )
+    raise KeyError(f"Unknown parameter key: {key!r}")
+
+
 def format_parameter_guide() -> str:
     """Return a human-readable guide covering all parameters, defaults, examples, and explanations."""
     lines: list[str] = []
