@@ -5,6 +5,7 @@ import pytest
 from pdf2musescore.config import AppConfig
 from pdf2musescore.deps import InstallError, ToolNotFoundError
 from pdf2musescore.engines.base import OmrEngine, OmrError
+from pdf2musescore.engines.homr_engine import CancelledError
 from pdf2musescore.exporters.musescore import ExportError
 from pdf2musescore.pipeline import ConversionError, Pipeline
 
@@ -12,8 +13,8 @@ from .test_musicxml import score, write_mxl
 
 
 class FakeEngine(OmrEngine):
-    def __init__(self, n=2, exc=None, cb=None):
-        self.n, self.exc, self.cb = n, exc, cb
+    def __init__(self, n=2, exc=None, cb=None, pages_spec=None):
+        self.n, self.exc, self.cb, self.pages_spec = n, exc, cb, pages_spec
 
     def recognize(self, pdf, out_dir):
         if self.exc:
@@ -42,13 +43,16 @@ def pdf(tmp_path):
     return p
 
 
-def make(tmp_path, level="INFO", engine=None, exporter=FakeExporter, ensure=None, steps=None):
+def make(tmp_path, level="INFO", engine=None, exporter=FakeExporter, ensure=None, steps=None, is_cancelled=lambda: False):
     seen = []
     p = Pipeline(
         AppConfig(work_dir=tmp_path / "work", log_level=level),
         progress=lambda pct, m: (steps if steps is not None else []).append(pct),
+        is_cancelled=is_cancelled,
         ensure=ensure or (lambda spec, cfg, confirm: seen.append(spec.name) or Path(spec.name + ".exe")),
-        engine_factory=lambda dpi, cb: engine if engine is not None else FakeEngine(cb=cb),
+        engine_factory=lambda dpi, cb, pages_spec=None, is_cancelled=None: (
+            engine if engine is not None else FakeEngine(cb=cb, pages_spec=pages_spec)
+        ),
         exporter_factory=exporter,
     )
     return p, seen
@@ -57,11 +61,17 @@ def make(tmp_path, level="INFO", engine=None, exporter=FakeExporter, ensure=None
 def test_convert_mscz(tmp_path, pdf):
     steps = []
     p, seen = make(tmp_path, steps=steps)
-    out = p.convert(pdf, tmp_path / "out.mscz")
+    out = p.convert(pdf, tmp_path / "out.mscz", pages_spec="2-3")
     assert out.read_text() == "mscz"
     assert seen == ["MuseScore"]
     assert 100 in steps
     assert not any((tmp_path / "work").iterdir())
+
+
+def test_convert_cancelled(tmp_path, pdf):
+    p, _ = make(tmp_path, is_cancelled=lambda: True)
+    with pytest.raises(CancelledError):
+        p.convert(pdf, tmp_path / "out.mscz")
 
 
 def test_convert_musicxml_skips_musescore(tmp_path, pdf):
@@ -112,6 +122,7 @@ def _raiser(exc):
     (dict(ensure=_raiser(ToolNotFoundError("x"))), "not installed"),
     (dict(ensure=_raiser(InstallError("x"))), "Installing"),
     (dict(engine=FakeEngine(exc=OmrError("x"))), "could not be read"),
+    (dict(engine=FakeEngine(exc=OmrError("Page 5 is out of range"))), "out of range"),
     (dict(engine=FakeEngine(n=0)), "combined"),
     (dict(exporter=lambda exe: FakeExporter(exe, ExportError("x"))), "MuseScore could not"),
 ])
@@ -124,7 +135,7 @@ def test_errors_mapped(tmp_path, pdf, kwargs, match):
 
 def test_default_factories():
     p = Pipeline(AppConfig())
-    eng = p.engine_factory(300, None)
-    assert eng.dpi == 300
+    eng = p.engine_factory(300, None, "1-2", lambda: False)
+    assert eng.dpi == 300 and eng.pages_spec == "1-2"
     assert p.confirm("x") is False
     p.progress(1, "x")

@@ -53,4 +53,6 @@ def _show_fatal(message: str) -> None:  # pragma: no cover - UI popup
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    code = main()
+    import os
+    os._exit(code)

@@ -1,4 +1,4 @@
-"""Tkinter desktop window: Load PDF -> Convert & Save as."""
+"""Tkinter desktop window: Load PDF -> (optional Pages) -> Convert & Save as / Abort."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Callable, Optional
 from . import APP_NAME, AUTHOR_CREDIT, __version__
 from .config import AppConfig
 from .deps import MUSESCORE, find_tool
+from .engines.homr_engine import CancelledError, get_pdf_page_count
 from .pipeline import ConversionError, Pipeline
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class App(ttk.Frame):
     def __init__(self, master: tk.Misc, config: AppConfig,
                  pipeline_factory: Callable[..., Pipeline] = Pipeline,
                  musescore_available: Optional[Callable[[], bool]] = None,
+                 page_counter: Callable[[Path], int] = get_pdf_page_count,
                  ask_open: Callable[..., str] = filedialog.askopenfilename,
                  ask_save: Callable[..., str] = filedialog.asksaveasfilename,
                  ask_yes_no: Callable[[str, str], bool] = messagebox.askyesno,
@@ -51,6 +53,7 @@ class App(ttk.Frame):
         self.pipeline_factory = pipeline_factory
         self.musescore_available = musescore_available or (
             lambda: find_tool(MUSESCORE, config.musescore_path) is not None)
+        self.page_counter = page_counter
         self.ask_open, self.ask_save = ask_open, ask_save
         self.ask_yes_no, self.show_error, self.show_info = ask_yes_no, show_error, show_info
         self.open_folder = open_folder
@@ -58,6 +61,7 @@ class App(ttk.Frame):
         self.q: "queue.Queue" = queue.Queue()
         self.pdf: Optional[Path] = None
         self.worker: Optional[threading.Thread] = None
+        self._cancel_event = threading.Event()
         self._confirm_answer = False
         self._confirm_event = threading.Event()
 
@@ -71,7 +75,7 @@ class App(ttk.Frame):
     # ---------- UI ----------
     def _build(self) -> None:
         self.master.title(f"PDF to MuseScore {__version__} — {AUTHOR_CREDIT}")
-        self.master.minsize(560, 380)
+        self.master.minsize(580, 400)
         row = ttk.Frame(self)
         row.pack(fill="x")
         self.load_btn = ttk.Button(row, text="Load PDF...", command=self.on_load)
@@ -79,9 +83,21 @@ class App(ttk.Frame):
         self.file_var = tk.StringVar(value="No file selected")
         ttk.Label(row, textvariable=self.file_var).pack(side="left", padx=8)
 
-        self.convert_btn = ttk.Button(self, text="Convert & Save as...", command=self.on_convert,
+        pages_row = ttk.Frame(self)
+        pages_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(pages_row, text="Pages (optional, e.g. 2-3 or 1, 4):").pack(side="left")
+        self.pages_var = tk.StringVar(value="")
+        self.pages_entry = ttk.Entry(pages_row, textvariable=self.pages_var, width=18)
+        self.pages_entry.pack(side="left", padx=6)
+        ttk.Label(pages_row, text="(leave blank for all pages)").pack(side="left")
+
+        action_row = ttk.Frame(self)
+        action_row.pack(fill="x", pady=(10, 4))
+        self.convert_btn = ttk.Button(action_row, text="Convert & Save as...", command=self.on_convert,
                                       state="disabled")
-        self.convert_btn.pack(fill="x", pady=(10, 4))
+        self.convert_btn.pack(side="left", fill="x", expand=True)
+        self.abort_btn = ttk.Button(action_row, text="Abort", command=self.on_abort, state="disabled")
+        self.abort_btn.pack(side="left", padx=(6, 0))
 
         self.progress = ttk.Progressbar(self, maximum=100)
         self.progress.pack(fill="x")
@@ -99,7 +115,9 @@ class App(ttk.Frame):
     def _set_busy(self, busy: bool) -> None:
         state = "disabled" if busy else "normal"
         self.load_btn.configure(state=state)
+        self.pages_entry.configure(state=state)
         self.convert_btn.configure(state="disabled" if busy or not self.pdf else "normal")
+        self.abort_btn.configure(state="normal" if busy else "disabled")
 
     # ---------- actions ----------
     def on_load(self) -> None:
@@ -108,7 +126,11 @@ class App(ttk.Frame):
             log.debug("Load cancelled")
             return
         self.pdf = Path(path)
-        self.file_var.set(self.pdf.name)
+        try:
+            n_pages = self.page_counter(self.pdf)
+            self.file_var.set(f"{self.pdf.name} ({n_pages} page{'s' if n_pages != 1 else ''})")
+        except Exception:
+            self.file_var.set(self.pdf.name)
         self.status_var.set("Ready. Click 'Convert & Save as...'.")
         log.info("Selected PDF: %s", self.pdf)
         self._set_busy(False)
@@ -123,17 +145,30 @@ class App(ttk.Frame):
         if not out:
             log.debug("Save cancelled")
             return
-        self.start_conversion(self.pdf, Path(out))
+        self.start_conversion(self.pdf, Path(out), self.pages_var.get().strip() or None)
 
-    def start_conversion(self, pdf: Path, out: Path) -> None:
+    def on_abort(self) -> None:
+        log.info("Abort requested by user...")
+        self._cancel_event.set()
+        self.abort_btn.configure(state="disabled")
+        self.status_var.set("Aborting conversion (stopping after current step)...")
+
+    def start_conversion(self, pdf: Path, out: Path, pages_spec: Optional[str] = None) -> None:
+        self._cancel_event.clear()
         self._set_busy(True)
         self.progress["value"] = 0
-        pipeline = self.pipeline_factory(config=self.config_, confirm=self._confirm_from_worker,
-                                         progress=lambda p, m: self.q.put(("progress", (p, m))))
+        pipeline = self.pipeline_factory(
+            config=self.config_,
+            confirm=self._confirm_from_worker,
+            progress=lambda p, m: self.q.put(("progress", (p, m))),
+            is_cancelled=self._cancel_event.is_set,
+        )
 
         def work() -> None:
             try:
-                self.q.put(("done", pipeline.convert(pdf, out)))
+                self.q.put(("done", pipeline.convert(pdf, out, pages_spec=pages_spec)))
+            except CancelledError:
+                self.q.put(("aborted", None))
             except ConversionError as exc:
                 log.error("Conversion failed: %s", exc)
                 self.q.put(("error", exc.user_message))
@@ -179,6 +214,10 @@ class App(ttk.Frame):
             elif kind == "done":
                 self._set_busy(False)
                 self.show_info("Done", f"Saved:\n{payload}")
+            elif kind == "aborted":
+                self._set_busy(False)
+                self.progress["value"] = 0
+                self.status_var.set("Conversion aborted by user.")
             elif kind == "error":
                 self._set_busy(False)
                 self.progress["value"] = 0

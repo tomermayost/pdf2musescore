@@ -6,19 +6,24 @@ from pathlib import Path
 import pytest
 
 from pdf2musescore.config import AppConfig
+from pdf2musescore.engines.homr_engine import CancelledError
 from pdf2musescore.gui import App
 from pdf2musescore.pipeline import ConversionError
 
 
 class FakePipeline:
     behaviour = "ok"
+    last_pages_spec = None
 
-    def __init__(self, config, confirm, progress):
-        self.confirm, self.progress = confirm, progress
+    def __init__(self, config, confirm, progress, is_cancelled=lambda: False):
+        self.confirm, self.progress, self.is_cancelled = confirm, progress, is_cancelled
 
-    def convert(self, pdf, out):
+    def convert(self, pdf, out, pages_spec=None):
+        FakePipeline.last_pages_spec = pages_spec
         self.progress(50, "half")
         logging.getLogger("pdf2musescore.test").info("working")
+        if self.behaviour == "abort" or self.is_cancelled():
+            raise CancelledError("aborted")
         if self.behaviour == "confirm":
             if not self.confirm("Install?"):
                 raise ConversionError("declined")
@@ -46,10 +51,11 @@ def calls():
 
 
 def make_app(root, calls, tmp_path, open_path="C:/x/song.pdf", save_path="C:/x/song.mscz",
-             yes=True, musescore=True):
+             yes=True, musescore=True, page_counter=lambda p: 4):
     logging.getLogger("pdf2musescore").setLevel("DEBUG")
     return App(root, AppConfig(log_dir=tmp_path / "logs"), pipeline_factory=FakePipeline,
                musescore_available=lambda: musescore,
+               page_counter=page_counter,
                ask_open=lambda **k: open_path,
                ask_save=lambda **k: calls.setdefault("save_kwargs", k) and save_path,
                ask_yes_no=lambda t, m: calls["yesno"].append(m) or yes,
@@ -72,24 +78,49 @@ def pump(app, root, until, timeout=5):
 def test_initial_state(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path)
     assert str(app.convert_btn["state"]) == "disabled"
+    assert str(app.abort_btn["state"]) == "disabled"
     assert app.credit_label.cget("text") == "By Tomer Mayost"
     assert "By Tomer Mayost" in root.title()
     app.on_convert()  # no pdf -> no-op
     app.destroy()
 
 
-def test_load_and_convert_success(root, calls, tmp_path):
+def test_load_and_convert_with_pages(root, calls, tmp_path):
     FakePipeline.behaviour = "ok"
     app = make_app(root, calls, tmp_path)
     app.on_load()
-    assert app.file_var.get() == "song.pdf"
+    assert app.file_var.get() == "song.pdf (4 pages)"
     assert str(app.convert_btn["state"]) == "normal"
+    app.pages_var.set("2-3")
     app.on_convert()
     assert calls["save_kwargs"]["defaultextension"] == ".mscz"
     pump(app, root, lambda: calls["info"])
+    assert FakePipeline.last_pages_spec == "2-3"
     assert "song.mscz" in calls["info"][0]
     assert "working" in app.log_text.get("1.0", "end")
     assert app.progress["value"] == 50
+    app.destroy()
+
+
+def test_load_page_counter_error_fallback(root, calls, tmp_path):
+    def bad_counter(p):
+        raise ValueError("bad pdf")
+    app = make_app(root, calls, tmp_path, page_counter=bad_counter)
+    app.on_load()
+    assert app.file_var.get() == "song.pdf"
+    app.destroy()
+
+
+def test_abort_conversion(root, calls, tmp_path):
+    FakePipeline.behaviour = "abort"
+    app = make_app(root, calls, tmp_path)
+    app.on_load()
+    app.on_abort()
+    assert app._cancel_event.is_set()
+    app.on_convert()
+    pump(app, root, lambda: "aborted by user" in app.status_var.get())
+    assert calls["error"] == []
+    assert app.progress["value"] == 0
     app.destroy()
 
 

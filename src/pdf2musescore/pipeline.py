@@ -13,7 +13,7 @@ from typing import Callable, Optional
 from .config import AppConfig, ascii_safe_base_dir
 from .deps import MUSESCORE, InstallError, ToolNotFoundError, ensure_tool
 from .engines.base import OmrEngine, OmrError
-from .engines.homr_engine import HomrEngine
+from .engines.homr_engine import CancelledError, HomrEngine
 from .exporters.musescore import ExportError, MuseScoreExporter
 from .musicxml import MergeError, merge_files
 
@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 SUPPORTED_OUTPUTS = (".mscz", ".musicxml")
 ProgressFn = Callable[[int, str], None]
 ConfirmFn = Callable[[str], bool]
+CancelFn = Callable[[], bool]
 
 
 class ConversionError(RuntimeError):
@@ -38,16 +39,22 @@ class Pipeline:
     config: AppConfig
     confirm: ConfirmFn = lambda msg: False
     progress: ProgressFn = lambda pct, msg: None
+    is_cancelled: CancelFn = lambda: False
     ensure: Callable[..., Path] = ensure_tool
-    engine_factory: Callable[[int, Optional[Callable[[int, int], None]]], OmrEngine] = field(
-        default=lambda dpi, cb: HomrEngine(dpi=dpi, page_callback=cb))
+    engine_factory: Callable[..., OmrEngine] = field(
+        default=lambda dpi, cb, pages_spec=None, is_cancelled=lambda: False: HomrEngine(
+            dpi=dpi, pages_spec=pages_spec, is_cancelled=is_cancelled, page_callback=cb
+        )
+    )
     exporter_factory: Callable[[Path], MuseScoreExporter] = MuseScoreExporter
 
     def _step(self, pct: int, msg: str) -> None:
+        if self.is_cancelled():
+            raise CancelledError("Conversion aborted by user.")
         log.info("[%3d%%] %s", pct, msg)
         self.progress(pct, msg)
 
-    def convert(self, pdf: Path, output: Path) -> Path:
+    def convert(self, pdf: Path, output: Path, pages_spec: Optional[str] = None) -> Path:
         pdf, output = Path(pdf), Path(output)
         suffix = output.suffix.lower()
         if suffix not in SUPPORTED_OUTPUTS:
@@ -57,7 +64,7 @@ class Pipeline:
 
         safe_root = ascii_safe_base_dir(Path(self.config.work_dir).resolve())
         work = safe_root / f"job-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
-        log.info("Converting %s -> %s (work dir %s)", pdf, output, work)
+        log.info("Converting %s (pages=%r) -> %s (work dir %s)", pdf, pages_spec or "all", output, work)
         try:
             work.mkdir(parents=True, exist_ok=True)
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +83,8 @@ class Pipeline:
                     15 + int(55 * (idx - 1) / max(total, 1)),
                     f"Reading page {idx} of {total} with AI...",
                 ),
+                pages_spec,
+                self.is_cancelled,
             )
             pages_xml = engine.recognize(staged_pdf, work / "omr")
 
@@ -93,6 +102,9 @@ class Pipeline:
 
             self._step(100, f"Done! Saved {output.name}")
             return output
+        except CancelledError:
+            log.info("Conversion aborted by user")
+            raise
         except ToolNotFoundError as exc:
             raise ConversionError("MuseScore is not installed, so the conversion was cancelled.",
                                   str(exc)) from exc
@@ -100,8 +112,11 @@ class Pipeline:
             raise ConversionError("Installing MuseScore failed. Check your internet connection "
                                   "and try again.", str(exc)) from exc
         except OmrError as exc:
+            msg = str(exc)
+            if "page" in msg.lower() and ("range" in msg.lower() or "no pages" in msg.lower()):
+                raise ConversionError(msg) from exc
             raise ConversionError("The music could not be read from this PDF. Clear, printed scores "
-                                  "work best.", str(exc)) from exc
+                                  "work best.", msg) from exc
         except MergeError as exc:
             raise ConversionError("The recognized music could not be combined into one score.",
                                   str(exc)) from exc
