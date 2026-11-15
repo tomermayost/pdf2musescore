@@ -37,7 +37,7 @@ class FakePipeline:
         return out
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def root():
     try:
         r = tk.Tk()
@@ -46,6 +46,17 @@ def root():
     r.withdraw()
     yield r
     r.destroy()
+
+
+def close_app(app):
+    if app.worker is not None and app.worker.is_alive():
+        app.worker.join(timeout=2)
+    app.destroy()
+    for name in list(app.__dict__):
+        if name.endswith("_var"):
+            delattr(app, name)
+    import gc
+    gc.collect()
 
 
 @pytest.fixture
@@ -85,7 +96,7 @@ def test_initial_state(root, calls, tmp_path):
     assert app.credit_label.cget("text") == "By Tomer Mayost"
     assert "By Tomer Mayost" in root.title()
     app.on_convert()  # no pdf -> no-op
-    app.destroy()
+    close_app(app)
 
 
 def test_options_guide_reset_and_validation(root, calls, tmp_path):
@@ -134,7 +145,7 @@ def test_options_guide_reset_and_validation(root, calls, tmp_path):
         app.on_convert()
         assert calls["error"]
         calls["error"].clear()
-    app.destroy()
+    close_app(app)
 
 
 def test_load_and_convert_with_pages(root, calls, tmp_path):
@@ -153,7 +164,7 @@ def test_load_and_convert_with_pages(root, calls, tmp_path):
     assert "song.mscz" in calls["info"][0]
     assert "working" in app.log_text.get("1.0", "end")
     assert app.progress["value"] == 50
-    app.destroy()
+    close_app(app)
 
 
 def test_load_page_counter_error_fallback(root, calls, tmp_path):
@@ -162,7 +173,7 @@ def test_load_page_counter_error_fallback(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path, page_counter=bad_counter)
     app.on_load()
     assert app.file_var.get() == "song.pdf"
-    app.destroy()
+    close_app(app)
 
 
 def test_abort_conversion(root, calls, tmp_path):
@@ -175,7 +186,7 @@ def test_abort_conversion(root, calls, tmp_path):
     pump(app, root, lambda: "aborted by user" in app.status_var.get())
     assert calls["error"] == []
     assert app.progress["value"] == 0
-    app.destroy()
+    close_app(app)
 
 
 def test_xml_default_when_no_musescore(root, calls, tmp_path):
@@ -184,14 +195,14 @@ def test_xml_default_when_no_musescore(root, calls, tmp_path):
     app.on_convert()  # cancelled save
     assert calls["save_kwargs"]["defaultextension"] == ".musicxml"
     assert app.worker is None
-    app.destroy()
+    close_app(app)
 
 
 def test_load_cancelled(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path, open_path="")
     app.on_load()
     assert app.pdf is None
-    app.destroy()
+    close_app(app)
 
 
 @pytest.mark.parametrize("behaviour,yes,expected", [
@@ -207,7 +218,7 @@ def test_errors(root, calls, tmp_path, behaviour, yes, expected):
     pump(app, root, lambda: calls["error"])
     assert calls["error"] == [expected]
     assert "failed" in app.status_var.get()
-    app.destroy()
+    close_app(app)
 
 
 def test_confirm_yes(root, calls, tmp_path):
@@ -217,7 +228,7 @@ def test_confirm_yes(root, calls, tmp_path):
     app.on_convert()
     pump(app, root, lambda: calls["info"])
     assert "permission" in calls["yesno"][0]
-    app.destroy()
+    close_app(app)
 
 
 def test_open_logs(root, calls, tmp_path):
@@ -225,10 +236,10 @@ def test_open_logs(root, calls, tmp_path):
     app.on_open_logs()
     assert Path(calls["open"][0]).is_dir()
     app._poll()
-    app.destroy()
+    close_app(app)
 
 
 def test_default_musescore_check(root, tmp_path):
     app = App(root, AppConfig(musescore_path=tmp_path / "none.exe"))
     assert isinstance(app.musescore_available(), bool)
-    app.destroy()
+    close_app(app)
