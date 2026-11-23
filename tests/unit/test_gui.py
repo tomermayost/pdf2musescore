@@ -82,7 +82,7 @@ def make_app(
     engine_version="0.7.1",
     update_checker=None,
     installer_downloader=None,
-    theme="light",
+    theme="dark",
 ):
     logging.getLogger("pdf2musescore").setLevel("DEBUG")
     kwargs = {}
@@ -125,7 +125,15 @@ def pump(app, root, until, timeout=5):
 
 
 def test_initial_state(root, calls, tmp_path):
-    app = make_app(root, calls, tmp_path, engine_version="0.7.1")
+    probe_calls = []
+    app = App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs", work_dir=tmp_path / "work", check_updates=False),
+        musescore_available=lambda: probe_calls.append(1) or True,
+        engine_version="0.7.1",
+    )
+    assert app.theme_name == "dark"
+    assert len(probe_calls) == 1
     assert str(app.convert_btn["state"]) == "disabled"
     assert str(app.abort_btn["state"]) == "disabled"
     assert app.credit_label.cget("text") == "By Tomer Mayost"
@@ -213,13 +221,14 @@ def test_options_presets_stepper_theme_and_validation(root, calls, tmp_path):
         keep_line_breaks=True,
     )
 
-    # Light <-> Dark theme switch
-    assert app.theme_name == "light"
-    app.toggle_theme()
+    # Dark (default) <-> Light theme switch
     assert app.theme_name == "dark"
     assert "Light" in app.theme_btn.cget("text")
     app.toggle_theme()
     assert app.theme_name == "light"
+    assert "Dark" in app.theme_btn.cget("text")
+    app.toggle_theme()
+    assert app.theme_name == "dark"
 
     # Invalid integer fields trigger friendly error popup on_convert
     for var, bad in (

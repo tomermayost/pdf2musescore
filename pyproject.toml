@@ -4,16 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf2musescore"
-version = "0.4.1"
+version = "0.4.2"
 description = "Minimal Windows desktop app converting sheet-music PDFs to MusicXML / MuseScore using homr AI."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Tomer Mayost" }]
+keywords = [
+    "musescore",
+    "sheet-music",
+    "omr",
+    "optical-music-recognition",
+    "musicxml",
+    "pdf",
+    "homr",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+]
 dependencies = [
     "homr[cpu]>=0.7.1",
     "Pillow>=10.0",
     "pypdfium2>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/tomermayost/pdf2musescore"
+Repository = "https://github.com/tomermayost/pdf2musescore"
+Issues = "https://github.com/tomermayost/pdf2musescore/issues"
+Releases = "https://github.com/tomermayost/pdf2musescore/releases"
 
 [project.optional-dependencies]
 dev = [

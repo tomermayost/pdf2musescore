@@ -96,11 +96,11 @@ THEMES: dict[str, ThemePalette] = {
     ),
     "dark": ThemePalette(
         name="dark",
-        bg="#0B1120",
-        card="#1E293B",
-        card_alt="#162033",
-        border="#334155",
-        border_strong="#475569",
+        bg="#162032",
+        card="#1F2B3E",
+        card_alt="#192335",
+        border="#364760",
+        border_strong="#4E6380",
         text="#F8FAFC",
         text_muted="#CBD5E1",
         text_subtle="#94A3B8",
@@ -116,12 +116,12 @@ THEMES: dict[str, ThemePalette] = {
         warn_bg="#451A03",
         warn_text="#FCD34D",
         warn_border="#92400E",
-        input_bg="#0F172A",
-        input_border="#475569",
+        input_bg="#111A2B",
+        input_border="#4E6380",
         pill_bg="#334155",
         pill_text="#E2E8F0",
-        preview_bg="#0F172A",
-        log_bg="#020617",
+        preview_bg="#111A2B",
+        log_bg="#060A12",
         log_fg="#E2E8F0",
         log_debug="#94A3B8",
         log_warn="#FBBF24",
@@ -486,6 +486,18 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         thickness=8,
     )
     style.configure("Studio.TSeparator", background=palette.border)
+
+    style.configure(
+        "Studio.Vertical.TScrollbar",
+        background=palette.border_strong,
+        troughcolor=palette.log_bg,
+        bordercolor=palette.log_bg,
+        lightcolor=palette.border_strong,
+        darkcolor=palette.border_strong,
+        arrowcolor=palette.text_muted,
+        gripcount=0,
+    )
+    style.map("Studio.Vertical.TScrollbar", background=[("active", palette.text_subtle)])
 
 
 def format_transpose_label(semitones: int) -> str:

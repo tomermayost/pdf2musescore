@@ -11,7 +11,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, font as tkfont, messagebox, scrolledtext, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Callable, Optional
 import webbrowser
 
@@ -135,7 +135,7 @@ class App(ttk.Frame):
         launch_installer: Callable[[str], None] = _default_open_path,
         open_url: Callable[[str], bool] = webbrowser.open,
         on_exit: Optional[Callable[[], None]] = None,
-        theme: str = "light",
+        theme: str = "dark",
     ) -> None:
         self.config_ = config
         self.pipeline_factory = pipeline_factory
@@ -238,6 +238,7 @@ class App(ttk.Frame):
         self.master.title(f"PDF to MuseScore {__version__} (homr {self.engine_version}) — {AUTHOR_CREDIT}")
         self.master.minsize(780, 520)
 
+        self._has_musescore = bool(self.musescore_available())
         self._build_variables()
         self._build_header()
 
@@ -612,17 +613,35 @@ class App(ttk.Frame):
         )
         self.log_section.pack(fill="both", expand=True, pady=(4, 0))
 
-        self.log_text = scrolledtext.ScrolledText(
+        self.log_frame = tk.Frame(
             self.log_section.content,
+            background=self.palette.log_bg,
+            highlightbackground=self.palette.border_strong,
+            highlightthickness=1,
+        )
+        self.log_frame.pack(fill="both", expand=True)
+
+        self.log_scroll = ttk.Scrollbar(
+            self.log_frame,
+            orient="vertical",
+            style="Studio.Vertical.TScrollbar",
+        )
+        self.log_scroll.pack(side="right", fill="y")
+
+        self.log_text = tk.Text(
+            self.log_frame,
             height=4,
             state="disabled",
             font=(self._mono_font, 8),
             relief="flat",
             borderwidth=0,
+            highlightthickness=0,
             padx=8,
             pady=6,
+            yscrollcommand=self.log_scroll.set,
         )
-        self.log_text.pack(fill="both", expand=True)
+        self.log_text.pack(side="left", fill="both", expand=True)
+        self.log_scroll.configure(command=self.log_text.yview)
 
     def _build_footer(self) -> None:
         footer = ttk.Frame(self, style="App.TFrame")
@@ -631,7 +650,7 @@ class App(ttk.Frame):
         self.credit_label = ttk.Label(footer, text=AUTHOR_CREDIT, style="Footer.TLabel")
         self.credit_label.pack(side="left")
 
-        has_ms = self.musescore_available()
+        has_ms = self._has_musescore
         ms_text = "● MuseScore detected" if has_ms else "○ MusicXML export mode"
         ms_style = "FooterBadgeOk.TLabel" if has_ms else "FooterBadgeMuted.TLabel"
         self.ms_badge_lbl = ttk.Label(footer, text=ms_text, style=ms_style)
@@ -641,7 +660,7 @@ class App(ttk.Frame):
         self.logs_btn.pack(side="right")
 
     def _primary_cta_label(self) -> str:
-        if self.musescore_available():
+        if self._has_musescore:
             return "♪  Convert & Save as MuseScore (.mscz)..."
         return "♪  Convert & Save as MusicXML (.musicxml)..."
 
@@ -759,6 +778,7 @@ class App(ttk.Frame):
         self.advanced_section.apply_theme(p)
         self.log_section.apply_theme(p)
         self.result_banner.configure(background=p.success_bg, highlightbackground=p.success_border)
+        self.log_frame.configure(background=p.log_bg, highlightbackground=p.border_strong)
 
         self.log_text.configure(
             background=p.log_bg,
