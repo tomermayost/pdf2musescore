@@ -2,7 +2,7 @@
 ; Supports Windows 10 (Home and upwards) and Windows 11
 
 #define MyAppName "PDF to MuseScore"
-#define MyAppVersion "0.3.0"
+#define MyAppVersion "0.4.0"
 #define MyAppPublisher "Tomer Mayost"
 #define MyAppCredit "By Tomer Mayost"
 #define MyAppExeName "pdf2musescore.exe"
@@ -26,6 +26,7 @@ OutputDir=..\tmp\dist
 OutputBaseFilename=pdf2musescore-setup
 Compression=zip
 WizardStyle=modern
+SetupIconFile=..\src\pdf2musescore\assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]

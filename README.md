@@ -10,15 +10,15 @@ Optical music recognition is powered by [homr](https://github.com/liebharc/homr)
 👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** *(or view all [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases))*
 
 1. Download and run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
-   - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**.
-   - **SHA-256 (`v0.3.0`):** `3BD96937AC5583A72EC957CE5E97660F6155D806DB5B3C56BECC17A7154287AF`
+   - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**. *(Release checksums / CI artifacts are published on the [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases) page.)*
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
-3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`) or adjust **Engine & Score Parameters** (hover over any option in the app to see a tooltip with examples and defaults), then click **Convert & Save as...**.
-4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
+3. **Preview & Pick Pages:** Click the preview dropzone or **Load PDF...** (`Ctrl+O`) to view your sheet music page by page (`←` / `→`), click **Pick / Include page** or type a range (e.g. `2-3`), and pick a one-click Scan Type (**Clean PDF**, **Faded Scan**, or **Phone Photo**).
+4. **Score Setup & Convert:** Choose **Instrument**, **Clef**, **Transpose**, or expand **Advanced AI & Layout Settings** (hover any option for tooltips with defaults & examples), then click **Convert & Save** (`Ctrl+Enter`). When done, click **Open in MuseScore** or **Show Folder** directly from the completion banner! Toggle **🌙 Dark / ☀ Light** anytime from the top right.
+5. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
 
 ## Engine & Score Parameters
 
-All parameters are available directly in the **Engine & Score Parameters** panel in the GUI (hover over any label or input box for a tooltip with default values and examples, or click **Reset Defaults**):
+All parameters are available directly in **Score Setup** and the collapsible **Advanced AI & Layout Settings** drawer in the GUI (hover over any label or input box for a tooltip with default values and examples, or click **Reset**):
 
 ### PDF Rendering, Image Preprocessing & AI Engine
 | Parameter | Default | Examples | Description & When to Adjust |

@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf2musescore"
-version = "0.3.0"
+version = "0.4.0"
 description = "Minimal Windows desktop app converting sheet-music PDFs to MusicXML / MuseScore using homr AI."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
 dependencies = [
     "homr[cpu]>=0.7.1",
+    "Pillow>=10.0",
     "pypdfium2>=4.0",
 ]
 
@@ -26,6 +27,9 @@ pdf2musescore = "pdf2musescore.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+pdf2musescore = ["assets/*.ico", "assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

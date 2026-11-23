@@ -23,7 +23,13 @@ def main(argv: list[str] | None = None) -> int:
         import onnxruntime as ort  # noqa: F401
         import pypdfium2  # noqa: F401
         import rapidocr  # noqa: F401
+        from PIL import ImageTk  # noqa: F401
 
+        from pdf2musescore.ui_theme import get_assets_dir
+
+        assets = get_assets_dir()
+        assert (assets / "icon.ico").is_file()
+        assert (assets / "icon.png").is_file()
         assert get_engine_version() != "unknown"
         assert ort.get_available_providers()
         return 0

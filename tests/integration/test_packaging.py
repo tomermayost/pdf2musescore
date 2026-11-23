@@ -33,6 +33,8 @@ def test_build_and_smoke_run():
     assert EXE.is_file()
     internal = EXE.parent / "_internal"
     assert list(internal.glob("homr-*.dist-info")), "homr dist-info metadata must be bundled for version display"
+    assert (internal / "pdf2musescore" / "assets" / "icon.ico").is_file()
+    assert (internal / "pdf2musescore" / "assets" / "icon.png").is_file()
     internal_homr = internal / "homr"
     assert not list(internal_homr.rglob("*.onnx")), "homr .onnx models should be downloaded on first run, not bundled"
     res = subprocess.run([str(EXE), "--version"], timeout=30)
