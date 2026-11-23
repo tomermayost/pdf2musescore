@@ -5,10 +5,13 @@ from pdf2musescore.options import (
     INSTRUMENT_PRESETS,
     PARAMETER_DOCS,
     PREPROCESS_MODES,
+    SCAN_PRESETS,
     ConversionOptions,
     OptionsError,
+    detect_scan_preset,
     format_parameter_guide,
     get_parameter_tooltip,
+    get_scan_preset,
 )
 
 
@@ -77,3 +80,26 @@ def test_parameter_guide_and_constants():
     assert "faded" in PREPROCESS_MODES
     assert "tenor" in CLEF_CHOICES
     assert "Trombone" in INSTRUMENT_PRESETS
+
+
+def test_scan_presets_and_detection():
+    keys = [p.key for p in SCAN_PRESETS]
+    assert keys == ["clean", "faded", "photo"]
+
+    for preset in SCAN_PRESETS:
+        assert get_scan_preset(preset.key) == preset
+        opts = ConversionOptions(
+            render_dpi=preset.render_dpi,
+            preprocess_mode=preset.preprocess_mode,
+            deskew=preset.deskew,
+            segnet_step_size=preset.segnet_step_size,
+            min_notehead_size=preset.min_notehead_size,
+            transpose_semitones=2,  # score post-processing should not break engine preset detection
+        )
+        assert detect_scan_preset(opts) == preset.key
+
+    custom = ConversionOptions(render_dpi=420)
+    assert detect_scan_preset(custom) is None
+
+    with pytest.raises(KeyError):
+        get_scan_preset("unknown")

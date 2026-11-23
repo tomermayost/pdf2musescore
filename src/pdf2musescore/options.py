@@ -11,6 +11,52 @@ INSTRUMENT_PRESETS = ("auto", "Piano", "Trombone", "Violin", "Flute", "Trumpet",
 
 
 @dataclass(frozen=True)
+class ScanPreset:
+    key: str
+    label: str
+    subtitle: str
+    render_dpi: int
+    preprocess_mode: str
+    deskew: bool
+    segnet_step_size: int
+    min_notehead_size: int
+
+
+SCAN_PRESETS: tuple[ScanPreset, ...] = (
+    ScanPreset(
+        key="clean",
+        label="Clean PDF",
+        subtitle="Digital & crisp scans",
+        render_dpi=300,
+        preprocess_mode="auto",
+        deskew=False,
+        segnet_step_size=320,
+        min_notehead_size=4,
+    ),
+    ScanPreset(
+        key="faded",
+        label="Faded Scan",
+        subtitle="Light ink & old copies",
+        render_dpi=350,
+        preprocess_mode="faded",
+        deskew=True,
+        segnet_step_size=240,
+        min_notehead_size=4,
+    ),
+    ScanPreset(
+        key="photo",
+        label="Phone Photo",
+        subtitle="Camera shots & shadows",
+        render_dpi=300,
+        preprocess_mode="binarize",
+        deskew=True,
+        segnet_step_size=240,
+        min_notehead_size=5,
+    ),
+)
+
+
+@dataclass(frozen=True)
 class ParameterDoc:
     key: str
     section: str
@@ -204,3 +250,25 @@ def format_parameter_guide() -> str:
         lines.append(f"  Examples: {doc.examples}")
         lines.append(f"  {doc.description}")
     return "\n".join(lines)
+
+
+def get_scan_preset(key: str) -> ScanPreset:
+    """Return the :class:`ScanPreset` matching ``key`` (raises ``KeyError`` if unknown)."""
+    for preset in SCAN_PRESETS:
+        if preset.key == key:
+            return preset
+    raise KeyError(f"Unknown scan preset: {key!r}")
+
+
+def detect_scan_preset(options: ConversionOptions) -> Optional[str]:
+    """Return matching preset key for ``options``'s engine fields, or ``None`` if customized."""
+    for preset in SCAN_PRESETS:
+        if (
+            options.render_dpi == preset.render_dpi
+            and options.preprocess_mode == preset.preprocess_mode
+            and options.deskew == preset.deskew
+            and options.segnet_step_size == preset.segnet_step_size
+            and options.min_notehead_size == preset.min_notehead_size
+        ):
+            return preset.key
+    return None
