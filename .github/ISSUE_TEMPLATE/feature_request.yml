@@ -1,0 +1,24 @@
+name: Feature Request
+description: Suggest an improvement for musicians, notation handling, or workflow
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What musician workflow or problem would this help?
+      placeholder: "e.g., I frequently scan smartphone photos of band parts without converting JPG to PDF first..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How would you expect it to work in the app?
+    validations:
+      required: true
+  - type: input
+    id: instrument_context
+    attributes:
+      label: Instrument / Ensemble / Notation Context (optional)
+      placeholder: "e.g., Piano grand staff, B♭ Trumpet band parts, Cello solo, Guitar tab"

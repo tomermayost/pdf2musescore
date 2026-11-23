@@ -1,0 +1,64 @@
+name: Bug Report
+description: Report a crash, conversion problem, or MuseScore import issue
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! Including your log file and (if shareable) the PDF page helps fix bugs much faster.
+  - type: input
+    id: app_version
+    attributes:
+      label: App Version
+      description: Shown in the window title bar (e.g. `0.4.2 (homr 0.7.1)`)
+      placeholder: "0.4.2"
+    validations:
+      required: true
+  - type: input
+    id: windows_version
+    attributes:
+      label: Windows Version
+      placeholder: "Windows 11 24H2 / Windows 10 Home"
+    validations:
+      required: true
+  - type: input
+    id: musescore_version
+    attributes:
+      label: MuseScore Version (if using .mscz export)
+      placeholder: "MuseScore 4.4 / Not installed (MusicXML mode)"
+  - type: dropdown
+    id: scan_preset
+    attributes:
+      label: Scan Type Preset Used
+      options:
+        - Clean PDF
+        - Faded Scan
+        - Phone Photo
+        - Custom Advanced Settings
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What Happened & Steps to Reproduce
+      description: Tell us what you tried to convert and what went wrong.
+      placeholder: |
+        1. Loaded PDF...
+        2. Selected preset / pages...
+        3. Clicked Convert & Save...
+        4. Error or unexpected result:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log Output (from "Open log folder" in bottom-right)
+      description: Click "Open log folder" at the bottom-right of PDF to MuseScore and paste relevant lines from `pdf2musescore.log` (or drag-and-drop the log file).
+      render: text
+  - type: checkboxes
+    id: sample_pdf
+    attributes:
+      label: Sample PDF (optional)
+      options:
+        - label: I can attach a 1-page sample PDF or screenshot showing the problem (not copyrighted if public, or cropped excerpt).

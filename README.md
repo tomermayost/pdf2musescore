@@ -1,24 +1,98 @@
 # PDF to MuseScore
 
+[![Latest Release](https://img.shields.io/github/v/release/tomermayost/pdf2musescore?label=Download&color=2563EB)](https://github.com/tomermayost/pdf2musescore/releases/latest)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
+[![Platform: Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6)](#download--installation-no-python-or-java-required)
+[![CI Build](https://img.shields.io/github/actions/workflow/status/tomermayost/pdf2musescore/release.yml?label=CI%20Build)](https://github.com/tomermayost/pdf2musescore/actions/workflows/release.yml)
+[![OMR Engine: homr 0.7+](https://img.shields.io/badge/OMR%20Engine-homr%200.7%2B-4338CA)](https://github.com/liebharc/homr)
+
 **By Tomer Mayost**
 
-Minimal Windows desktop app (Windows 10 Home & upwards, Windows 11): **Load PDF → Convert & Save as** MuseScore (`.mscz`) or MusicXML (`.musicxml`).
-Optical music recognition is powered by [homr](https://github.com/liebharc/homr) 0.7+ deep-learning AI (ONNX Runtime on CPU), recognizing **notes, slurs, ties, dynamics, expression modifiers (`dolce`, `a tempo`, etc.), beams, and multi-page scores** while automatically flowing line breaks and sanitizing tuplets/tremolos for MuseScore 4.
+Convert sheet music PDFs into editable **MuseScore 4 (`.mscz`)** and **MusicXML (`.musicxml`)** files — **100% free, runs locally on your PC, no account, no page limits, and no Python or Java setup**.
 
-## Download & End-User Installation (No Python or Java Required)
+> 👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
 
-👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** *(or view all [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases))*
+![PDF to MuseScore Light Studio Interface](docs/assets/ui-light.png)
 
-1. Download and run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
-   - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**. *(Release checksums / CI artifacts are published on the [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases) page.)*
-2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
-3. **Preview & Pick Pages:** Click the preview dropzone or **Load PDF...** (`Ctrl+O`) to view your sheet music page by page (`←` / `→`), click **Pick / Include page** or type a range (e.g. `2-3`), and pick a one-click Scan Type (**Clean PDF**, **Faded Scan**, or **Phone Photo**).
-4. **Score Setup & Convert:** Choose **Instrument**, **Clef**, **Transpose**, or expand **Advanced AI & Layout Settings** (hover any option for tooltips with defaults & examples), then click **Convert & Save** (`Ctrl+Enter`). When done, click **Open in MuseScore** or **Show Folder** directly from the completion banner! Toggle **🌙 Dark / ☀ Light** anytime from the top right.
-5. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
+<details>
+<summary>Preview Dark Studio Theme &amp; Advanced AI Settings Drawer</summary>
+
+![PDF to MuseScore Dark Studio Interface with Advanced Settings](docs/assets/ui-dark.png)
+
+</details>
+
+---
+
+## Real Conversion Example (Before → After)
+
+Converted directly on local CPU from [tests/fixtures/bach_cello_suite_2.pdf](tests/fixtures/bach_cello_suite_2.pdf) (public domain) into an editable `.mscz` score opened in MuseScore 4:
+
+![Before and After: Original Bach Cello Suite No. 2 PDF compared with Editable MuseScore 4 output](docs/assets/before-after-bach.png)
+
+Notice how `pdf2musescore` automatically preserves slurs, stems, beams, and flowing measure layout (stripping forced PDF line breaks and sanitizing slurs/tuplets/tremolos so MuseScore 4 imports cleanly). And if the AI misses a clef sign (as on bar 1 above), the built-in **Clef** selector (`bass`, `treble`, `alto`, `tenor`) fixes the entire score in one click.
+
+---
+
+## Why PDF to MuseScore?
+
+| Feature | **PDF to MuseScore** | MuseScore Online Import | Audiveris | Paid Scanners *(PlayScore 2 / ScanScore / PhotoScore)* |
+|---|---|---|---|---|
+| **Price** | **100% Free & Open Source** | Free tier capped / Pro needed | Free & Open Source | Paid / Subscription |
+| **Account Required?** | **No** | Yes (MuseScore.com) | No | Usually / License key |
+| **Privacy / Offline** | **100% Local on CPU** | Uploads PDF to cloud | Local | Local or cloud |
+| **Page / Score Limits** | **Unlimited** | Limited on free tier | Unlimited | Page limits on trials |
+| **Windows Setup** | **1-Click Installer (~105 MB)** | Built into MuseScore | Requires Java runtime | Standard installer |
+| **Direct `.mscz` Output** | **Yes** *(plus `.musicxml`)* | Yes | Exports MusicXML first | Exports MusicXML first |
+| **Transpose & Clef Fix** | **Built-in before export** | Edit after import | Edit after import | Varies |
+
+---
+
+## Key Features
+
+- **Live Sheet-Music Preview & Interactive Page Picker:** Flip through PDF pages (`◀` / `▶` or `←` / `→`) inside the app and click **Pick / Include page** (or type ranges like `2-3, 5`) to convert only the movements or pages you need.
+- **One-Click Scan Presets:** Choose **Clean PDF**, **Faded Scan** (enhances light photocopies + auto-deskews), or **Phone Photo** (adaptive shadow removal + auto-deskew) — no guesswork required.
+- **Musician-First Score Setup:** Pick **Instrument**, override **Clef**, or **Transpose** (`−` / `+` half-steps with live musical hints like `+2 (Up M2 · B♭)` for trumpet/clarinet/tenor sax) before opening in MuseScore.
+- **MuseScore 4 Sanitization & Unicode Path Safety:** Cleans unclosed slurs, malformed tuplets, and problematic tremolos from raw OMR output, sets the score title from your saved filename, and handles non-ASCII folders reliably.
+- **Powered by `homr` 0.7+ Deep-Learning AI:** Runs ONNX Runtime locally on CPU — recognizing notes, slurs, ties, dynamics, expression text (`dolce`, `a tempo`, etc.), beams, and multi-page scores.
+
+---
+
+## What Works Best (Honest Expectations)
+
+Optical music recognition (OMR) has come a long way, and setting clear expectations saves frustration:
+- **Shines on:** Crisp digital PDFs, printed solo/chamber/band parts, lead sheets, piano scores, slightly faded photocopies (`Faded Scan`), and clear smartphone shots (`Phone Photo`).
+- **Expect light proofreading on:** Very dense multi-staff orchestral scores, overlapping vocal lyrics/chords, or unusual contemporary notation — just like every OMR engine, you may still want to touch up occasional accidentals, clefs, or tuplets in MuseScore 4.
+- **Not designed for:** Handwritten manuscripts or blurry low-contrast photos.
+
+---
+
+## Download & Installation (No Python or Java Required)
+
+1. Download **[`pdf2musescore-setup.exe` (~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** from the [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases) page (supports **Windows 10 Home and upwards & Windows 11**, 64-bit).
+2. Run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
+   - **Windows SmartScreen note:** Standalone GitHub `.exe` releases are currently **unsigned** (see [Code Signing & Trust](#code-signing-trust--privacy-policy)), so Windows SmartScreen may show *"Windows protected your PC"*. Click **More info** → **Run anyway** after verifying the checksum/provenance below. *(Signed Microsoft Store MSIX distribution is planned next to remove SmartScreen completely.)*
+3. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
+4. **Preview & Pick Pages:** Click the preview pane or **Load PDF...** (`Ctrl+O`), browse pages (`←` / `→`), optionally click **Pick / Include page** or type a range (e.g. `2-3`), and select **Clean PDF**, **Faded Scan**, or **Phone Photo**.
+5. **Score Setup & Convert:** Set **Instrument**, **Clef**, **Transpose**, or expand **Advanced AI & Layout Settings** (hover any control for defaults & examples), then click **Convert & Save** (`Ctrl+Enter`). When finished, click **Open in MuseScore** or **Show Folder** in the completion banner. Toggle **🌙 Dark / ☀ Light** anytime in the top right.
+6. On your first conversion, the app downloads the open-source `homr` ONNX AI models once (~134 MB) and caches them locally for offline use afterward.
+
+### Verifying Your Download (`SHA256SUMS.txt` & Build Provenance)
+
+Every public CI release is built automatically on GitHub-hosted Windows runners and publishes both `SHA256SUMS.txt` and a cryptographic [GitHub Build Provenance Attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations):
+
+```powershell
+# Verify SHA-256 hash matches the value in SHA256SUMS.txt from the release page
+Get-FileHash .\pdf2musescore-setup.exe -Algorithm SHA256
+
+# Optional (if GitHub CLI is installed): verify CI provenance against this repository
+gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore
+```
+
+---
 
 ## Engine & Score Parameters
 
-All parameters are available directly in **Score Setup** and the collapsible **Advanced AI & Layout Settings** drawer in the GUI (hover over any label or input box for a tooltip with default values and examples, or click **Reset**):
+All parameters are available directly in **Score Setup** and the collapsible **Advanced AI & Layout Settings** drawer in the GUI (hover over any label or input box for tooltips with defaults and examples, or click **Reset**):
 
 ### PDF Rendering, Image Preprocessing & AI Engine
 | Parameter | Default | Examples | Description & When to Adjust |
@@ -36,6 +110,8 @@ All parameters are available directly in **Score Setup** and the collapsible **A
 | **Clef** (`clef_override`) | `auto` | `auto`, `treble`, `bass`, `alto`, `tenor` | Keep at `auto` to use whatever clef is printed on the page, or pick a clef (`bass` or `tenor` for Trombone/Cello, `treble` for Violin/Flute, `alto` for Viola) if the scan misread the clef sign. |
 | **Instrument** (`instrument_name`) | `auto` | `auto`, `Piano`, `Trombone`, `Violin`, `Flute`, `Trumpet`, `Cello` | Sets the instrument name and playback sound in MuseScore. Pick one from the list or type any instrument name you like. *(Note: the score title is set automatically from the filename you choose when saving.)* |
 | **Keep Original Line Breaks** (`keep_line_breaks`) | `False` | `Off` (auto-flow), `On` (lock breaks to PDF) | When turned off *(recommended)*, removes forced system and page breaks so MuseScore flows measures neatly across lines and pages. Turn on only if you want every line and page to break in the exact same places as the original PDF. |
+
+---
 
 ## Development & Testing
 
@@ -78,13 +154,17 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 | `render_dpi` | `300` | PDF page rendering DPI for OMR |
 | `check_updates` | `true` | Silently check GitHub Releases on startup (`false` to disable) |
 
-## Code Signing Policy
+---
 
-Free code signing is provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+## Code Signing, Trust & Privacy Policy
 
+- **Signing Status:** Standalone `.exe` GitHub installers are currently **unsigned** while the project builds community traction to qualify for free open-source code signing via [SignPath Foundation](https://signpath.org/) (our CI pipeline already supports SignPath integration once approved, and signed Microsoft Store MSIX packaging is planned as well). Every release publishes `SHA256SUMS.txt` and GitHub build provenance attestations from public GitHub Actions workflows.
 - **Committers and Reviewers:** [Tomer Mayost](https://github.com/tomermayost)
-- **Privacy Policy:** This program will not transfer personal information to other networked systems. Network access is limited to: (1) a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional installer download only when the user explicitly clicks **Yes** to update, and (3) downloading the open-source `homr` ONNX optical music recognition model weights on the first conversion run.
+- **Privacy Policy:** This program will not transfer personal information or your sheet music PDFs to external servers. Network access is strictly limited to: (1) a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional installer download only when the user explicitly clicks **Yes** to update, and (3) downloading the open-source `homr` ONNX optical music recognition model weights once on the first conversion run.
 
-## License
+---
 
-Released under the [MIT License](LICENSE). Copyright (c) 2026 Tomer Mayost.
+## License & Credits
+
+- Released under the **[GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)](LICENSE)**. Copyright (c) 2026 Tomer Mayost.
+- Powered by **[homr](https://github.com/liebharc/homr)** (`AGPL-3.0`) for deep-learning optical music recognition, plus [pypdfium2](https://github.com/pypdfium2-team/pypdfium2), [OpenCV](https://opencv.org/), [ONNX Runtime](https://onnxruntime.ai/), and [MuseScore](https://musescore.org/) for `.mscz` export.

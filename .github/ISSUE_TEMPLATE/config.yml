@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions, Showcase & OMR Tips (GitHub Discussions)
+    url: https://github.com/tomermayost/pdf2musescore/discussions
+    about: Ask questions, share conversion tips, or show what you converted with PDF to MuseScore.
