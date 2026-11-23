@@ -139,7 +139,8 @@ def test_license_and_pyproject_metadata_aligned_agplv3() -> None:
     assert proj["authors"] == [{"name": "Tomer Mayost"}]
     assert "musescore" in proj["keywords"]
     assert any("AGPLv3+" in c for c in proj["classifiers"])
-    for key in ("Homepage", "Repository", "Issues", "Releases"):
+    assert proj["urls"]["Homepage"] == "https://tomermayost.github.io/pdf2musescore/"
+    for key in ("Repository", "Issues", "Releases"):
         assert proj["urls"][key].startswith("https://github.com/tomermayost/pdf2musescore")
 
 

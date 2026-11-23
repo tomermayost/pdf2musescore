@@ -10,7 +10,7 @@
 
 Convert sheet music PDFs into editable **MuseScore 4 (`.mscz`)** and **MusicXML (`.musicxml`)** files — **100% free, runs locally on your PC, no account, no page limits, and no Python or Java setup**.
 
-> 👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
+> 👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** · 🌐 **[Website](https://tomermayost.github.io/pdf2musescore/)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
 
 ![PDF to MuseScore Light Studio Interface](docs/assets/ui-light.png)
 

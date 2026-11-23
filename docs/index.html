@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF to MuseScore — Free, Offline AI Sheet Music Converter for Windows</title>
+  <meta name="description" content="Convert sheet music PDFs into editable MuseScore 4 (.mscz) and MusicXML files for free. 100% local offline AI powered by homr — no account, no page limits, no Python or Java setup.">
+  <meta name="keywords" content="convert pdf to musescore, pdf to musicxml, sheet music omr, free optical music recognition, homr gui, musescore 4 pdf converter">
+  <link rel="canonical" href="https://tomermayost.github.io/pdf2musescore/">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://tomermayost.github.io/pdf2musescore/">
+  <meta property="og:title" content="PDF to MuseScore — Free, Offline AI Sheet Music Converter">
+  <meta property="og:description" content="Turn printed scores, faded scans, and phone photos into editable MuseScore 4 (.mscz) and MusicXML scores locally on your Windows PC. Free, open source, no limits.">
+  <meta property="og:image" content="https://tomermayost.github.io/pdf2musescore/assets/social-preview.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PDF to MuseScore — Free, Offline AI Sheet Music Converter">
+  <meta name="twitter:description" content="Convert sheet music PDFs to editable MuseScore 4 (.mscz) and MusicXML locally on Windows. Free, open source, no account or page limits.">
+  <meta name="twitter:image" content="https://tomermayost.github.io/pdf2musescore/assets/social-preview.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "PDF to MuseScore",
+    "operatingSystem": "Windows 10, Windows 11",
+    "applicationCategory": "MultimediaApplication",
+    "description": "Free, offline Windows desktop application converting sheet music PDFs into editable MuseScore 4 (.mscz) and MusicXML scores using local homr AI.",
+    "softwareVersion": "0.4.3",
+    "license": "https://www.gnu.org/licenses/agpl-3.0.en.html",
+    "url": "https://tomermayost.github.io/pdf2musescore/",
+    "downloadUrl": "https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe",
+    "author": {
+      "@type": "Person",
+      "name": "Tomer Mayost"
+    },
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  }
+  </script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-nav">
+    <div class="container nav-inner">
+      <a class="brand" href="#top">
+        <img src="assets/favicon.png" alt="PDF to MuseScore icon" width="30" height="30">
+        <span>PDF to MuseScore</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#preview">Before &amp; After</a>
+        <a href="#features">Features</a>
+        <a href="#compare">Compare</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+
+      <div class="nav-actions">
+        <button id="themeToggle" class="btn-theme" type="button" aria-label="Switch to light theme">☀ Light</button>
+        <a class="btn btn-primary btn-sm" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">Download</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="top" class="hero">
+      <div class="container hero-grid">
+        <div>
+          <span class="eyebrow">100% Free · Offline Local AI · GNU AGPL-3.0</span>
+          <h1>Turn Sheet Music PDFs into Editable MuseScore 4 Scores</h1>
+          <p class="hero-sub">
+            Convert printed PDFs, faded photocopies, and smartphone photos straight into
+            <strong>.mscz</strong> and <strong>MusicXML</strong> files — running locally on your Windows PC
+            with no account, no cloud uploads, and no page limits.
+          </p>
+
+          <div class="hero-cta-row">
+            <a id="heroDownloadBtn" class="btn btn-primary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">
+              <span>Download for Windows (.exe)</span>
+              <span id="releaseTagBadge" class="version-tag">Latest</span>
+            </a>
+            <a class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore">View Source on GitHub</a>
+          </div>
+
+          <p class="hero-meta">
+            Windows 10 &amp; 11 (64-bit) · ~105 MB Setup Wizard · Zero Python or Java setup ·
+            <a href="#faq">SmartScreen &amp; SHA-256 verification</a>
+          </p>
+
+          <div class="trust-chips" aria-label="Key highlights">
+            <span class="chip"><span class="dot"></span>No Account Required</span>
+            <span class="chip"><span class="dot"></span>100% Local CPU AI</span>
+            <span class="chip"><span class="dot"></span>Direct .mscz &amp; MusicXML</span>
+            <span class="chip"><span class="dot"></span>Unlimited Pages</span>
+          </div>
+        </div>
+
+        <div class="showcase-card">
+          <div class="showcase-bar">
+            <div class="tab-group" role="tablist" aria-label="App theme preview">
+              <button id="tabDark" class="tab-btn" type="button" role="tab" aria-selected="true">Dark Studio</button>
+              <button id="tabLight" class="tab-btn" type="button" role="tab" aria-selected="false">Light Studio</button>
+            </div>
+            <span id="heroPreviewCaption" class="showcase-caption">Dark Studio + Advanced AI Settings</span>
+          </div>
+          <div class="showcase-frame">
+            <img id="heroPreviewImg" src="assets/ui-dark.png" alt="PDF to MuseScore Dark Studio interface with Advanced AI settings drawer">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="preview" class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <h2>Real Conversion Example (Before → After)</h2>
+          <p>
+            Converted directly on a regular laptop CPU from the public-domain
+            <strong>Bach Cello Suite No. 2 (Prélude)</strong> scan into an editable MuseScore 4 score.
+          </p>
+        </div>
+
+        <div class="ba-wrap">
+          <button id="openBeforeAfterZoom" class="ba-zoom-btn" type="button" aria-label="Zoom Before and After sheet music comparison">
+            <img src="assets/before-after-bach.png" alt="Side-by-side comparison of original Bach Cello Suite No. 2 PDF scan and editable MuseScore 4 output">
+          </button>
+          <div class="ba-footer">
+            <span>
+              Preserves <strong>bass clef, D minor key signature (B♭), 3/4 time, slurs, ties, stems, beams</strong>,
+              and clean auto-flowing measures for MuseScore 4.
+            </span>
+            <span class="zoom-pill">Click image to zoom</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2>From PDF to Playable Score in Three Simple Steps</h2>
+          <p>Built for musicians, students, and band directors — no command line or Java configuration.</p>
+        </div>
+
+        <div class="steps-grid">
+          <article class="card">
+            <div class="step-num">1</div>
+            <h3>Load PDF &amp; Pick Pages</h3>
+            <p>
+              Preview every page right inside the studio window (<code>←</code> / <code>→</code>) and click
+              <strong>Pick page</strong> or enter ranges like <code>2-3, 5</code> so you only convert the movements you need.
+            </p>
+          </article>
+
+          <article class="card">
+            <div class="step-num">2</div>
+            <h3>Choose Scan Type &amp; Setup</h3>
+            <p>
+              Select <strong>Clean PDF</strong>, <strong>Faded Scan</strong>, or <strong>Phone Photo</strong>,
+              then set <strong>Instrument</strong>, <strong>Clef</strong>, or <strong>Transpose</strong> (e.g. <code>+2</code> for B♭ instruments).
+            </p>
+          </article>
+
+          <article class="card">
+            <div class="step-num">3</div>
+            <h3>Convert &amp; Open in MuseScore</h3>
+            <p>
+              Local AI recognizes the music, sanitizes slurs/tuplets/line breaks for MuseScore 4, and gives you a
+              1-click <strong>Open in MuseScore</strong> button.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <h2>Designed Around Real Musician Workflows</h2>
+          <p>Every knob is plain English, tooltipped with musical examples, and remembered between sessions.</p>
+        </div>
+
+        <div class="features-grid">
+          <article class="card">
+            <h3>Live Preview &amp; Page Picker</h3>
+            <p>Inspect multi-page PDFs visually before converting so you never waste time scanning title pages or extra movements.</p>
+          </article>
+          <article class="card">
+            <h3>One-Click Scan Presets</h3>
+            <p>Switch cleanly between <strong>Clean PDF</strong>, <strong>Faded Scan</strong> (contrast boost + deskew), and <strong>Phone Photo</strong> (shadow cleanup).</p>
+          </article>
+          <article class="card">
+            <h3>Transpose &amp; Clef Override</h3>
+            <p>Shift parts by semitones with live interval hints like <code>+2 (Up M2 · B♭)</code>, or override clef &amp; playback instrument before export.</p>
+          </article>
+          <article class="card">
+            <h3>MuseScore 4 Sanitization</h3>
+            <p>Automatically pairs unclosed slurs, fixes malformed tuplets/tremolos, removes forced line breaks, and sets score title from your saved filename.</p>
+          </article>
+          <article class="card">
+            <h3>Private Local CPU AI</h3>
+            <p>Powered by open-source <code>homr 0.7+</code> ONNX models running offline on your CPU — your unpublished arrangements never leave your PC.</p>
+          </article>
+          <article class="card">
+            <h3>Zero Setup &amp; Saves Preferences</h3>
+            <p>Self-contained Windows installer with Light/Dark themes, safe Unicode folder handling, remembered settings, and optional GitHub update alerts.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="compare" class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2>How It Compares</h2>
+          <p>No subscriptions, no page quotas, and no uploading private scores to a cloud account.</p>
+        </div>
+
+        <div class="table-scroll">
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th class="col-ours">PDF to MuseScore</th>
+                <th>MuseScore Online Import</th>
+                <th>Audiveris</th>
+                <th>Paid Scanners<br><small>(PlayScore 2 / ScanScore / PhotoScore)</small></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Price</strong></td>
+                <td class="col-ours">100% Free &amp; Open Source</td>
+                <td>Free tier capped / Pro needed</td>
+                <td>Free &amp; Open Source</td>
+                <td>Paid / Subscription</td>
+              </tr>
+              <tr>
+                <td><strong>Account Required?</strong></td>
+                <td class="col-ours">No</td>
+                <td>Yes (MuseScore.com)</td>
+                <td>No</td>
+                <td>Usually / License key</td>
+              </tr>
+              <tr>
+                <td><strong>Privacy / Runs Offline</strong></td>
+                <td class="col-ours">100% Local on CPU</td>
+                <td>Uploads PDF to cloud</td>
+                <td>Local</td>
+                <td>Local or cloud</td>
+              </tr>
+              <tr>
+                <td><strong>Page / Score Limits</strong></td>
+                <td class="col-ours">Unlimited</td>
+                <td>Limited on free tier</td>
+                <td>Unlimited</td>
+                <td>Trial page caps</td>
+              </tr>
+              <tr>
+                <td><strong>Windows Installation</strong></td>
+                <td class="col-ours">1-Click Installer (~105 MB)</td>
+                <td>Built into MuseScore</td>
+                <td>Requires Java runtime</td>
+                <td>Standard installer</td>
+              </tr>
+              <tr>
+                <td><strong>Direct .mscz Output</strong></td>
+                <td class="col-ours">Yes (plus .musicxml)</td>
+                <td>Yes</td>
+                <td>Exports MusicXML first</td>
+                <td>Exports MusicXML first</td>
+              </tr>
+              <tr>
+                <td><strong>Pre-Export Transpose &amp; Clef</strong></td>
+                <td class="col-ours">Built-in</td>
+                <td>Edit after import</td>
+                <td>Edit after import</td>
+                <td>Varies</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <h2>Honest Expectations</h2>
+          <p>Optical music recognition saves hours of note entry, though knowing where AI excels helps get clean results fast.</p>
+        </div>
+
+        <div class="split-grid">
+          <article class="card">
+            <span class="badge-ok">SHINES ON</span>
+            <h3>Printed Scores, Solo/Band Parts &amp; Clean Scans</h3>
+            <ul class="expect-list">
+              <li>Crisp digital sheet-music PDFs exported from notation apps</li>
+              <li>Solo, chamber, piano, and band/ensemble parts</li>
+              <li>Light or vintage photocopies using the <strong>Faded Scan</strong> preset</li>
+              <li>Clear smartphone photos using the <strong>Phone Photo</strong> preset</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <span class="badge-warn">CURRENT AI LIMITS</span>
+            <h3>Complex Notation &amp; Handwritten Manuscripts</h3>
+            <ul class="expect-list">
+              <li>Expect light proofreading in MuseScore 4 on dense multi-staff orchestral scores</li>
+              <li>Heavy vocal lyrics, chord grids, or experimental modern notation can confuse any OMR engine</li>
+              <li>Handwritten manuscripts and blurry low-contrast photos are not supported</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq" class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2>Frequently Asked Questions</h2>
+          <p>Quick answers on privacy, Windows SmartScreen verification, and requirements.</p>
+        </div>
+
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary>Does PDF to MuseScore upload my sheet music anywhere?</summary>
+            <div class="faq-body">
+              No. All PDF rendering and AI music recognition runs <strong>100% locally on your CPU</strong>. The only optional network requests are downloading the open-source <code>homr</code> ONNX model weights once on your first conversion, and a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via <code>check_updates = false</code>).
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Why does Windows SmartScreen warn about the installer, and how do I verify it?</summary>
+            <div class="faq-body">
+              Independent open-source Windows installers aren't signed with an expensive commercial EV certificate yet (we're also preparing a Microsoft-signed <strong>Microsoft Store</strong> release to remove SmartScreen completely). Click <strong>More info → Run anyway</strong>, or verify every public CI build using <code>SHA256SUMS.txt</code> and GitHub Build Provenance Attestations:
+              <pre>Get-FileHash .\pdf2musescore-setup.exe -Algorithm SHA256
+gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore</pre>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Do I need MuseScore, Python, or Java installed?</summary>
+            <div class="faq-body">
+              No Python or Java setup is needed — everything is bundled in the Windows Setup Wizard. If <strong>MuseScore 4</strong> is installed, the app automatically saves directly as <code>.mscz</code> (and offers to install it or export pure <code>.musicxml</code> if MuseScore isn't detected).
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Why does the first conversion download ~134 MB?</summary>
+            <div class="faq-body">
+              To keep the Windows installer compact (~105 MB), the open-source <code>homr</code> neural network weights (~134 MB) are downloaded once during your very first conversion and cached locally for offline use afterward.
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>Where can I report a bug, share sample scores, or request features?</summary>
+            <div class="faq-body">
+              Join <a href="https://github.com/tomermayost/pdf2musescore/discussions">GitHub Discussions</a> to ask questions or share tips, or open a ticket in <a href="https://github.com/tomermayost/pdf2musescore/issues">GitHub Issues</a> (clicking <strong>Open log folder</strong> in the bottom-right of the app attaches helpful diagnostic logs).
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt">
+      <div class="container">
+        <div class="cta-banner">
+          <div>
+            <h2>Ready to Convert Your Sheet Music?</h2>
+            <p>Free forever, local AI on your Windows PC, open source under GNU AGPL-3.0.</p>
+          </div>
+          <div class="hero-cta-row">
+            <a class="btn btn-primary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">Download for Windows (.exe)</a>
+            <a class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases">All Releases &amp; Checksums</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>PDF to MuseScore by <strong>Tomer Mayost</strong> · Powered by <a href="https://github.com/liebharc/homr">homr</a> AI · GNU AGPL-3.0-or-later</span>
+      <div class="footer-links">
+        <a href="https://github.com/tomermayost/pdf2musescore">GitHub</a>
+        <a href="https://github.com/tomermayost/pdf2musescore/releases">Releases</a>
+        <a href="https://github.com/tomermayost/pdf2musescore/discussions">Discussions</a>
+        <a href="https://github.com/tomermayost/pdf2musescore/issues">Issues</a>
+        <a href="https://github.com/tomermayost/pdf2musescore/blob/master/LICENSE">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Zoomed Before and After comparison">
+    <div class="lightbox-inner">
+      <button id="closeLightbox" class="lightbox-close" type="button" aria-label="Close zoomed preview">×</button>
+      <img src="assets/before-after-bach.png" alt="Zoomed side-by-side comparison of Bach Cello Suite No. 2 PDF and MuseScore 4 conversion">
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
