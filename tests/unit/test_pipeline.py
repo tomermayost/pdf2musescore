@@ -75,9 +75,11 @@ def test_convert_cancelled(tmp_path, pdf):
 
 
 def test_convert_musicxml_skips_musescore(tmp_path, pdf):
+    import xml.etree.ElementTree as ET
     p, seen = make(tmp_path)
-    out = p.convert(pdf, tmp_path / "out.musicxml")
+    out = p.convert(pdf, tmp_path / "Custom Output Title.musicxml")
     assert seen == [] and out.is_file()
+    assert ET.parse(out).findtext("work/work-title") == "Custom Output Title"
 
 
 def test_convert_unicode_paths(tmp_path):

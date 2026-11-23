@@ -10,6 +10,7 @@ from pdf2musescore.engines.homr_engine import (
     HomrEngine,
     _default_render_pdf,
     deskew_image,
+    get_engine_version,
     get_pdf_page_count,
     parse_page_spec,
     preprocess_page_image,
@@ -28,6 +29,18 @@ def pdf(tmp_path):
 
 def test_get_pdf_page_count():
     assert get_pdf_page_count(FIXTURE) == 4
+
+
+def test_get_engine_version(monkeypatch):
+    import importlib.metadata
+    ver = get_engine_version()
+    assert ver != "unknown" and "." in ver
+
+    def missing(_name):
+        raise importlib.metadata.PackageNotFoundError("homr")
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    assert get_engine_version() == "unknown"
 
 
 def test_parse_page_spec():

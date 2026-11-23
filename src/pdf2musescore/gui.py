@@ -1,4 +1,4 @@
-"""Tkinter desktop window: Load PDF -> Pages & Engine/Score Options (with hover tooltips) -> Convert & Save as / Abort."""
+"""Tkinter desktop window: Load PDF -> Pages & Engine/Score Options -> Convert & Save as / Abort."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import os
 import queue
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Callable, Optional
@@ -14,7 +15,7 @@ from typing import Callable, Optional
 from . import APP_NAME, AUTHOR_CREDIT, __version__
 from .config import AppConfig
 from .deps import MUSESCORE, find_tool
-from .engines.homr_engine import CancelledError, get_pdf_page_count
+from .engines.homr_engine import CancelledError, get_engine_version, get_pdf_page_count
 from .options import (
     CLEF_CHOICES,
     INSTRUMENT_PRESETS,
@@ -24,6 +25,7 @@ from .options import (
     get_parameter_tooltip,
 )
 from .pipeline import ConversionError, Pipeline
+from .updater import UpdateError, UpdateInfo, check_for_update, download_installer
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +107,13 @@ class App(ttk.Frame):
                  ask_yes_no: Callable[[str, str], bool] = messagebox.askyesno,
                  show_error: Callable[[str, str], None] = messagebox.showerror,
                  show_info: Callable[[str, str], None] = messagebox.showinfo,
-                 open_folder: Callable[[str], None] = getattr(os, "startfile", lambda p: None)) -> None:
+                 open_folder: Callable[[str], None] = getattr(os, "startfile", lambda p: None),
+                 engine_version: Optional[str] = None,
+                 update_checker: Optional[Callable[[str], Optional[UpdateInfo]]] = None,
+                 installer_downloader: Callable[..., Path] = download_installer,
+                 launch_installer: Callable[[str], None] = getattr(os, "startfile", lambda p: None),
+                 open_url: Callable[[str], bool] = webbrowser.open,
+                 on_exit: Optional[Callable[[], None]] = None) -> None:
         super().__init__(master, padding=10)
         self.config_ = config
         self.pipeline_factory = pipeline_factory
@@ -115,10 +123,19 @@ class App(ttk.Frame):
         self.ask_open, self.ask_save = ask_open, ask_save
         self.ask_yes_no, self.show_error, self.show_info = ask_yes_no, show_error, show_info
         self.open_folder = open_folder
+        self.engine_version = engine_version if engine_version is not None else get_engine_version()
+        self.update_checker = check_for_update if update_checker is None else update_checker
+        self.installer_downloader = installer_downloader
+        self.launch_installer = launch_installer
+        self.open_url = open_url
+        self._on_exit = on_exit or self._default_exit
 
         self.q: "queue.Queue" = queue.Queue()
         self.pdf: Optional[Path] = None
         self.worker: Optional[threading.Thread] = None
+        self.update_thread: Optional[threading.Thread] = None
+        self._available_update: Optional[UpdateInfo] = None
+        self._busy = False
         self._cancel_event = threading.Event()
         self._confirm_answer = False
         self._confirm_event = threading.Event()
@@ -130,6 +147,15 @@ class App(ttk.Frame):
         self._build()
         self.pack(fill="both", expand=True)
         self._after_id: Optional[str] = self.after(self.POLL_MS, self._poll)
+        if self.config_.check_updates:
+            self._start_update_check()
+
+    def _default_exit(self) -> None:  # pragma: no cover - terminates interactive Tk root
+        try:
+            self.master.quit()
+            self.master.destroy()
+        except Exception:
+            pass
 
     def _attach_tip(self, key: str, *widgets: tk.Widget, custom_text: Optional[str] = None) -> None:
         text = custom_text if custom_text is not None else get_parameter_tooltip(key)
@@ -140,8 +166,8 @@ class App(ttk.Frame):
 
     # ---------- UI ----------
     def _build(self) -> None:
-        self.master.title(f"PDF to MuseScore {__version__} — {AUTHOR_CREDIT}")
-        self.master.minsize(620, 520)
+        self.master.title(f"PDF to MuseScore {__version__} (homr {self.engine_version}) — {AUTHOR_CREDIT}")
+        self.master.minsize(640, 500)
         row = ttk.Frame(self)
         row.pack(fill="x")
         self.load_btn = ttk.Button(row, text="Load PDF...", command=self.on_load)
@@ -175,7 +201,6 @@ class App(ttk.Frame):
         self.transpose_var = tk.StringVar(self, value="0")
         self.clef_var = tk.StringVar(self, value="auto")
         self.instrument_var = tk.StringVar(self, value="auto")
-        self.title_var = tk.StringVar(self, value="")
         self.keep_breaks_var = tk.BooleanVar(self, value=False)
 
         r0 = ttk.Frame(opts_frame)
@@ -239,18 +264,10 @@ class App(ttk.Frame):
         self.instrument_combo = ttk.Combobox(
             r2, textvariable=self.instrument_var, values=list(INSTRUMENT_PRESETS), width=11
         )
-        self.instrument_combo.pack(side="left", padx=(4, 0))
+        self.instrument_combo.pack(side="left", padx=(4, 8))
         self._attach_tip("instrument_name", self.instrument_combo, inst_lbl)
 
-        r3 = ttk.Frame(opts_frame)
-        r3.pack(fill="x", pady=(4, 0))
-        title_lbl = ttk.Label(r3, text="Custom Title:")
-        title_lbl.pack(side="left")
-        self.title_entry = ttk.Entry(r3, textvariable=self.title_var, width=28)
-        self.title_entry.pack(side="left", padx=(4, 8), fill="x", expand=True)
-        self._attach_tip("title_override", self.title_entry, title_lbl)
-
-        self.reset_opts_btn = ttk.Button(r3, text="Reset Defaults", command=self.on_reset_options)
+        self.reset_opts_btn = ttk.Button(r2, text="Reset Defaults", command=self.on_reset_options)
         self.reset_opts_btn.pack(side="right")
 
         self._option_widgets = (
@@ -263,7 +280,6 @@ class App(ttk.Frame):
             self.transpose_entry,
             self.clef_combo,
             self.instrument_combo,
-            self.title_entry,
             self.reset_opts_btn,
         )
 
@@ -286,6 +302,7 @@ class App(ttk.Frame):
         footer.pack(fill="x", pady=(6, 0))
         self.credit_label = ttk.Label(footer, text=AUTHOR_CREDIT)
         self.credit_label.pack(side="left")
+        self.update_btn = ttk.Button(footer, text="", command=self.on_update_clicked)
         ttk.Button(footer, text="Open log folder", command=self.on_open_logs).pack(side="right")
 
     def on_reset_options(self) -> None:
@@ -298,7 +315,6 @@ class App(ttk.Frame):
         self.transpose_var.set("0")
         self.clef_var.set("auto")
         self.instrument_var.set("auto")
-        self.title_var.set("")
 
     def collect_options(self) -> ConversionOptions:
         try:
@@ -333,11 +349,11 @@ class App(ttk.Frame):
             transpose_semitones=transpose,
             clef_override=self.clef_var.get(),
             instrument_name=self.instrument_var.get(),
-            title_override=self.title_var.get(),
             keep_line_breaks=bool(self.keep_breaks_var.get()),
         )
 
     def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
         state = "disabled" if busy else "normal"
         self.load_btn.configure(state=state)
         self.pages_entry.configure(state=state)
@@ -348,8 +364,66 @@ class App(ttk.Frame):
                 w.configure(state=state)
         self.convert_btn.configure(state="disabled" if busy or not self.pdf else "normal")
         self.abort_btn.configure(state="normal" if busy else "disabled")
+        if self._available_update is not None:
+            self.update_btn.configure(state=state)
 
-    # ---------- actions ----------
+    # ---------- actions & updates ----------
+    def _start_update_check(self) -> None:
+        def check() -> None:
+            try:
+                info = self.update_checker(__version__)
+            except Exception as exc:
+                log.warning("Update check failed (continuing offline): %s", exc)
+                return
+            if info is not None:
+                self.q.put(("update_available", info))
+
+        self.update_thread = threading.Thread(target=check, daemon=True, name="update-check")
+        self.update_thread.start()
+
+    def on_update_clicked(self) -> None:
+        info = self._available_update
+        if info is None or self._busy:
+            return
+        yes = bool(
+            self.ask_yes_no(
+                "Update available",
+                f"A newer version of PDF to MuseScore (v{info.version}) is available "
+                f"(you have v{__version__}).\n\nWould you like to download and install it now?",
+            )
+        )
+        if not yes:
+            log.info("Update to v%s deferred by user.", info.version)
+            return
+        if not info.download_url.lower().endswith(".exe"):
+            log.info("Opening release page: %s", info.release_url)
+            self.open_url(info.release_url)
+            return
+
+        self._set_busy(True)
+        self.abort_btn.configure(state="disabled")
+        self.progress["value"] = 0
+        self.status_var.set(f"Downloading update v{info.version}...")
+        dest_dir = Path(self.config_.work_dir).resolve().parent / "updates"
+
+        def download_work() -> None:
+            try:
+                installer = self.installer_downloader(
+                    info,
+                    dest_dir,
+                    progress=lambda p, m: self.q.put(("progress", (p, m))),
+                )
+                self.q.put(("update_ready", installer))
+            except UpdateError as exc:
+                log.error("Update download failed: %s", exc)
+                self.q.put(("update_error", str(exc)))
+            except Exception as exc:
+                log.exception("Unexpected error during update download")
+                self.q.put(("update_error", f"Unexpected error: {exc}"))
+
+        self.worker = threading.Thread(target=download_work, daemon=True, name="update-download")
+        self.worker.start()
+
     def on_load(self) -> None:
         path = self.ask_open(title="Choose a PDF", filetypes=[("PDF files", "*.pdf")])
         if not path:
@@ -459,6 +533,28 @@ class App(ttk.Frame):
                 self.progress["value"] = 0
                 self.status_var.set("Conversion failed. See the log below for details.")
                 self.show_error("Conversion failed", payload)
+            elif kind == "update_available":
+                self._available_update = payload
+                self.update_btn.configure(
+                    text=f"Update available (v{payload.version})",
+                    state="disabled" if self._busy else "normal",
+                )
+                if not self.update_btn.winfo_manager():
+                    self.update_btn.pack(side="left", padx=(12, 0))
+                if not self._busy:
+                    self.on_update_clicked()
+            elif kind == "update_ready":
+                ver = self._available_update.version if self._available_update else ""
+                self.progress["value"] = 100
+                self.status_var.set(f"Launching installer for v{ver}...")
+                log.info("Launching downloaded installer: %s", payload)
+                self.launch_installer(str(payload))
+                self._on_exit()
+            elif kind == "update_error":
+                self._set_busy(False)
+                self.progress["value"] = 0
+                self.status_var.set("Update failed. See the log below for details.")
+                self.show_error("Update failed", payload)
 
     def _poll(self) -> None:
         self.process_queue()

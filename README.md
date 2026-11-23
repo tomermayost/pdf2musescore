@@ -11,7 +11,7 @@ Optical music recognition is powered by [homr](https://github.com/liebharc/homr)
 
 1. Download and run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
    - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**.
-   - **SHA-256 (`v0.3.0`):** `583BF06A978ADA75044E3139E401240188A4CBF03DD1BCD01242AEC87FC2C5E3`
+   - **SHA-256 (`v0.3.0`):** `3BD96937AC5583A72EC957CE5E97660F6155D806DB5B3C56BECC17A7154287AF`
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
 3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`) or adjust **Engine & Score Parameters** (hover over any option in the app to see a tooltip with examples and defaults), then click **Convert & Save as...**.
 4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
@@ -34,8 +34,7 @@ All parameters are available directly in the **Engine & Score Parameters** panel
 |---|---|---|---|
 | **Transpose (Half-Steps)** (`transpose_semitones`) | `0` | `0` (keep original), `+2` (for B♭ Trumpet/Clarinet/Tenor Sax), `-12` (down 1 octave), `+12` (up 1 octave) | Moves every note and the key signature up or down by the number of half-steps (semitones, `-24` to `+24`) you enter. |
 | **Clef** (`clef_override`) | `auto` | `auto`, `treble`, `bass`, `alto`, `tenor` | Keep at `auto` to use whatever clef is printed on the page, or pick a clef (`bass` or `tenor` for Trombone/Cello, `treble` for Violin/Flute, `alto` for Viola) if the scan misread the clef sign. |
-| **Instrument** (`instrument_name`) | `auto` | `auto`, `Piano`, `Trombone`, `Violin`, `Flute`, `Trumpet`, `Cello` | Sets the instrument name and playback sound in MuseScore. Pick one from the list or type any instrument name you like. |
-| **Custom Title** (`title_override`) | `""` *(automatic)* | `Telemann - Sonata in F Minor` | Type a title here if you want to set the heading at the top of the sheet music. Leave blank to use the PDF's title automatically. |
+| **Instrument** (`instrument_name`) | `auto` | `auto`, `Piano`, `Trombone`, `Violin`, `Flute`, `Trumpet`, `Cello` | Sets the instrument name and playback sound in MuseScore. Pick one from the list or type any instrument name you like. *(Note: the score title is set automatically from the filename you choose when saving.)* |
 | **Keep Original Line Breaks** (`keep_line_breaks`) | `False` | `Off` (auto-flow), `On` (lock breaks to PDF) | When turned off *(recommended)*, removes forced system and page breaks so MuseScore flows measures neatly across lines and pages. Turn on only if you want every line and page to break in the exact same places as the original PDF. |
 
 ## Development & Testing
@@ -77,13 +76,14 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 | `work_dir` | `%LOCALAPPDATA%\pdf2musescore\work` (or `tmp/work` in dev) | Temporary working directory |
 | `musescore_path` | auto-detect | Path to `MuseScore4.exe` |
 | `render_dpi` | `300` | PDF page rendering DPI for OMR |
+| `check_updates` | `true` | Silently check GitHub Releases on startup (`false` to disable) |
 
 ## Code Signing Policy
 
 Free code signing is provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
 - **Committers and Reviewers:** [Tomer Mayost](https://github.com/tomermayost)
-- **Privacy Policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it (on the first conversion run, the app downloads the open-source `homr` ONNX optical music recognition model weights from GitHub Releases and caches them locally).
+- **Privacy Policy:** This program will not transfer personal information to other networked systems. Network access is limited to: (1) a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional installer download only when the user explicitly clicks **Yes** to update, and (3) downloading the open-source `homr` ONNX optical music recognition model weights on the first conversion run.
 
 ## License
 

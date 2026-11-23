@@ -31,7 +31,9 @@ def test_build_and_smoke_run():
         assert res.returncode == 0, res.stderr
 
     assert EXE.is_file()
-    internal_homr = EXE.parent / "_internal" / "homr"
+    internal = EXE.parent / "_internal"
+    assert list(internal.glob("homr-*.dist-info")), "homr dist-info metadata must be bundled for version display"
+    internal_homr = internal / "homr"
     assert not list(internal_homr.rglob("*.onnx")), "homr .onnx models should be downloaded on first run, not bundled"
     res = subprocess.run([str(EXE), "--version"], timeout=30)
     assert res.returncode == 0

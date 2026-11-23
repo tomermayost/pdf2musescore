@@ -270,7 +270,7 @@ def apply_instrument_override(root: ET.Element, instrument_name: str) -> ET.Elem
 
 
 def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) -> ET.Element:
-    """Apply Section 3 post-processing options (transpose, clef, instrument, title) to ``root``."""
+    """Apply Section 3 post-processing options (transpose, clef, instrument, layout) to ``root``."""
     if options is None:
         return root
     if options.transpose_semitones != 0:
@@ -279,15 +279,6 @@ def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) 
         apply_clef_override(root, options.clef_override)
     if options.instrument_name.lower() != "auto":
         apply_instrument_override(root, options.instrument_name)
-    if options.title_override:
-        work = root.find("work")
-        if work is None:
-            work = ET.Element("work")
-            root.insert(0, work)
-        wt = work.find("work-title")
-        if wt is None:
-            wt = ET.SubElement(work, "work-title")
-        wt.text = options.title_override
     if not options.keep_line_breaks:
         strip_layout_breaks(root)
     return root
@@ -327,8 +318,7 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
         log.info("Merged section %d: %s (%d measures)", idx, mtitle,
                  len(parts[0].findall("measure")) if parts else 0)
 
-    effective_title = (options.title_override if (options and options.title_override) else title)
-    if effective_title:
+    if title:
         for xp in ("movement-title",):
             el = merged.find(xp)
             if el is not None:
@@ -340,7 +330,7 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
         wt = work.find("work-title")
         if wt is None:
             wt = ET.SubElement(work, "work-title")
-        wt.text = effective_title
+        wt.text = title
 
     apply_score_options(merged, options)
     if options is None:

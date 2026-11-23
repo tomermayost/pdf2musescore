@@ -132,11 +132,10 @@ def test_transpose_clef_instrument_and_score_options():
         transpose_semitones=2,
         clef_override="bass",
         instrument_name="Trombone",
-        title_override="Custom Work Title",
     )
     apply_score_options(s_opts, opts)
-    assert s_opts.find("work/work-title").text == "Custom Work Title"
     assert s_opts.find("./part-list/score-part/part-name").text == "Trombone"
+    assert s_opts.find(".//attributes/clef/sign").text == "F"
 
 
 def test_read_errors(tmp_path):

@@ -66,6 +66,7 @@ class AppConfig:
     work_dir: Path = field(default_factory=lambda: default_data_dir() / "work")
     musescore_path: Optional[Path] = None
     render_dpi: int = 300
+    check_updates: bool = True
 
     def __post_init__(self) -> None:
         level = str(self.log_level).upper()
@@ -78,6 +79,7 @@ class AppConfig:
 
 _PATH_FIELDS = {"log_dir", "work_dir", "musescore_path"}
 _INT_FIELDS = {"render_dpi"}
+_BOOL_FIELDS = {"check_updates"}
 
 
 def _coerce(name: str, value: Any) -> Any:
@@ -90,6 +92,15 @@ def _coerce(name: str, value: Any) -> Any:
             return int(value)
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"{name} must be an integer, got {value!r}") from exc
+    if name in _BOOL_FIELDS:
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("true", "1", "yes", "on"):
+            return True
+        if text in ("false", "0", "no", "off"):
+            return False
+        raise ConfigError(f"{name} must be a boolean, got {value!r}")
     return str(value)
 
 

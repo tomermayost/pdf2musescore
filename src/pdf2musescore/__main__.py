@@ -7,6 +7,7 @@ import sys
 
 from pdf2musescore import AUTHOR_CREDIT, __version__
 from pdf2musescore.config import ConfigError, load_config
+from pdf2musescore.engines.homr_engine import get_engine_version
 from pdf2musescore.logging_setup import setup_logging
 
 
@@ -14,7 +15,7 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
     if "--version" in args:
         if sys.stdout is not None:
-            print(f"pdf2musescore {__version__} ({AUTHOR_CREDIT})")
+            print(f"pdf2musescore {__version__} (homr {get_engine_version()}) ({AUTHOR_CREDIT})")
         return 0
     if "--self-test" in args:
         import cv2  # noqa: F401
@@ -23,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
         import pypdfium2  # noqa: F401
         import rapidocr  # noqa: F401
 
+        assert get_engine_version() != "unknown"
         assert ort.get_available_providers()
         return 0
     try:
@@ -33,8 +35,10 @@ def main(argv: list[str] | None = None) -> int:
         _show_fatal(f"Invalid configuration:\n{exc}")
         return 2
     log = setup_logging(config.log_level, config.log_dir)
-    log.info("pdf2musescore %s starting (python %s, frozen=%s)", __version__, sys.version.split()[0],
-             getattr(sys, "frozen", False))
+    log.info(
+        "pdf2musescore %s (homr %s) starting (python %s, frozen=%s)",
+        __version__, get_engine_version(), sys.version.split()[0], getattr(sys, "frozen", False),
+    )
     from pdf2musescore.gui import run_gui
     try:
         run_gui(config)

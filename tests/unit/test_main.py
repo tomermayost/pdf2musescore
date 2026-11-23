@@ -15,7 +15,9 @@ def test_main_ok(monkeypatch, tmp_path):
 
 def test_main_version(capsys):
     assert entry.main(["--version"]) == 0
-    assert "By Tomer Mayost" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "By Tomer Mayost" in out
+    assert "(homr " in out
 
 
 def test_main_self_test():

@@ -9,22 +9,26 @@ def test_defaults_when_no_file(tmp_path):
     cfg = load_config(tmp_path / "missing.toml", environ={})
     assert cfg == AppConfig()
     assert cfg.log_level == "INFO"
+    assert cfg.check_updates is True
 
 
 def test_file_values_loaded(tmp_path):
     f = tmp_path / "c.toml"
-    f.write_text('log_level = "debug"\nmusescore_path = "C:/M/MuseScore4.exe"\nrender_dpi = 250\n')
+    f.write_text('log_level = "debug"\nmusescore_path = "C:/M/MuseScore4.exe"\nrender_dpi = 250\ncheck_updates = false\n')
     cfg = load_config(f, environ={})
     assert cfg.log_level == "DEBUG"
     assert cfg.musescore_path == Path("C:/M/MuseScore4.exe")
     assert cfg.render_dpi == 250
+    assert cfg.check_updates is False
 
 
 def test_env_overrides_file(tmp_path):
     f = tmp_path / "c.toml"
-    f.write_text('log_level = "DEBUG"\n')
-    cfg = load_config(f, environ={"PDF2MSCZ_LOG_LEVEL": "error", "OTHER": "x"})
+    f.write_text('log_level = "DEBUG"\ncheck_updates = false\n')
+    cfg = load_config(f, environ={"PDF2MSCZ_LOG_LEVEL": "error", "PDF2MSCZ_CHECK_UPDATES": "1", "OTHER": "x"})
     assert cfg.log_level == "ERROR"
+    assert cfg.check_updates is True
+    assert load_config(f, environ={"PDF2MSCZ_CHECK_UPDATES": "off"}).check_updates is False
 
 
 def test_unknown_key_warns(tmp_path, caplog):
@@ -41,7 +45,8 @@ def test_empty_env_value_becomes_none(tmp_path):
 
 
 @pytest.mark.parametrize("content", ['log_level = "LOUD"\n', "render_dpi = 50\n",
-                                     'render_dpi = "abc"\n', "not = valid = toml\n"])
+                                     'render_dpi = "abc"\n', 'check_updates = "maybe"\n',
+                                     "not = valid = toml\n"])
 def test_invalid_values_raise(tmp_path, content):
     f = tmp_path / "c.toml"
     f.write_text(content)

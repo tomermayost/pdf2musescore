@@ -1,10 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 ROOT = Path(SPECPATH).resolve().parent
 
-datas = []
+datas = copy_metadata("homr")
 binaries = []
 hiddenimports = ["pdf2musescore.gui"]
 

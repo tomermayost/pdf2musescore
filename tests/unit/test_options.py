@@ -22,7 +22,6 @@ def test_default_options():
     assert opts.transpose_semitones == 0
     assert opts.clef_override == "auto"
     assert opts.instrument_name == "auto"
-    assert opts.title_override is None
     assert opts.keep_line_breaks is False
 
 
@@ -36,18 +35,15 @@ def test_options_normalization():
         transpose_semitones=2,
         clef_override=" BASS ",
         instrument_name="  Trombone ",
-        title_override="  My Sonata  ",
         keep_line_breaks=True,
     )
     assert opts.preprocess_mode == "faded"
     assert opts.clef_override == "bass"
     assert opts.instrument_name == "Trombone"
-    assert opts.title_override == "My Sonata"
     assert opts.keep_line_breaks is True
 
-    empty = ConversionOptions(instrument_name="  ", title_override="   ")
+    empty = ConversionOptions(instrument_name="  ")
     assert empty.instrument_name == "auto"
-    assert empty.title_override is None
 
 
 @pytest.mark.parametrize("kwargs,match", [

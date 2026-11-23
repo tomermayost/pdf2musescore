@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import re
 from pathlib import Path
@@ -13,6 +14,14 @@ import numpy as np
 from .base import OmrEngine, OmrError
 
 log = logging.getLogger(__name__)
+
+
+def get_engine_version() -> str:
+    """Return the installed homr OMR engine version, or ``'unknown'`` if metadata is missing."""
+    try:
+        return importlib.metadata.version("homr")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 class CancelledError(RuntimeError):

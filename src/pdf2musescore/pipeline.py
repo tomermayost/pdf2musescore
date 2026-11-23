@@ -115,7 +115,7 @@ class Pipeline:
 
             self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
             staged_xml = work / "score.musicxml"
-            xml = merge_files(pages_xml, staged_xml, title=pdf.stem, options=opts)
+            xml = merge_files(pages_xml, staged_xml, title=output.stem, options=opts)
 
             if musescore is not None:
                 self._step(85, "Saving MuseScore file...")

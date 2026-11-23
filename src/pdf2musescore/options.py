@@ -118,17 +118,6 @@ PARAMETER_DOCS: tuple[ParameterDoc, ...] = (
         ),
     ),
     ParameterDoc(
-        key="title_override",
-        section="3. Score Post-Processing",
-        label="Custom Title",
-        default="",
-        examples="Telemann - Sonata in F Minor (leave blank for automatic)",
-        description=(
-            "Type a title here if you want to set the heading at the top of the sheet music. "
-            "Leave blank to use the PDF's title automatically."
-        ),
-    ),
-    ParameterDoc(
         key="keep_line_breaks",
         section="3. Score Post-Processing",
         label="Keep Original Line Breaks",
@@ -159,7 +148,6 @@ class ConversionOptions:
     transpose_semitones: int = 0
     clef_override: str = "auto"
     instrument_name: str = "auto"
-    title_override: Optional[str] = None
     keep_line_breaks: bool = False
 
     def __post_init__(self) -> None:
@@ -186,9 +174,6 @@ class ConversionOptions:
 
         inst = (self.instrument_name or "auto").strip()
         object.__setattr__(self, "instrument_name", inst if inst else "auto")
-
-        title = (self.title_override or "").strip()
-        object.__setattr__(self, "title_override", title if title else None)
 
 
 def get_parameter_tooltip(key: str) -> str:
