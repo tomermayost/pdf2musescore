@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import logging
 import sys
 import tkinter as tk
@@ -213,14 +214,14 @@ def apply_windows_titlebar_theme(window: tk.Misc, dark: bool) -> bool:
         value = ctypes.c_int(1 if dark else 0)
         # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 11 / Win10 2004+), fallback 19
         res = windll.dwmapi.DwmSetWindowAttribute(
-            ctypes.wintypes.HWND(hwnd),
+            wintypes.HWND(hwnd),
             20,
             ctypes.byref(value),
             ctypes.sizeof(value),
         )
         if res != 0:
             res = windll.dwmapi.DwmSetWindowAttribute(
-                ctypes.wintypes.HWND(hwnd),
+                wintypes.HWND(hwnd),
                 19,
                 ctypes.byref(value),
                 ctypes.sizeof(value),
@@ -290,7 +291,7 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         foreground=palette.accent_text,
         borderwidth=0,
         focusthickness=0,
-        padding=(16, 10),
+        padding=(14, 8),
         font=(ui_font, 10, "bold"),
     )
     style.map(
@@ -308,7 +309,7 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         darkcolor=palette.card_alt,
         borderwidth=1,
         focusthickness=0,
-        padding=(10, 6),
+        padding=(10, 4),
         font=(ui_font, 9),
     )
     style.map(
@@ -324,7 +325,7 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         bordercolor=palette.border_strong,
         borderwidth=1,
         focusthickness=0,
-        padding=(6, 3),
+        padding=(6, 2),
         font=(ui_font, 9, "bold"),
     )
     style.map(
@@ -340,7 +341,7 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         bordercolor=palette.border_strong,
         borderwidth=1,
         focusthickness=0,
-        padding=(12, 10),
+        padding=(12, 8),
         font=(ui_font, 9, "bold"),
     )
     style.map(

@@ -1,9 +1,12 @@
+import gc
 import logging
 import time
 import tkinter as tk
 from pathlib import Path
+from tkinter import ttk
 
 import pytest
+from PIL import Image
 
 from pdf2musescore.config import AppConfig
 from pdf2musescore.engines.homr_engine import CancelledError
@@ -26,6 +29,7 @@ class FakePipeline:
         FakePipeline.last_options = options
         self.progress(50, "half")
         logging.getLogger("pdf2musescore.test").info("working")
+        logging.getLogger("pdf2musescore.test").debug("trace detail")
         if self.behaviour == "abort" or self.is_cancelled():
             raise CancelledError("aborted")
         if self.behaviour == "confirm":
@@ -58,38 +62,66 @@ def close_app(app):
     for name in list(app.__dict__):
         if name.endswith("_var"):
             delattr(app, name)
-    import gc
     gc.collect()
 
 
 @pytest.fixture
 def calls():
-    return {"error": [], "info": [], "yesno": [], "open": [], "launch": [], "url": [], "exit": []}
+    return {
+        "error": [],
+        "info": [],
+        "yesno": [],
+        "open": [],
+        "open_file": [],
+        "reveal": [],
+        "launch": [],
+        "url": [],
+        "exit": [],
+    }
 
 
-def make_app(root, calls, tmp_path, open_path="C:/x/song.pdf", save_path="C:/x/song.mscz",
-             yes=True, musescore=True, page_counter=lambda p: 4, check_updates=False,
-             engine_version="0.7.1", update_checker=None, installer_downloader=None):
+def make_app(
+    root,
+    calls,
+    tmp_path,
+    open_path="C:/x/song.pdf",
+    save_path="C:/x/song.mscz",
+    yes=True,
+    musescore=True,
+    page_counter=lambda p: 4,
+    check_updates=False,
+    engine_version="0.7.1",
+    update_checker=None,
+    installer_downloader=None,
+    theme="light",
+):
     logging.getLogger("pdf2musescore").setLevel("DEBUG")
     kwargs = {}
     if installer_downloader is not None:
         kwargs["installer_downloader"] = installer_downloader
-    return App(root, AppConfig(log_dir=tmp_path / "logs", work_dir=tmp_path / "work", check_updates=check_updates),
-               pipeline_factory=FakePipeline,
-               musescore_available=lambda: musescore,
-               page_counter=page_counter,
-               ask_open=lambda **k: open_path,
-               ask_save=lambda **k: (calls.__setitem__("save_kwargs", k) or save_path),
-               ask_yes_no=lambda t, m: (calls["yesno"].append((t, m)) or (yes.pop(0) if isinstance(yes, list) else yes)),
-               show_error=lambda t, m: calls["error"].append(m),
-               show_info=lambda t, m: calls["info"].append(m),
-               open_folder=lambda p: calls["open"].append(p),
-               engine_version=engine_version,
-               update_checker=update_checker,
-               launch_installer=lambda p: calls["launch"].append(p),
-               open_url=lambda u: calls["url"].append(u) or True,
-               on_exit=lambda: calls["exit"].append(True),
-               **kwargs)
+    return App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs", work_dir=tmp_path / "work", check_updates=check_updates),
+        pipeline_factory=FakePipeline,
+        musescore_available=lambda: musescore,
+        page_counter=page_counter,
+        page_renderer=lambda p, pg, sz: Image.new("RGB", (100, 140), (255, 255, 255)),
+        ask_open=lambda **k: open_path,
+        ask_save=lambda **k: (calls.__setitem__("save_kwargs", k) or save_path),
+        ask_yes_no=lambda t, m: (calls["yesno"].append((t, m)) or (yes.pop(0) if isinstance(yes, list) else yes)),
+        show_error=lambda t, m: calls["error"].append(m),
+        show_info=lambda t, m: calls["info"].append(m),
+        open_folder=lambda p: calls["open"].append(p),
+        open_file=lambda p: calls["open_file"].append(p),
+        reveal_file=lambda p: calls["reveal"].append(p),
+        engine_version=engine_version,
+        update_checker=update_checker,
+        launch_installer=lambda p: calls["launch"].append(p),
+        open_url=lambda u: calls["url"].append(u) or True,
+        on_exit=lambda: calls["exit"].append(True),
+        theme=theme,
+        **kwargs,
+    )
 
 
 def pump(app, root, until, timeout=5):
@@ -108,27 +140,66 @@ def test_initial_state(root, calls, tmp_path):
     assert str(app.convert_btn["state"]) == "disabled"
     assert str(app.abort_btn["state"]) == "disabled"
     assert app.credit_label.cget("text") == "By Tomer Mayost"
+    assert "MuseScore detected" in app.ms_badge_lbl.cget("text")
     assert "(homr 0.7.1)" in root.title()
     assert "By Tomer Mayost" in root.title()
     assert not hasattr(app, "title_var")
+    assert app.advanced_section.is_expanded is False
+    assert app.log_section.is_expanded is False
+    assert not app.result_banner.winfo_manager()
     app.on_convert()  # no pdf -> no-op
+    app.on_open_result()  # no output yet -> no-op
+    app.on_reveal_result()  # no output yet -> no-op
     close_app(app)
 
 
-def test_options_guide_reset_and_validation(root, calls, tmp_path):
+def test_options_presets_stepper_theme_and_validation(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path)
     app.on_load()
-    # Verify hover tooltips are attached to all parameters and show/hide cleanly
+
+    # Hover tooltips exist and show/hide cleanly
     assert "render_dpi" in app.tooltips and "pages" in app.tooltips and "keep_line_breaks" in app.tooltips
     assert "title_override" not in app.tooltips
     dpi_tip = app.tooltips["render_dpi"]
     dpi_tip.show()
-    dpi_tip.show()  # idempotent when already shown
+    dpi_tip.show()
     assert dpi_tip.tip_window is not None
     dpi_tip.hide()
     assert dpi_tip.tip_window is None
 
-    # Set custom values then reset
+    # One-click scan presets update engine vars cleanly
+    app.apply_preset("faded")
+    assert app.preset_badge_var.get() == "Faded Scan"
+    assert app.dpi_var.get() == "350"
+    assert app.preprocess_var.get() == "faded"
+    assert app.deskew_var.get() is True
+    assert app.advanced_section.badge_lbl.cget("text") == "Customized"
+
+    app.apply_preset("photo")
+    assert app.preset_badge_var.get() == "Phone Photo"
+    assert app.preprocess_var.get() == "binarize"
+
+    # Manual tweak switches preset badge to Custom
+    app.dpi_var.set("420")
+    assert app.preset_badge_var.get() == "Custom"
+
+    # Transpose stepper + live label
+    app.step_transpose(1)
+    assert app.transpose_var.get() == "+1"
+    assert "+1" in app.transpose_hint_var.get()
+    app.transpose_var.set("bad")
+    assert "Enter integer" in app.transpose_hint_var.get()
+    app.step_transpose(-2)
+    assert app.transpose_var.get() == "-2"
+
+    # Reset restores Clean PDF preset & removes Customized badge
+    app.on_reset_options()
+    assert app.keep_breaks_var.get() is False
+    assert app.preset_badge_var.get() == "Clean PDF"
+    assert not app.advanced_section.badge_lbl.winfo_manager()
+    assert app.collect_options() == ConversionOptions()
+
+    # Custom full options collection
     app.dpi_var.set("400")
     app.preprocess_var.set("faded")
     app.deskew_var.set(True)
@@ -138,8 +209,7 @@ def test_options_guide_reset_and_validation(root, calls, tmp_path):
     app.transpose_var.set("+2")
     app.clef_var.set("bass")
     app.instrument_var.set("Trombone")
-    opts = app.collect_options()
-    assert opts == ConversionOptions(
+    assert app.collect_options() == ConversionOptions(
         render_dpi=400,
         preprocess_mode="faded",
         deskew=True,
@@ -151,9 +221,13 @@ def test_options_guide_reset_and_validation(root, calls, tmp_path):
         keep_line_breaks=True,
     )
 
-    app.on_reset_options()
-    assert app.keep_breaks_var.get() is False
-    assert app.collect_options() == ConversionOptions()
+    # Light <-> Dark theme switch
+    assert app.theme_name == "light"
+    app.toggle_theme()
+    assert app.theme_name == "dark"
+    assert "Light" in app.theme_btn.cget("text")
+    app.toggle_theme()
+    assert app.theme_name == "light"
 
     # Invalid integer fields trigger friendly error popup on_convert
     for var, bad in (
@@ -171,31 +245,99 @@ def test_options_guide_reset_and_validation(root, calls, tmp_path):
     close_app(app)
 
 
-def test_load_and_convert_with_pages(root, calls, tmp_path):
+def test_load_preview_pages_and_convert_with_inline_banner(root, calls, tmp_path):
     FakePipeline.behaviour = "ok"
     app = make_app(root, calls, tmp_path)
     app.on_load()
     assert app.file_var.get() == "song.pdf (4 pages)"
     assert str(app.convert_btn["state"]) == "normal"
+    assert "Converting all 4 pages" in app.pages_feedback_var.get()
+
+    # Clicking page picker adds page 1, navigating & picking page 2 builds range "1-2"
+    app._on_toggle_preview_page(1)
+    assert app.pages_var.get() == "1"
+    assert "Converting 1 of 4" in app.pages_feedback_var.get()
+    app.preview_pane.go_next()
+    assert app.preview_pane.current_page == 2
+    app._on_toggle_preview_page(2)
+    assert app.pages_var.get() == "1-2"
+
+    # Typing an invalid page range shows inline validation error cleanly
+    app.pages_var.set("99")
+    assert "out of range" in app.pages_feedback_var.get()
+
     app.pages_var.set("2-3")
     app.transpose_var.set("2")
     app.on_convert()
     assert calls["save_kwargs"]["defaultextension"] == ".mscz"
-    pump(app, root, lambda: calls["info"])
+
+    # Conversion completes with inline success banner (no modal show_info popup)
+    pump(app, root, lambda: bool(app.result_banner.winfo_manager()))
+    assert calls["info"] == []
+    assert app._last_output == Path("C:/x/song.mscz")
+    assert "song.mscz" in app.result_msg_var.get()
+    assert app.progress["value"] == 100
+    assert app.pct_var.get() == "100%"
     assert FakePipeline.last_pages_spec == "2-3"
     assert FakePipeline.last_options.transpose_semitones == 2
-    assert "song.mscz" in calls["info"][0]
     assert "working" in app.log_text.get("1.0", "end")
-    assert app.progress["value"] == 50
+
+    # Quick action buttons trigger open_file / reveal_file
+    app.on_open_result()
+    app.on_reveal_result()
+    assert calls["open_file"] == [str(Path("C:/x/song.mscz"))]
+    assert calls["reveal"] == [Path("C:/x/song.mscz")]
+    close_app(app)
+
+
+def test_shortcuts_and_log_badges(root, calls, tmp_path):
+    app = make_app(root, calls, tmp_path, open_path="", save_path="")
+    fake_evt = type("E", (), {"widget": app})()
+    app._on_shortcut_load(fake_evt)  # open_path="" cancels load cleanly
+
+    # Simulate loaded PDF -> Right/Left arrow shortcuts flip preview pages when focus is not an Entry
+    app.pdf = tmp_path / "score.pdf"
+    app.total_pages = 3
+    app.preview_pane.set_pdf(app.pdf, 3)
+    assert app._on_shortcut_page(fake_evt, +1) == "break"
+    assert app.preview_pane.current_page == 2
+    assert app._on_shortcut_page(fake_evt, -1) == "break"
+    assert app.preview_pane.current_page == 1
+
+    # Arrow keys are ignored when inside an Entry/Combobox so text cursor movement works
+    entry_evt = type("E", (), {"widget": app.pages_entry})()
+    assert app._on_shortcut_page(entry_evt, +1) is None
+
+    # Warning/error logs update log drawer badge and color tags
+    app.q.put(("log", (logging.WARNING, "12:00:00 WARNING: mild issue")))
+    app.process_queue()
+    assert "1 warning" in app.log_section.badge_lbl.cget("text")
+    app.q.put(("log", (logging.ERROR, "12:00:01 ERROR: serious issue")))
+    app.process_queue()
+    assert "1 error" in app.log_section.badge_lbl.cget("text")
+    app.q.put(("log", "plain string message"))
+    app.process_queue()
+    assert "plain string message" in app.log_text.get("1.0", "end")
+
+    # Busy guard prevents shortcuts/actions from re-entering
+    app._busy = True
+    assert app._on_shortcut_load(fake_evt) is None
+    assert app._on_shortcut_convert(fake_evt) is None
+    assert app._on_shortcut_abort(fake_evt) == "break"
+    app._busy = False
+    assert app._on_shortcut_abort(fake_evt) is None
+    assert app._on_shortcut_convert(fake_evt) == "break"
     close_app(app)
 
 
 def test_load_page_counter_error_fallback(root, calls, tmp_path):
     def bad_counter(p):
         raise ValueError("bad pdf")
+
     app = make_app(root, calls, tmp_path, page_counter=bad_counter)
     app.on_load()
     assert app.file_var.get() == "song.pdf"
+    assert app.preview_pane.total_pages == 1
     close_app(app)
 
 
@@ -214,6 +356,8 @@ def test_abort_conversion(root, calls, tmp_path):
 
 def test_xml_default_when_no_musescore(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path, save_path="", musescore=False)
+    assert "MusicXML" in app.convert_btn.cget("text")
+    assert "MusicXML export mode" in app.ms_badge_lbl.cget("text")
     app.on_load()
     app.on_convert()  # cancelled save
     assert calls["save_kwargs"]["defaultextension"] == ".musicxml"
@@ -228,12 +372,15 @@ def test_load_cancelled(root, calls, tmp_path):
     close_app(app)
 
 
-@pytest.mark.parametrize("behaviour,yes,expected", [
-    ("error", True, "friendly message"),
-    ("crash", True, "Unexpected error: boom"),
-    ("confirm", False, "declined"),
-])
-def test_errors(root, calls, tmp_path, behaviour, yes, expected):
+@pytest.mark.parametrize(
+    "behaviour,yes,expected",
+    [
+        ("error", True, "friendly message"),
+        ("crash", True, "Unexpected error: boom"),
+        ("confirm", False, "declined"),
+    ],
+)
+def test_errors_auto_expand_log(root, calls, tmp_path, behaviour, yes, expected):
     FakePipeline.behaviour = behaviour
     app = make_app(root, calls, tmp_path, yes=yes)
     app.on_load()
@@ -241,6 +388,7 @@ def test_errors(root, calls, tmp_path, behaviour, yes, expected):
     pump(app, root, lambda: calls["error"])
     assert calls["error"] == [expected]
     assert "failed" in app.status_var.get()
+    assert app.log_section.is_expanded is True
     close_app(app)
 
 
@@ -249,7 +397,7 @@ def test_confirm_yes(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path, yes=True)
     app.on_load()
     app.on_convert()
-    pump(app, root, lambda: calls["info"])
+    pump(app, root, lambda: bool(app.result_banner.winfo_manager()))
     assert "permission" in calls["yesno"][0][1]
     close_app(app)
 
@@ -281,10 +429,14 @@ def test_update_available_no_then_yes_downloads_and_launches(root, calls, tmp_pa
         fake_installer.write_bytes(b"MZ")
         return fake_installer
 
-    # First prompt -> No (defers); click footer button -> Yes (downloads and launches)
     app = make_app(
-        root, calls, tmp_path, check_updates=True, yes=[False, True],
-        update_checker=lambda _v: info, installer_downloader=fake_download,
+        root,
+        calls,
+        tmp_path,
+        check_updates=True,
+        yes=[False, True],
+        update_checker=lambda _v: info,
+        installer_downloader=fake_download,
     )
     pump(app, root, lambda: len(calls["yesno"]) == 1)
     assert app.update_btn.winfo_manager()
@@ -304,15 +456,20 @@ def test_update_download_error_and_non_exe_url(root, calls, tmp_path):
         raise UpdateError("connection reset")
 
     app = make_app(
-        root, calls, tmp_path, check_updates=True, yes=True,
-        update_checker=lambda _v: info_err, installer_downloader=bad_download,
+        root,
+        calls,
+        tmp_path,
+        check_updates=True,
+        yes=True,
+        update_checker=lambda _v: info_err,
+        installer_downloader=bad_download,
     )
     pump(app, root, lambda: calls["error"])
     assert calls["error"] == ["connection reset"]
     assert "Update failed" in app.status_var.get()
+    assert app.log_section.is_expanded is True
     close_app(app)
 
-    # Non-exe download URL opens browser page
     calls["error"].clear()
     calls["yesno"].clear()
     info_web = UpdateInfo("9.9.9", "https://example.com/rel", "https://example.com/rel")

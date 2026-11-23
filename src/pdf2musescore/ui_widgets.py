@@ -282,8 +282,8 @@ class CollapsibleSection(ttk.Frame):
 class PdfPreviewPane(tk.Frame):
     """Elevated left-column card displaying live sheet-music page previews and page picking."""
 
-    PREVIEW_W = 256
-    PREVIEW_H = 336
+    PREVIEW_W = 240
+    PREVIEW_H = 310
     CACHE_LIMIT = 16
 
     def __init__(
@@ -345,12 +345,14 @@ class PdfPreviewPane(tk.Frame):
                 self.empty_icon_lbl.configure(image=self._emblem_ref, text="")
         except Exception as exc:  # pragma: no cover - defensive icon fallback
             log.debug("Preview emblem fallback: %s", exc)
-        self.empty_icon_lbl.pack(pady=(88, 10))
+        self.empty_icon_lbl.pack(pady=(72, 10))
 
         self.empty_title_lbl = tk.Label(
             self.empty_frame,
             text="Select a Sheet Music PDF",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 9, "bold"),
+            justify="center",
+            wraplength=self.PREVIEW_W - 24,
             cursor="hand2",
         )
         self.empty_title_lbl.pack()
@@ -360,6 +362,7 @@ class PdfPreviewPane(tk.Frame):
             text="Click here or press Ctrl+O\nto browse your files",
             font=("Segoe UI", 8),
             justify="center",
+            wraplength=self.PREVIEW_W - 20,
             cursor="hand2",
         )
         self.empty_sub_lbl.pack(pady=(6, 0))
