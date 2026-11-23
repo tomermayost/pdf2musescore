@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
+from typing import Optional, Sequence
 
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = ROOT / "src" / "pdf2musescore" / "assets"
+MSIX_ASSETS_DIR = ROOT / "packaging" / "msix_assets"
 ICO_SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+STUDIO_DARK_BG = (22, 32, 50)
 
 
 def _lerp_channel(start: int, end: int, t: float) -> int:
@@ -146,6 +150,59 @@ def generate_icons(output_dir: Path = ASSETS_DIR) -> tuple[Path, Path]:
     return ico_path, png_path
 
 
-if __name__ == "__main__":
-    ico, png = generate_icons()
-    print(f"Generated {ico} and {png}")
+def _compose_centered_banner(master: Image.Image, width: int, height: int, icon_size: int) -> Image.Image:
+    """Create a dark-studio RGB tile/splash image with ``master`` centered at ``icon_size``."""
+    canvas = Image.new("RGB", (width, height), STUDIO_DARK_BG)
+    badge = master.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+    x = (width - icon_size) // 2
+    y = (height - icon_size) // 2
+    canvas.paste(badge, (x, y), badge)
+    return canvas
+
+
+def generate_msix_assets(output_dir: Path = MSIX_ASSETS_DIR) -> dict[str, Path]:
+    """Generate all required Microsoft Store MSIX visual PNG assets in ``output_dir``."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    master = render_master_icon(512)
+
+    written: dict[str, Path] = {}
+    square_specs = {
+        "StoreLogo.png": 50,
+        "Square44x44Logo.png": 44,
+        "Square150x150Logo.png": 150,
+        "LargeTile.png": 310,
+    }
+    for name, dim in square_specs.items():
+        path = output_dir / name
+        master.resize((dim, dim), Image.Resampling.LANCZOS).save(path, format="PNG")
+        written[name] = path
+
+    wide_path = output_dir / "Wide310x150Logo.png"
+    _compose_centered_banner(master, 310, 150, 112).save(wide_path, format="PNG")
+    written["Wide310x150Logo.png"] = wide_path
+
+    splash_path = output_dir / "SplashScreen.png"
+    _compose_centered_banner(master, 620, 300, 156).save(splash_path, format="PNG")
+    written["SplashScreen.png"] = splash_path
+
+    return written
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Generate app icons and Microsoft Store MSIX visual assets.")
+    parser.add_argument("--msix", action="store_true", help="Generate only MSIX visual assets.")
+    parser.add_argument("--all", action="store_true", help="Generate both app icons and MSIX visual assets.")
+    args = parser.parse_args(argv)
+
+    if args.all or not args.msix:
+        ico, png = generate_icons()
+        print(f"Generated {ico} and {png}")
+    if args.all or args.msix:
+        written = generate_msix_assets()
+        print(f"Generated {len(written)} MSIX assets in {MSIX_ASSETS_DIR}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

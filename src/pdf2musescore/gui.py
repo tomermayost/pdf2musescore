@@ -18,7 +18,7 @@ import webbrowser
 from PIL import Image, ImageTk
 
 from . import APP_NAME, AUTHOR_CREDIT, __version__
-from .config import AppConfig
+from .config import AppConfig, is_msix_package
 from .deps import MUSESCORE, find_tool
 from .engines.homr_engine import CancelledError, get_engine_version, get_pdf_page_count, parse_page_spec
 from .options import (
@@ -143,8 +143,10 @@ class App(ttk.Frame):
         on_exit: Optional[Callable[[], None]] = None,
         theme: Optional[str] = None,
         prefs_path: Optional[Path] = None,
+        store_mode: Optional[bool] = None,
     ) -> None:
         self.config_ = config
+        self._store_mode = is_msix_package() if store_mode is None else bool(store_mode)
         self._prefs_path: Path = Path(prefs_path) if prefs_path is not None else default_preferences_path()
         self._prefs: UserPreferences = load_preferences(self._prefs_path, default_dpi=self.config_.render_dpi)
         self._last_dir: str = self._prefs.last_dir
@@ -213,7 +215,9 @@ class App(ttk.Frame):
         self.pack(fill="both", expand=True)
 
         self._after_id: Optional[str] = self.after(self.POLL_MS, self._poll)
-        if self.config_.check_updates:
+        if self._store_mode:
+            log.info("Microsoft Store MSIX mode active; in-app GitHub update check disabled")
+        elif self.config_.check_updates:
             self._start_update_check()
 
     def _default_exit(self) -> None:  # pragma: no cover - terminates interactive Tk root

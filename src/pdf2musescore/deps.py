@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Sequence
 
+from .config import is_msix_package
+
 log = logging.getLogger(__name__)
 
 
@@ -97,11 +99,18 @@ def install_with_winget(spec: ToolSpec, runner: Runner = subprocess.run) -> bool
 
 def ensure_tool(spec: ToolSpec, configured: Optional[Path] = None,
                 confirm: Callable[[str], bool] = lambda msg: False,
-                runner: Runner = subprocess.run, search_dirs: Optional[Iterable[Path]] = None) -> Path:
-    """Return tool path, installing (after user confirmation) if missing."""
+                runner: Runner = subprocess.run, search_dirs: Optional[Iterable[Path]] = None,
+                allow_winget: Optional[bool] = None) -> Path:
+    """Return tool path, installing via winget (outside Store MSIX builds) if missing."""
     path = find_tool(spec, configured, search_dirs)
     if path:
         return path
+    winget_ok = (not is_msix_package()) if allow_winget is None else bool(allow_winget)
+    if not winget_ok:
+        log.info("%s: external winget install disabled in Microsoft Store MSIX mode", spec.name)
+        raise ToolNotFoundError(
+            f"{spec.name} is not installed (install {spec.name} from musescore.org or save as MusicXML)"
+        )
     if not confirm(f"{spec.name} is not installed. Install it now?"):
         raise ToolNotFoundError(f"{spec.name} is required but not installed")
     if not install_with_winget(spec, runner):

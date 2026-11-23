@@ -19,6 +19,11 @@ jobs:
     env:
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
       SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+      MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+      MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+      MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+      MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+      MSSTORE_PRODUCT_ID: "9N6NCBWM3BHT"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,6 +50,17 @@ jobs:
         shell: pwsh
         run: |
           powershell -ExecutionPolicy Bypass -File .\build.ps1
+
+      - name: Build Microsoft Store MSIX package
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\packaging\build_msix.ps1
+
+      - name: Upload Microsoft Store MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-store-package
+          path: tmp/dist/pdf2musescore.msix
 
       - name: Run packaging integration test (--version, --self-test, size check)
         shell: pwsh
@@ -80,9 +96,16 @@ jobs:
       - name: Generate SHA-256 checksums
         shell: pwsh
         run: |
-          $hash = (Get-FileHash "tmp/dist/pdf2musescore-setup.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
-          $line = "$hash  pdf2musescore-setup.exe`n"
-          [System.IO.File]::WriteAllText("tmp/dist/SHA256SUMS.txt", $line, [System.Text.UTF8Encoding]::new($false))
+          $lines = @(
+            "tmp/dist/pdf2musescore-setup.exe",
+            "tmp/dist/pdf2musescore.msix"
+          ) | ForEach-Object {
+            $hash = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            $name = Split-Path -Leaf $_
+            "$hash  $name"
+          }
+          $text = ($lines -join "`n") + "`n"
+          [System.IO.File]::WriteAllText("tmp/dist/SHA256SUMS.txt", $text, [System.Text.UTF8Encoding]::new($false))
           Get-Content "tmp/dist/SHA256SUMS.txt"
 
       - name: Generate GitHub build provenance attestation
@@ -96,5 +119,31 @@ jobs:
         with:
           files: |
             tmp/dist/pdf2musescore-setup.exe
+            tmp/dist/pdf2musescore.msix
             tmp/dist/SHA256SUMS.txt
           generate_release_notes: true
+
+      - name: Setup Microsoft Store Developer CLI (when configured)
+        if: >-
+          startsWith(github.ref, 'refs/tags/v') &&
+          env.MSSTORE_TENANT_ID != '' &&
+          env.MSSTORE_CLIENT_ID != '' &&
+          env.MSSTORE_CLIENT_SECRET != '' &&
+          env.MSSTORE_SELLER_ID != ''
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      - name: Publish MSIX to Microsoft Store (when configured)
+        if: >-
+          startsWith(github.ref, 'refs/tags/v') &&
+          env.MSSTORE_TENANT_ID != '' &&
+          env.MSSTORE_CLIENT_ID != '' &&
+          env.MSSTORE_CLIENT_SECRET != '' &&
+          env.MSSTORE_SELLER_ID != ''
+        shell: pwsh
+        run: |
+          msstore reconfigure `
+            --tenantId "$env:MSSTORE_TENANT_ID" `
+            --sellerId "$env:MSSTORE_SELLER_ID" `
+            --clientId "$env:MSSTORE_CLIENT_ID" `
+            --clientSecret "$env:MSSTORE_CLIENT_SECRET"
+          msstore publish "tmp/dist/pdf2musescore.msix" -id "$env:MSSTORE_PRODUCT_ID"

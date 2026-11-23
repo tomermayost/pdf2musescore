@@ -4,14 +4,14 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 
 ROOT = Path(SPECPATH).resolve().parent
 
-datas = copy_metadata("homr") + [
+datas = copy_metadata("homr") + copy_metadata("rapidocr") + [
     (str(ROOT / "src" / "pdf2musescore" / "assets"), "pdf2musescore/assets"),
 ]
 binaries = []
 hiddenimports = ["pdf2musescore.gui", "PIL.ImageTk", "PIL._tkinter_finder"]
 
 for pkg in ("homr", "rapidocr", "pypdfium2", "pypdfium2_raw"):
-    pkg_excludes = ["**/*.onnx", "**/*.pth", "**/*.zip"] if pkg == "homr" else []
+    pkg_excludes = ["**/*.onnx", "**/*.pth", "**/*.zip"] if pkg in ("homr", "rapidocr") else []
     datas += collect_data_files(pkg, excludes=pkg_excludes)
     binaries += collect_dynamic_libs(pkg)
     hiddenimports += collect_submodules(pkg)
@@ -46,12 +46,12 @@ a = Analysis(
     noarchive=False,
 )
 
-# Strip any downloaded homr model weights (.onnx / .pth / .zip) from datas so
-# the installer stays lightweight and homr downloads/updates models on first run.
+# Strip any downloaded homr/rapidocr model weights (.onnx / .pth / .zip) from datas so
+# the installer stays lightweight and downloads/updates models into the user cache.
 a.datas = [
     d for d in a.datas
     if not (
-        d[0].replace("/", "\\").lower().startswith("homr\\")
+        d[0].replace("/", "\\").lower().startswith(("homr\\", "rapidocr\\"))
         and d[0].lower().endswith((".onnx", ".pth", ".zip"))
     )
 ]

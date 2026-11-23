@@ -8,6 +8,7 @@ Precedence (highest first):
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import sys
@@ -25,6 +26,7 @@ from . import APP_NAME
 log = logging.getLogger(__name__)
 
 ENV_PREFIX = "PDF2MSCZ_"
+STORE_MODE_ENV = "PDF2MSCZ_STORE_MODE"
 VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -35,6 +37,34 @@ class ConfigError(ValueError):
 def is_frozen() -> bool:
     """True when running as a packaged (PyInstaller) executable."""
     return bool(getattr(sys, "frozen", False))
+
+
+def is_msix_package(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """Return True when running inside a Windows MSIX/Store package (or forced via PDF2MSCZ_STORE_MODE)."""
+    env = os.environ if environ is None else environ
+    override = env.get(STORE_MODE_ENV)
+    if override is not None and str(override).strip() != "":
+        text = str(override).strip().lower()
+        if text in ("true", "1", "yes", "on"):
+            log.debug("Store mode forced ON via %s=%r", STORE_MODE_ENV, override)
+            return True
+        if text in ("false", "0", "no", "off"):
+            log.debug("Store mode forced OFF via %s=%r", STORE_MODE_ENV, override)
+            return False
+        log.warning("Invalid %s=%r - ignoring override", STORE_MODE_ENV, override)
+
+    if sys.platform != "win32":
+        return False
+    try:
+        length = ctypes.c_uint32(0)
+        rc = ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(length), None)
+        # 0 = ERROR_SUCCESS, 122 = ERROR_INSUFFICIENT_BUFFER -> process has package identity
+        in_pkg = rc in (0, 122)
+        if in_pkg:
+            log.debug("Detected MSIX Store package identity (rc=%s)", rc)
+        return in_pkg
+    except (OSError, AttributeError):
+        return False
 
 
 def ascii_safe_base_dir(preferred: Path) -> Path:
@@ -64,6 +94,7 @@ class AppConfig:
     log_level: str = "INFO"
     log_dir: Path = field(default_factory=lambda: default_data_dir() / "logs")
     work_dir: Path = field(default_factory=lambda: default_data_dir() / "work")
+    models_dir: Path = field(default_factory=lambda: default_data_dir() / "models")
     musescore_path: Optional[Path] = None
     render_dpi: int = 300
     check_updates: bool = True
@@ -77,7 +108,7 @@ class AppConfig:
             raise ConfigError("render_dpi must be >= 72")
 
 
-_PATH_FIELDS = {"log_dir", "work_dir", "musescore_path"}
+_PATH_FIELDS = {"log_dir", "work_dir", "models_dir", "musescore_path"}
 _INT_FIELDS = {"render_dpi"}
 _BOOL_FIELDS = {"check_updates"}
 

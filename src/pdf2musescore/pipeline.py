@@ -111,6 +111,8 @@ class Pipeline:
                 engine = self.engine_factory(
                     opts.render_dpi, page_cb, pages_spec, self.is_cancelled
                 )
+            if getattr(engine, "models_dir", None) is None and hasattr(engine, "models_dir"):
+                engine.models_dir = Path(self.config.models_dir)
             pages_xml = engine.recognize(staged_pdf, work / "omr")
 
             self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
@@ -133,8 +135,10 @@ class Pipeline:
         except OptionsError as exc:
             raise ConversionError(str(exc)) from exc
         except ToolNotFoundError as exc:
-            raise ConversionError("MuseScore is not installed, so the conversion was cancelled.",
-                                  str(exc)) from exc
+            raise ConversionError(
+                "MuseScore is not installed. Save as MusicXML (.musicxml) or install MuseScore 4 from musescore.org.",
+                str(exc),
+            ) from exc
         except InstallError as exc:
             raise ConversionError("Installing MuseScore failed. Check your internet connection "
                                   "and try again.", str(exc)) from exc

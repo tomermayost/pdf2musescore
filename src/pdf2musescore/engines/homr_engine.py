@@ -5,8 +5,9 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 import re
+import shutil
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import cv2
 import numpy as np
@@ -22,6 +23,98 @@ def get_engine_version() -> str:
         return importlib.metadata.version("homr")
     except importlib.metadata.PackageNotFoundError:
         return "unknown"
+
+
+def get_rapidocr_version() -> str:
+    """Return the installed rapidocr version, or ``'unknown'`` if metadata is missing."""
+    try:
+        return importlib.metadata.version("rapidocr")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def prune_stale_version_dirs(parent_dir: Path, keep_version: str) -> list[Path]:
+    """Delete cached engine-version directories under ``parent_dir`` except ``keep_version``."""
+    parent_dir = Path(parent_dir)
+    if not parent_dir.is_dir():
+        return []
+    removed: list[Path] = []
+    for child in sorted(parent_dir.iterdir()):
+        if child.is_dir() and child.name != keep_version:
+            try:
+                shutil.rmtree(child)
+                removed.append(child)
+                log.info("Removed stale AI model cache directory: %s", child)
+            except OSError as exc:
+                log.warning("Could not remove stale AI model cache %s: %s", child, exc)
+    return removed
+
+
+def configure_model_cache(
+    models_dir: Path,
+    homr_version: Optional[str] = None,
+    rapidocr_version: Optional[str] = None,
+    *,
+    homr_main: Any = None,
+    homr_seg_cfg: Any = None,
+    homr_seg_inf: Any = None,
+    homr_tr_cfg: Any = None,
+) -> tuple[Path, Path]:
+    """Redirect downloadable homr and rapidocr ONNX weights into version-scoped writable directories.
+
+    Upgrading either engine changes its version folder, forcing fresh weight downloads
+    automatically and cleaning up obsolete model directories. Bundled tokenizer JSON files
+    remain untouched in their package directory.
+    """
+    raw_homr = (homr_version or get_engine_version()).strip() or "unknown"
+    raw_ocr = (rapidocr_version or get_rapidocr_version()).strip() or "unknown"
+    safe_homr = re.sub(r"[^0-9A-Za-z._-]", "_", raw_homr)
+    safe_ocr = re.sub(r"[^0-9A-Za-z._-]", "_", raw_ocr)
+
+    homr_root = Path(models_dir) / "homr"
+    ocr_root = Path(models_dir) / "rapidocr"
+    homr_ver_dir = homr_root / safe_homr
+    seg_dir = homr_ver_dir / "segmentation"
+    tr_dir = homr_ver_dir / "transformer"
+    ocr_ver_dir = ocr_root / safe_ocr
+
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    tr_dir.mkdir(parents=True, exist_ok=True)
+    ocr_ver_dir.mkdir(parents=True, exist_ok=True)
+
+    if homr_main is None:
+        import homr.main as homr_main
+    if homr_seg_cfg is None:
+        import homr.segmentation.config as homr_seg_cfg
+    if homr_seg_inf is None:
+        import homr.segmentation.inference_segnet as homr_seg_inf
+    if homr_tr_cfg is None:
+        import homr.transformer.configs as homr_tr_cfg
+
+    new_seg = str(seg_dir / Path(homr_seg_cfg.segnet_path_onnx).name)
+    new_seg_fp16 = str(seg_dir / Path(homr_seg_cfg.segnet_path_onnx_fp16).name)
+    for mod in (homr_seg_cfg, homr_main, homr_seg_inf):
+        if hasattr(mod, "segnet_path_onnx"):
+            mod.segnet_path_onnx = new_seg
+        if hasattr(mod, "segnet_path_onnx_fp16"):
+            mod.segnet_path_onnx_fp16 = new_seg_fp16
+
+    filepaths = homr_tr_cfg.default_config.filepaths
+    for attr in ("encoder_path", "decoder_path", "encoder_path_fp16", "decoder_path_fp16"):
+        if hasattr(filepaths, attr):
+            setattr(filepaths, attr, str(tr_dir / Path(getattr(filepaths, attr)).name))
+
+    prune_stale_version_dirs(homr_root, safe_homr)
+    prune_stale_version_dirs(ocr_root, safe_ocr)
+
+    log.info(
+        "Configured versioned AI model cache: homr=%s (%s), rapidocr=%s (%s)",
+        safe_homr,
+        homr_ver_dir,
+        safe_ocr,
+        ocr_ver_dir,
+    )
+    return homr_ver_dir, ocr_ver_dir
 
 
 class CancelledError(RuntimeError):
@@ -148,7 +241,8 @@ def _default_run_homr(image_paths: Sequence[Path],
                       is_cancelled: Callable[[], bool] = lambda: False,
                       segnet_step_size: int = 320,
                       min_notehead_size: int = 4,
-                      preprocess_mode: str = "auto") -> list[Path]:  # pragma: no cover - integration
+                      preprocess_mode: str = "auto",
+                      models_dir: Optional[Path] = None) -> list[Path]:  # pragma: no cover - integration
     import homr.main as hmain
     import homr.title_detection as htitle
     import onnxruntime as ort
@@ -158,9 +252,16 @@ def _default_run_homr(image_paths: Sequence[Path],
         raise CancelledError("Conversion aborted by user.")
 
     ort.set_default_logger_severity(3)
+    ocr_ver_dir: Optional[Path] = None
+    if models_dir is not None:
+        _, ocr_ver_dir = configure_model_cache(models_dir)
     download_weights(segnet_use_gpu=False, transformer_use_gpu=False, coreml_encoder=False)
     if htitle._reader is None:
-        htitle.download_ocr_weights()
+        if ocr_ver_dir is not None:
+            from rapidocr import RapidOCR
+            htitle._reader = RapidOCR(params={"Global.model_root_dir": str(ocr_ver_dir)})
+        else:
+            htitle.download_ocr_weights()
     cfg = ProcessingConfig(
         enable_debug=False,
         enable_cache=False,
@@ -232,7 +333,8 @@ class HomrEngine(OmrEngine):
                  min_notehead_size: int = 4,
                  renderer: Callable[..., list[Path]] = _default_render_pdf,
                  runner: Callable[..., list[Path]] = _default_run_homr,
-                 page_callback: Optional[Callable[[int, int], None]] = None) -> None:
+                 page_callback: Optional[Callable[[int, int], None]] = None,
+                 models_dir: Optional[Path] = None) -> None:
         self.dpi = dpi
         self.pages_spec = pages_spec
         self._is_cancelled = is_cancelled
@@ -243,6 +345,7 @@ class HomrEngine(OmrEngine):
         self._render = renderer
         self._run = runner
         self._page_cb = page_callback
+        self.models_dir = models_dir
 
     def recognize(self, pdf: Path, out_dir: Path) -> list[Path]:
         pdf, out_dir = Path(pdf), Path(out_dir)
@@ -273,6 +376,7 @@ class HomrEngine(OmrEngine):
                     self._run(
                         pages, self._page_cb, self._is_cancelled,
                         self.segnet_step_size, self.min_notehead_size, self.preprocess_mode,
+                        models_dir=self.models_dir,
                     )
                 )
             else:

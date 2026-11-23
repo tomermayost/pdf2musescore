@@ -33,10 +33,13 @@ def test_build_and_smoke_run():
     assert EXE.is_file()
     internal = EXE.parent / "_internal"
     assert list(internal.glob("homr-*.dist-info")), "homr dist-info metadata must be bundled for version display"
+    assert list(internal.glob("rapidocr-*.dist-info")), "rapidocr dist-info metadata must be bundled for cache versioning"
     assert (internal / "pdf2musescore" / "assets" / "icon.ico").is_file()
     assert (internal / "pdf2musescore" / "assets" / "icon.png").is_file()
     internal_homr = internal / "homr"
     assert not list(internal_homr.rglob("*.onnx")), "homr .onnx models should be downloaded on first run, not bundled"
+    internal_ocr = internal / "rapidocr"
+    assert not list(internal_ocr.rglob("*.onnx")), "rapidocr .onnx models should be downloaded into user cache, not bundled"
     res = subprocess.run([str(EXE), "--version"], timeout=30)
     assert res.returncode == 0
     res_self = subprocess.run([str(EXE), "--self-test"], timeout=60)
