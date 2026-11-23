@@ -101,19 +101,11 @@ def test_format_elapsed():
     assert format_elapsed(74.8) == "1:14"
 
 
-def test_configure_ttk_style_on_root():
-    try:
-        root = tk.Tk()
-    except tk.TclError:
-        pytest.skip("No display")
-    root.withdraw()
-    try:
-        style = ttk.Style(root)
-        for name in ("light", "dark"):
-            configure_ttk_style(style, get_theme(name), "Segoe UI")
-        assert style.lookup("Primary.TButton", "background")
-    finally:
-        root.destroy()
+def test_configure_ttk_style_on_root(root):
+    style = ttk.Style(root)
+    for name in ("light", "dark"):
+        configure_ttk_style(style, get_theme(name), "Segoe UI")
+    assert style.lookup("Primary.TButton", "background")
 
 
 def test_windows_dpi_and_titlebar_helpers(monkeypatch):

@@ -187,7 +187,6 @@ class App(ttk.Frame):
         self.tooltips: dict[str, ToolTip] = {}
         self.preset_buttons: dict[str, ttk.Button] = {}
         self._cards: list[tk.Frame] = []
-        self._header_icon_ref: Optional[ImageTk.PhotoImage] = None
         self._trace_guard = False
         self._log_warning_count = 0
         self._log_error_count = 0
@@ -276,7 +275,7 @@ class App(ttk.Frame):
         self.file_meta_var = tk.StringVar(self, value="Choose a sheet music PDF to begin (Ctrl+O)")
         self.pages_var = tk.StringVar(self, value="")
         self.pages_feedback_var = tk.StringVar(self, value="Leave empty to convert all pages")
-        self.preset_badge_var = tk.StringVar(self, value="Clean PDF")
+        self.preset_badge_var = tk.StringVar(self, value="")
 
         self.dpi_var = tk.StringVar(self, value=str(self.config_.render_dpi))
         self.preprocess_var = tk.StringVar(self, value="auto")
@@ -297,39 +296,16 @@ class App(ttk.Frame):
 
     def _build_header(self) -> None:
         header = ttk.Frame(self, style="App.TFrame")
-        header.pack(fill="x")
-
-        left = ttk.Frame(header, style="App.TFrame")
-        left.pack(side="left", fill="x", expand=True)
-
-        title_row = ttk.Frame(left, style="App.TFrame")
-        title_row.pack(anchor="w")
-
-        try:
-            png_path = get_assets_dir() / "icon.png"
-            if png_path.is_file():
-                icon_img = Image.open(png_path).convert("RGBA")
-                icon_img.thumbnail((32, 32), Image.Resampling.LANCZOS)
-                self._header_icon_ref = ImageTk.PhotoImage(icon_img, master=self)
-                ttk.Label(title_row, image=self._header_icon_ref, style="App.TLabel").pack(side="left", padx=(0, 10))
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            log.debug("Header icon fallback: %s", exc)
-
-        ttk.Label(title_row, text="PDF to MuseScore", style="HeaderTitle.TLabel").pack(side="left")
-        ttk.Label(
-            title_row,
-            text=f"v{__version__} · homr {self.engine_version}",
-            style="VersionPill.TLabel",
-        ).pack(side="left", padx=(10, 0))
+        header.pack(fill="x", pady=(0, 2))
 
         ttk.Label(
-            left,
+            header,
             text="Convert sheet music PDFs into editable MuseScore & MusicXML scores",
             style="HeaderSub.TLabel",
-        ).pack(anchor="w", pady=(2, 0))
+        ).pack(side="left", anchor="w")
 
         right = ttk.Frame(header, style="App.TFrame")
-        right.pack(side="right", anchor="ne")
+        right.pack(side="right", anchor="e")
 
         self.theme_btn = ttk.Button(
             right,
@@ -532,7 +508,7 @@ class App(ttk.Frame):
             variable=self.keep_breaks_var,
             style="Studio.TCheckbutton",
         )
-        self.keep_breaks_check.pack(side="left")
+        self.keep_breaks_check.pack(side="left", padx=(0, 12))
         self._attach_tip("keep_line_breaks", self.keep_breaks_check)
 
         self.reset_opts_btn = ttk.Button(
@@ -541,7 +517,7 @@ class App(ttk.Frame):
             style="Secondary.TButton",
             command=self.on_reset_options,
         )
-        self.reset_opts_btn.pack(side="right")
+        self.reset_opts_btn.pack(side="right", padx=(8, 0))
 
         self._option_widgets = (
             self.dpi_entry,
@@ -709,10 +685,7 @@ class App(ttk.Frame):
         for key, btn in self.preset_buttons.items():
             btn.configure(style="PresetActive.TButton" if key == matched else "Preset.TButton")
 
-        if matched is not None:
-            self.preset_badge_var.set(get_scan_preset(matched).label)
-        else:
-            self.preset_badge_var.set("Custom")
+        self.preset_badge_var.set("" if matched is not None else "Custom")
 
         self.advanced_section.set_badge("Customized" if adv_customized else "", tone="accent")
 
@@ -1288,7 +1261,6 @@ class App(ttk.Frame):
             except Exception:
                 pass
         self._shortcut_bindings.clear()
-        self._header_icon_ref = None
         logging.getLogger(APP_NAME).removeHandler(self.log_handler)
         super().destroy()
 

@@ -42,17 +42,6 @@ class FakePipeline:
         return out
 
 
-@pytest.fixture(scope="module")
-def root():
-    try:
-        r = tk.Tk()
-    except tk.TclError:
-        pytest.skip("No display")
-    r.withdraw()
-    yield r
-    r.destroy()
-
-
 def close_app(app):
     if app.worker is not None and app.worker.is_alive():
         app.worker.join(timeout=2)
@@ -167,16 +156,18 @@ def test_options_presets_stepper_theme_and_validation(root, calls, tmp_path):
     dpi_tip.hide()
     assert dpi_tip.tip_window is None
 
-    # One-click scan presets update engine vars cleanly
+    # One-click scan presets update engine vars cleanly without duplicating preset name in badge
     app.apply_preset("faded")
-    assert app.preset_badge_var.get() == "Faded Scan"
+    assert app.preset_badge_var.get() == ""
+    assert str(app.preset_buttons["faded"].cget("style")) == "PresetActive.TButton"
     assert app.dpi_var.get() == "350"
     assert app.preprocess_var.get() == "faded"
     assert app.deskew_var.get() is True
     assert app.advanced_section.badge_lbl.cget("text") == "Customized"
 
     app.apply_preset("photo")
-    assert app.preset_badge_var.get() == "Phone Photo"
+    assert app.preset_badge_var.get() == ""
+    assert str(app.preset_buttons["photo"].cget("style")) == "PresetActive.TButton"
     assert app.preprocess_var.get() == "binarize"
 
     # Manual tweak switches preset badge to Custom
@@ -195,7 +186,8 @@ def test_options_presets_stepper_theme_and_validation(root, calls, tmp_path):
     # Reset restores Clean PDF preset & removes Customized badge
     app.on_reset_options()
     assert app.keep_breaks_var.get() is False
-    assert app.preset_badge_var.get() == "Clean PDF"
+    assert app.preset_badge_var.get() == ""
+    assert str(app.preset_buttons["clean"].cget("style")) == "PresetActive.TButton"
     assert not app.advanced_section.badge_lbl.winfo_manager()
     assert app.collect_options() == ConversionOptions()
 

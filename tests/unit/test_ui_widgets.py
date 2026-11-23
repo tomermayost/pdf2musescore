@@ -16,17 +16,6 @@ from pdf2musescore.ui_widgets import (
 FIXTURE_PDF = Path(__file__).resolve().parents[1] / "fixtures" / "bach_cello_suite_2.pdf"
 
 
-@pytest.fixture(scope="module")
-def root():
-    try:
-        r = tk.Tk()
-    except tk.TclError:
-        pytest.skip("No display")
-    r.withdraw()
-    yield r
-    r.destroy()
-
-
 def test_tooltip_delayed_schedule_clamp_and_theme(root):
     btn = tk.Button(root, text="Target")
     btn.pack()
