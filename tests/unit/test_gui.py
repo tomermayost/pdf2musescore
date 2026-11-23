@@ -82,7 +82,8 @@ def make_app(
     engine_version="0.7.1",
     update_checker=None,
     installer_downloader=None,
-    theme="dark",
+    theme=None,
+    prefs_path=None,
 ):
     logging.getLogger("pdf2musescore").setLevel("DEBUG")
     kwargs = {}
@@ -95,7 +96,7 @@ def make_app(
         musescore_available=lambda: musescore,
         page_counter=page_counter,
         page_renderer=lambda p, pg, sz: Image.new("RGB", (100, 140), (255, 255, 255)),
-        ask_open=lambda **k: open_path,
+        ask_open=lambda **k: (calls.__setitem__("open_kwargs", k) or open_path),
         ask_save=lambda **k: (calls.__setitem__("save_kwargs", k) or save_path),
         ask_yes_no=lambda t, m: (calls["yesno"].append((t, m)) or (yes.pop(0) if isinstance(yes, list) else yes)),
         show_error=lambda t, m: calls["error"].append(m),
@@ -109,6 +110,7 @@ def make_app(
         open_url=lambda u: calls["url"].append(u) or True,
         on_exit=lambda: calls["exit"].append(True),
         theme=theme,
+        prefs_path=prefs_path or (tmp_path / "preferences.json"),
         **kwargs,
     )
 
@@ -131,6 +133,7 @@ def test_initial_state(root, calls, tmp_path):
         AppConfig(log_dir=tmp_path / "logs", work_dir=tmp_path / "work", check_updates=False),
         musescore_available=lambda: probe_calls.append(1) or True,
         engine_version="0.7.1",
+        prefs_path=tmp_path / "preferences.json",
     )
     assert app.theme_name == "dark"
     assert len(probe_calls) == 1
@@ -490,6 +493,76 @@ def test_open_logs(root, calls, tmp_path):
 
 
 def test_default_musescore_check(root, tmp_path):
-    app = App(root, AppConfig(musescore_path=tmp_path / "none.exe", check_updates=False))
+    app = App(
+        root,
+        AppConfig(musescore_path=tmp_path / "none.exe", check_updates=False),
+        prefs_path=tmp_path / "preferences.json",
+    )
     assert isinstance(app.musescore_available(), bool)
     close_app(app)
+
+
+def test_preferences_persist_across_restarts(root, calls, tmp_path):
+    prefs_file = tmp_path / "prefs" / "preferences.json"
+    pdf_dir = tmp_path / "scores"
+    pdf_dir.mkdir()
+    sample_pdf = pdf_dir / "sonata.pdf"
+    sample_pdf.write_bytes(b"%PDF-1.4")
+
+    # Session 1: starts in dark mode, log open, advanced closed -> change everything & close
+    app1 = make_app(root, calls, tmp_path, open_path=str(sample_pdf), prefs_path=prefs_file)
+    assert app1.theme_name == "dark"
+    assert app1.advanced_section.is_expanded is False
+    assert app1.log_section.is_expanded is True
+
+    app1.toggle_theme()
+    assert app1.theme_name == "light"
+    app1.advanced_section.toggle()
+    app1.log_section.toggle()
+    app1.apply_preset("faded")
+    app1.step_transpose(2)
+    app1.clef_var.set("bass")
+    app1.instrument_var.set("Cello")
+    app1.keep_breaks_var.set(True)
+    app1.on_load()
+
+    # Mid-edit invalid values do not crash save_preferences and keep prior valid DPI (350)
+    app1.dpi_var.set("abc")
+    app1.preprocess_var.set("bogus")
+    app1.clef_var.set("bogus")
+    app1.save_preferences()
+    # Restore valid strings and test close save path
+    app1.dpi_var.set("350")
+    app1.preprocess_var.set("faded")
+    app1.clef_var.set("bass")
+    close_app(app1)
+
+    # Session 2: reopen pointing at same prefs file -> light mode, drawers, options & last_dir restored
+    app2 = make_app(root, calls, tmp_path, open_path="", prefs_path=prefs_file)
+    assert app2.theme_name == "light"
+    assert "Dark" in app2.theme_btn.cget("text")
+    assert app2.advanced_section.is_expanded is True
+    assert app2.log_section.is_expanded is False
+    assert app2._last_dir == str(pdf_dir)
+    assert app2.collect_options() == ConversionOptions(
+        render_dpi=350,
+        preprocess_mode="faded",
+        deskew=True,
+        segnet_step_size=240,
+        min_notehead_size=4,
+        transpose_semitones=2,
+        clef_override="bass",
+        instrument_name="Cello",
+        keep_line_breaks=True,
+    )
+    app2.on_load()
+    assert calls["open_kwargs"]["initialdir"] == str(pdf_dir)
+
+    # Reset options reverts conversion params while preserving chosen theme ("light")
+    app2.on_reset_options()
+    close_app(app2)
+
+    app3 = make_app(root, calls, tmp_path, prefs_path=prefs_file)
+    assert app3.theme_name == "light"
+    assert app3.collect_options() == ConversionOptions()
+    close_app(app3)

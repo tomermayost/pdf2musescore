@@ -33,6 +33,12 @@ from .options import (
     get_scan_preset,
 )
 from .pipeline import ConversionError, Pipeline
+from .preferences import (
+    UserPreferences,
+    default_preferences_path,
+    load_preferences,
+    save_preferences as write_preferences,
+)
 from .ui_theme import (
     THEMES,
     ThemePalette,
@@ -135,9 +141,13 @@ class App(ttk.Frame):
         launch_installer: Callable[[str], None] = _default_open_path,
         open_url: Callable[[str], bool] = webbrowser.open,
         on_exit: Optional[Callable[[], None]] = None,
-        theme: str = "dark",
+        theme: Optional[str] = None,
+        prefs_path: Optional[Path] = None,
     ) -> None:
         self.config_ = config
+        self._prefs_path: Path = Path(prefs_path) if prefs_path is not None else default_preferences_path()
+        self._prefs: UserPreferences = load_preferences(self._prefs_path, default_dpi=self.config_.render_dpi)
+        self._last_dir: str = self._prefs.last_dir
         self.pipeline_factory = pipeline_factory
         self.musescore_available = musescore_available or (
             lambda: find_tool(MUSESCORE, config.musescore_path) is not None
@@ -158,7 +168,8 @@ class App(ttk.Frame):
         self.open_url = open_url
         self._on_exit = on_exit or self._default_exit
 
-        self.theme_name = "dark" if (theme or "").strip().lower() == "dark" else "light"
+        chosen_theme = theme if theme is not None else self._prefs.theme
+        self.theme_name = "dark" if (chosen_theme or "").strip().lower() == "dark" else "light"
         self.palette: ThemePalette = get_theme(self.theme_name)
         self._style = ttk.Style(master)
         try:
@@ -278,17 +289,18 @@ class App(ttk.Frame):
         self.pages_feedback_var = tk.StringVar(self, value="Leave empty to convert all pages")
         self.preset_badge_var = tk.StringVar(self, value="")
 
-        self.dpi_var = tk.StringVar(self, value=str(self.config_.render_dpi))
-        self.preprocess_var = tk.StringVar(self, value="auto")
-        self.deskew_var = tk.BooleanVar(self, value=False)
-        self.step_size_var = tk.StringVar(self, value="320")
-        self.min_notehead_var = tk.StringVar(self, value="4")
+        tr_val = self._prefs.transpose_semitones
+        self.dpi_var = tk.StringVar(self, value=str(self._prefs.render_dpi))
+        self.preprocess_var = tk.StringVar(self, value=self._prefs.preprocess_mode)
+        self.deskew_var = tk.BooleanVar(self, value=self._prefs.deskew)
+        self.step_size_var = tk.StringVar(self, value=str(self._prefs.segnet_step_size))
+        self.min_notehead_var = tk.StringVar(self, value=str(self._prefs.min_notehead_size))
 
-        self.transpose_var = tk.StringVar(self, value="0")
+        self.transpose_var = tk.StringVar(self, value=f"+{tr_val}" if tr_val > 0 else str(tr_val))
         self.transpose_hint_var = tk.StringVar(self, value="Original pitch")
-        self.clef_var = tk.StringVar(self, value="auto")
-        self.instrument_var = tk.StringVar(self, value="auto")
-        self.keep_breaks_var = tk.BooleanVar(self, value=False)
+        self.clef_var = tk.StringVar(self, value=self._prefs.clef_override)
+        self.instrument_var = tk.StringVar(self, value=self._prefs.instrument_name)
+        self.keep_breaks_var = tk.BooleanVar(self, value=self._prefs.keep_line_breaks)
 
         self.status_var = tk.StringVar(self, value="Load a PDF with sheet music to start.")
         self.pct_var = tk.StringVar(self, value="0%")
@@ -440,10 +452,10 @@ class App(ttk.Frame):
         self.advanced_section = CollapsibleSection(
             card,
             title="Advanced AI & Layout Settings",
-            expanded=False,
+            expanded=self._prefs.advanced_expanded,
             palette=self.palette,
             card_surface=True,
-            on_toggle=lambda _exp: self._fit_window_to_content(),
+            on_toggle=self._on_drawer_toggled,
         )
         self.advanced_section.pack(fill="x")
         adv = self.advanced_section.content
@@ -606,10 +618,10 @@ class App(ttk.Frame):
         self.log_section = CollapsibleSection(
             self,
             title="Activity Log",
-            expanded=True,
+            expanded=self._prefs.log_expanded,
             palette=self.palette,
             card_surface=False,
-            on_toggle=lambda _exp: self._fit_window_to_content(),
+            on_toggle=self._on_drawer_toggled,
         )
         self.log_section.pack(fill="both", expand=True, pady=(4, 0))
 
@@ -799,6 +811,50 @@ class App(ttk.Frame):
 
     def toggle_theme(self) -> None:
         self.apply_theme("light" if self.theme_name == "dark" else "dark")
+        self.save_preferences()
+
+    def _on_drawer_toggled(self, _expanded: bool) -> None:
+        self._fit_window_to_content()
+        self.save_preferences()
+
+    @staticmethod
+    def _safe_int(raw: str, lo: int, hi: int, fallback: int) -> int:
+        try:
+            val = int(raw.strip())
+        except ValueError:
+            return fallback
+        return val if lo <= val <= hi else fallback
+
+    def snapshot_preferences(self) -> UserPreferences:
+        """Capture current UI settings cleanly, keeping previous valid values if an entry is mid-edit."""
+        prep = (self.preprocess_var.get() or "auto").strip().lower()
+        if prep not in PREPROCESS_MODES:
+            prep = self._prefs.preprocess_mode
+        clef = (self.clef_var.get() or "auto").strip().lower()
+        if clef not in CLEF_CHOICES:
+            clef = self._prefs.clef_override
+        inst = (self.instrument_var.get() or "").strip() or "auto"
+        return UserPreferences(
+            theme=self.theme_name,
+            advanced_expanded=bool(self.advanced_section.is_expanded),
+            log_expanded=bool(self.log_section.is_expanded),
+            render_dpi=self._safe_int(self.dpi_var.get(), 100, 600, self._prefs.render_dpi),
+            preprocess_mode=prep,
+            deskew=bool(self.deskew_var.get()),
+            segnet_step_size=self._safe_int(self.step_size_var.get(), 80, 320, self._prefs.segnet_step_size),
+            min_notehead_size=self._safe_int(self.min_notehead_var.get(), 2, 12, self._prefs.min_notehead_size),
+            transpose_semitones=self._safe_int(self.transpose_var.get(), -24, 24, self._prefs.transpose_semitones),
+            clef_override=clef,
+            instrument_name=inst,
+            keep_line_breaks=bool(self.keep_breaks_var.get()),
+            last_dir=self._last_dir,
+        )
+
+    def save_preferences(self) -> bool:
+        """Persist current user preferences cleanly to disk."""
+        prefs = self.snapshot_preferences()
+        self._prefs = prefs
+        return write_preferences(prefs, self._prefs_path)
 
     def _bind_shortcuts(self) -> None:
         def bind(seq: str, fn: Callable[[tk.Event], Optional[str]]) -> None:
@@ -858,6 +914,7 @@ class App(ttk.Frame):
         finally:
             self._trace_guard = False
         self._sync_preset_indicators()
+        self.save_preferences()
 
     def step_transpose(self, delta: int) -> None:
         if self._busy:
@@ -868,6 +925,7 @@ class App(ttk.Frame):
             current = 0
         clamped = max(-24, min(24, current + delta))
         self.transpose_var.set(f"+{clamped}" if clamped > 0 else str(clamped))
+        self.save_preferences()
 
     def on_reset_options(self) -> None:
         self._trace_guard = True
@@ -885,6 +943,7 @@ class App(ttk.Frame):
             self._trace_guard = False
         self._sync_preset_indicators()
         self._sync_transpose_hint()
+        self.save_preferences()
 
     def collect_options(self) -> ConversionOptions:
         try:
@@ -1051,11 +1110,18 @@ class App(ttk.Frame):
         self.worker.start()
 
     def on_load(self) -> None:
-        path = self.ask_open(title="Choose a PDF", filetypes=[("PDF files", "*.pdf")])
+        open_kwargs: dict[str, object] = {
+            "title": "Choose a PDF",
+            "filetypes": [("PDF files", "*.pdf")],
+        }
+        if self._last_dir and Path(self._last_dir).is_dir():
+            open_kwargs["initialdir"] = self._last_dir
+        path = self.ask_open(**open_kwargs)
         if not path:
             log.debug("Load cancelled")
             return
         self.pdf = Path(path)
+        self._last_dir = str(self.pdf.parent)
         self._hide_result_banner()
         parent_str = str(self.pdf.parent)
         if len(parent_str) > 46:
@@ -1077,6 +1143,7 @@ class App(ttk.Frame):
         self.elapsed_var.set("")
         self.status_var.set("Ready. Pick a preset or click Convert & Save.")
         log.info("Selected PDF: %s", self.pdf)
+        self.save_preferences()
         self._set_busy(False)
 
     def on_convert(self) -> None:
@@ -1087,6 +1154,7 @@ class App(ttk.Frame):
         except OptionsError as exc:
             self.show_error("Invalid parameter", str(exc))
             return
+        self.save_preferences()
         types = [MSCZ_TYPE, XML_TYPE] if self.musescore_available() else [XML_TYPE, MSCZ_TYPE]
         ext = types[0][1][1:]
         out = self.ask_save(
@@ -1265,6 +1333,10 @@ class App(ttk.Frame):
         self._after_id = self.after(self.POLL_MS, self._poll)
 
     def destroy(self) -> None:
+        try:
+            self.save_preferences()
+        except Exception:
+            pass
         for tip in self.tooltips.values():
             tip.hide()
         for aid_name in ("_after_id", "_elapsed_after_id"):
@@ -1302,6 +1374,12 @@ def run_gui(config: AppConfig) -> None:  # pragma: no cover - interactive main l
         log.debug("Window icon setup skipped: %s", exc)
 
     app = App(root, config)
+
+    def on_window_close() -> None:
+        app.save_preferences()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_window_close)
     root.update_idletasks()
     scr_w = root.winfo_screenwidth()
     scr_h = root.winfo_screenheight()
