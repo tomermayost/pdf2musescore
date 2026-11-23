@@ -144,11 +144,16 @@ def test_license_and_pyproject_metadata_aligned_agplv3() -> None:
 
 
 def test_readme_assets_and_trust_statements() -> None:
+    gm = _load_generate_media()
+    assert gm.DEFAULT_MSCZ == ROOT / "tests" / "fixtures" / "bach_cello_suite_2.mscz"
+    assert gm.DEFAULT_MSCZ.is_file()
+
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "Free code signing is provided by [SignPath.io]" not in readme
     assert "AGPL-3.0-or-later" in readme
     assert "SHA256SUMS.txt" in readme
     assert "gh attestation verify" in readme
+    assert not re.search(r"\]\([^)]+\.pdf\)", readme, re.IGNORECASE)
 
     asset_refs = re.findall(r"docs/assets/[A-Za-z0-9_.-]+\.png", readme)
     assert {"docs/assets/ui-light.png", "docs/assets/ui-dark.png", "docs/assets/before-after-bach.png"}.issubset(

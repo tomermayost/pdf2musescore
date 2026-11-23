@@ -25,11 +25,11 @@ Convert sheet music PDFs into editable **MuseScore 4 (`.mscz`)** and **MusicXML 
 
 ## Real Conversion Example (Before → After)
 
-Converted directly on local CPU from [tests/fixtures/bach_cello_suite_2.pdf](tests/fixtures/bach_cello_suite_2.pdf) (public domain) into an editable `.mscz` score opened in MuseScore 4:
+Converted directly on local CPU from the public-domain **Bach Cello Suite No. 2 (Prélude)** scan into an editable `.mscz` score opened in MuseScore 4:
 
 ![Before and After: Original Bach Cello Suite No. 2 PDF compared with Editable MuseScore 4 output](docs/assets/before-after-bach.png)
 
-Notice how `pdf2musescore` automatically preserves slurs, stems, beams, and flowing measure layout (stripping forced PDF line breaks and sanitizing slurs/tuplets/tremolos so MuseScore 4 imports cleanly). And if the AI misses a clef sign (as on bar 1 above), the built-in **Clef** selector (`bass`, `treble`, `alto`, `tenor`) fixes the entire score in one click.
+Notice how `pdf2musescore` preserves the **bass clef, D minor key signature (B♭), 3/4 time signature, slurs, ties, stems, beams, and flowing measure layout** (stripping forced PDF line breaks and sanitizing slurs/tuplets/tremolos so MuseScore 4 imports cleanly).
 
 ---
 

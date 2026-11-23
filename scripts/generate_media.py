@@ -14,7 +14,7 @@ log = logging.getLogger("pdf2musescore.generate_media")
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PDF = ROOT / "tests" / "fixtures" / "bach_cello_suite_2.pdf"
-DEFAULT_MSCZ = ROOT / "tmp" / "integration" / "e2e_combined" / "bach.mscz"
+DEFAULT_MSCZ = ROOT / "tests" / "fixtures" / "bach_cello_suite_2.mscz"
 DEFAULT_ICON = ROOT / "src" / "pdf2musescore" / "assets" / "icon.png"
 DEFAULT_SCREENSHOT = ROOT / "docs" / "assets" / "ui-dark.png"
 DEFAULT_BEFORE_AFTER_OUT = ROOT / "docs" / "assets" / "before-after-bach.png"
