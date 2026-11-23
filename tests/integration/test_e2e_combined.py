@@ -26,8 +26,15 @@ def test_pdf_to_combined_mscz():
     root = read_score(xml)
     assert len(root.findall(".//measure")) > 50
     assert len(list(root.iter("words"))) >= len(pages)
+    assert len(root.findall(".//slur")) > 0, "Expected homr 0.7+ to preserve slurs"
+    assert root.findall(".//print[@new-system]") == []
+    assert root.findall(".//print[@new-page]") == []
 
     mscz = MuseScoreExporter(ms).export(xml, OUT / "bach.mscz")
     assert zipfile.is_zipfile(mscz)
     with zipfile.ZipFile(mscz) as z:
-        assert any(n.endswith(".mscx") for n in z.namelist())
+        mscx_files = [n for n in z.namelist() if n.endswith(".mscx")]
+        assert mscx_files
+        mscx_txt = z.read(mscx_files[0]).decode("utf-8", errors="replace")
+        assert mscx_txt.count("<Slur") > 50, "Expected slurs to survive MuseScore 4 import"
+        assert mscx_txt.count("<LayoutBreak") == 0, "Expected zero forced system/page breaks in .mscx"

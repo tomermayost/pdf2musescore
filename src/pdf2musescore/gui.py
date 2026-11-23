@@ -176,6 +176,7 @@ class App(ttk.Frame):
         self.clef_var = tk.StringVar(self, value="auto")
         self.instrument_var = tk.StringVar(self, value="auto")
         self.title_var = tk.StringVar(self, value="")
+        self.keep_breaks_var = tk.BooleanVar(self, value=False)
 
         r0 = ttk.Frame(opts_frame)
         r0.pack(fill="x", pady=2)
@@ -210,6 +211,12 @@ class App(ttk.Frame):
         self.notehead_entry = ttk.Entry(r1, textvariable=self.min_notehead_var, width=5)
         self.notehead_entry.pack(side="left", padx=(4, 14))
         self._attach_tip("min_notehead_size", self.notehead_entry, nh_lbl)
+
+        self.keep_breaks_check = ttk.Checkbutton(
+            r1, text="Keep Original Line Breaks", variable=self.keep_breaks_var
+        )
+        self.keep_breaks_check.pack(side="left")
+        self._attach_tip("keep_line_breaks", self.keep_breaks_check)
 
         r2 = ttk.Frame(opts_frame)
         r2.pack(fill="x", pady=2)
@@ -252,6 +259,7 @@ class App(ttk.Frame):
             self.deskew_check,
             self.step_entry,
             self.notehead_entry,
+            self.keep_breaks_check,
             self.transpose_entry,
             self.clef_combo,
             self.instrument_combo,
@@ -286,6 +294,7 @@ class App(ttk.Frame):
         self.deskew_var.set(False)
         self.step_size_var.set("320")
         self.min_notehead_var.set("4")
+        self.keep_breaks_var.set(False)
         self.transpose_var.set("0")
         self.clef_var.set("auto")
         self.instrument_var.set("auto")
@@ -325,6 +334,7 @@ class App(ttk.Frame):
             clef_override=self.clef_var.get(),
             instrument_name=self.instrument_var.get(),
             title_override=self.title_var.get(),
+            keep_line_breaks=bool(self.keep_breaks_var.get()),
         )
 
     def _set_busy(self, busy: bool) -> None:

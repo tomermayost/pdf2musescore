@@ -3,15 +3,15 @@
 **By Tomer Mayost**
 
 Minimal Windows desktop app (Windows 10 Home & upwards, Windows 11): **Load PDF → Convert & Save as** MuseScore (`.mscz`) or MusicXML (`.musicxml`).
-Optical music recognition is powered by [homr](https://github.com/liebharc/homr) deep-learning AI (ONNX Runtime on CPU), with multi-page merging and automatic tuplet/tremolo sanitization for MuseScore 4.
+Optical music recognition is powered by [homr](https://github.com/liebharc/homr) 0.7+ deep-learning AI (ONNX Runtime on CPU), recognizing **notes, slurs, ties, dynamics, expression modifiers (`dolce`, `a tempo`, etc.), beams, and multi-page scores** while automatically flowing line breaks and sanitizing tuplets/tremolos for MuseScore 4.
 
 ## Download & End-User Installation (No Python or Java Required)
 
-👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~100 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** *(or view all [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases))*
+👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** *(or view all [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases))*
 
 1. Download and run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
    - *Note on Windows SmartScreen:* Because this open-source installer is not signed with a paid Microsoft Authenticode certificate, Windows SmartScreen may show **"Windows protected your PC"**. Click **More info** → **Run anyway**.
-   - **SHA-256 (`v0.2.0`):** `E5B82D15B1D5B677CF3A1B839F83CFC11958494EC0D90D4274A47D9BC4276ABB`
+   - **SHA-256 (`v0.3.0`):** `583BF06A978ADA75044E3139E401240188A4CBF03DD1BCD01242AEC87FC2C5E3`
 2. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
 3. Click **Load PDF...**, choose your sheet music PDF, optionally select a page range (e.g. `2-3`) or adjust **Engine & Score Parameters** (hover over any option in the app to see a tooltip with examples and defaults), then click **Convert & Save as...**.
 4. On the first conversion, the app automatically downloads the AI models once (~134 MB) and caches them locally.
@@ -36,8 +36,11 @@ All parameters are available directly in the **Engine & Score Parameters** panel
 | **Clef** (`clef_override`) | `auto` | `auto`, `treble`, `bass`, `alto`, `tenor` | Keep at `auto` to use whatever clef is printed on the page, or pick a clef (`bass` or `tenor` for Trombone/Cello, `treble` for Violin/Flute, `alto` for Viola) if the scan misread the clef sign. |
 | **Instrument** (`instrument_name`) | `auto` | `auto`, `Piano`, `Trombone`, `Violin`, `Flute`, `Trumpet`, `Cello` | Sets the instrument name and playback sound in MuseScore. Pick one from the list or type any instrument name you like. |
 | **Custom Title** (`title_override`) | `""` *(automatic)* | `Telemann - Sonata in F Minor` | Type a title here if you want to set the heading at the top of the sheet music. Leave blank to use the PDF's title automatically. |
+| **Keep Original Line Breaks** (`keep_line_breaks`) | `False` | `Off` (auto-flow), `On` (lock breaks to PDF) | When turned off *(recommended)*, removes forced system and page breaks so MuseScore flows measures neatly across lines and pages. Turn on only if you want every line and page to break in the exact same places as the original PDF. |
 
 ## Development & Testing
+
+Requires Python 3.11+ (3.12 recommended):
 
 ```powershell
 python -m venv .venv

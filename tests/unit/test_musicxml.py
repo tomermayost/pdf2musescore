@@ -12,6 +12,8 @@ from pdf2musescore.musicxml import (
     merge_scores,
     read_score,
     sanitize_score,
+    sanitize_slurs,
+    strip_layout_breaks,
     transpose_score,
     write_musicxml,
 )
@@ -149,15 +151,76 @@ def test_read_errors(tmp_path):
         read_score(tw)
 
 
+def test_sanitize_slurs():
+    xml = """<score-partwise><part id="P1">
+      <measure number="1">
+        <note><staff>1</staff><voice>1</voice><notations><slur type="stop" number="1"/></notations></note>
+        <note><staff>1</staff><voice>1</voice><notations><slur type="start" number="2"/></notations></note>
+        <note><staff>1</staff><voice>1</voice><notations><slur type="start" number="3"/></notations></note>
+        <note><staff>2</staff><voice>5</voice><notations><slur type="start" number="2"/></notations></note>
+        <note><staff>1</staff><voice>1</voice><notations><slur type="start" number="1"/><slur type="stop" number="1"/></notations></note>
+        <note><staff>2</staff><voice>5</voice><notations><slur type="stop" number="2"/></notations></note>
+        <note><staff>1</staff><voice>1</voice><notations><slur type="stop" number="1"/></notations></note>
+        <note><staff>1</staff><voice>1</voice><notations><slur type="other" number="1"/></notations></note>
+      </measure>
+      <measure number="2">
+        <note><staff>1</staff><voice>1</voice><notations><slur type="start" number="1"/></notations></note>
+      </measure>
+    </part></score-partwise>"""
+    root = sanitize_slurs(ET.fromstring(xml))
+    notes = root.findall(".//note")
+    # Note 0: orphan leading stop removed
+    assert notes[0].findall("notations/slur") == []
+    # Note 1: unclosed start dropped when Note 2 opens another start
+    assert notes[1].findall("notations/slur") == []
+    # Note 2: paired start kept with number="1"
+    assert [(s.get("type"), s.get("number")) for s in notes[2].findall("notations/slur")] == [("start", "1")]
+    # Note 3 (staff 2, voice 5): independent start kept
+    assert [(s.get("type"), s.get("number")) for s in notes[3].findall("notations/slur")] == [("start", "1")]
+    # Note 4: same-note slurStart_slurStop ordered stop then start cleanly
+    assert [(s.get("type"), s.get("number")) for s in notes[4].findall("notations/slur")] == [("stop", "1"), ("start", "1")]
+    # Note 5 (staff 2, voice 5): matched stop kept
+    assert [(s.get("type"), s.get("number")) for s in notes[5].findall("notations/slur")] == [("stop", "1")]
+    # Note 6 (staff 1, voice 1): matched stop kept
+    assert [(s.get("type"), s.get("number")) for s in notes[6].findall("notations/slur")] == [("stop", "1")]
+    # Note 8 (measure 2): trailing unclosed start at end of part removed
+    assert notes[8].findall("notations/slur") == []
+
+
+def test_strip_layout_breaks():
+    xml = """<score-partwise><part id="P1">
+      <measure number="1"><print new-system="yes"/></measure>
+      <measure number="2"><print new-page="yes" page-number="2"/></measure>
+      <measure number="3"><print new-system="yes"><page-layout/></print></measure>
+    </part></score-partwise>"""
+    root = strip_layout_breaks(ET.fromstring(xml))
+    measures = root.findall(".//measure")
+    assert measures[0].find("print") is None
+    assert measures[1].find("print") is not None
+    assert measures[1].find("print").attrib == {"page-number": "2"}
+    assert measures[2].find("print") is not None
+    assert measures[2].find("print").attrib == {}
+
+
 def test_merge_basic():
-    merged = merge_scores([score(2, mtitle="Prelude"), score(3, wtitle="W"), score(1)])
+    s1 = score(2, mtitle="Prelude")
+    ET.SubElement(s1.findall(".//measure")[1], "print", {"new-system": "yes"})
+    merged = merge_scores([s1, score(3, wtitle="W"), score(1)])
     measures = merged.findall("part/measure")
     assert [m.get("number") for m in measures] == [str(i) for i in range(1, 7)]
     words = [w.text for w in merged.iter("words")]
     assert words == ["Prelude", "W", "Page 3"]
-    assert len(merged.findall(".//print[@new-page='yes']")) == 2
+    assert len(merged.findall(".//print[@new-page='yes']")) == 0
+    assert len(merged.findall(".//print[@new-system='yes']")) == 0
     first = measures[0]
     assert [c.tag for c in first][:2] == ["attributes", "direction"]
+
+    kept = merge_scores(
+        [s1, score(3, wtitle="W"), score(1)],
+        options=ConversionOptions(keep_line_breaks=True),
+    )
+    assert len(kept.findall(".//print[@new-page='yes']")) == 2
+    assert len(kept.findall(".//print[@new-system='yes']")) == 1
 
 
 def test_merge_title_replaces_movement_title():

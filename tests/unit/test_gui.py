@@ -37,7 +37,7 @@ class FakePipeline:
         return out
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def root():
     try:
         r = tk.Tk()
@@ -103,7 +103,7 @@ def test_options_guide_reset_and_validation(root, calls, tmp_path):
     app = make_app(root, calls, tmp_path)
     app.on_load()
     # Verify hover tooltips are attached to all parameters and show/hide cleanly
-    assert "render_dpi" in app.tooltips and "pages" in app.tooltips
+    assert "render_dpi" in app.tooltips and "pages" in app.tooltips and "keep_line_breaks" in app.tooltips
     dpi_tip = app.tooltips["render_dpi"]
     dpi_tip.show()
     dpi_tip.show()  # idempotent when already shown
@@ -117,6 +117,7 @@ def test_options_guide_reset_and_validation(root, calls, tmp_path):
     app.deskew_var.set(True)
     app.step_size_var.set("240")
     app.min_notehead_var.set("3")
+    app.keep_breaks_var.set(True)
     app.transpose_var.set("+2")
     app.clef_var.set("bass")
     app.instrument_var.set("Trombone")
@@ -132,9 +133,11 @@ def test_options_guide_reset_and_validation(root, calls, tmp_path):
         clef_override="bass",
         instrument_name="Trombone",
         title_override="Sonata",
+        keep_line_breaks=True,
     )
 
     app.on_reset_options()
+    assert app.keep_breaks_var.get() is False
     assert app.collect_options() == ConversionOptions()
 
     # Invalid integer fields trigger friendly error popup on_convert

@@ -42,8 +42,42 @@ _CLEF_MAP: dict[str, tuple[str, str]] = {
 _SEMITONE_FIFTHS_SHIFT = (0, -5, 2, -3, 4, -1, 6, 1, -4, 3, -2, 5)
 
 
+def sanitize_slurs(root: ET.Element) -> ET.Element:
+    """Pair slurs cleanly per (staff, voice) and remove orphan stops or unclosed starts for MuseScore 4."""
+    for part in root.findall("part"):
+        open_slur: dict[tuple[str, str], tuple[ET.Element, ET.Element]] = {}
+        for measure in part.findall("measure"):
+            for note in measure.findall("note"):
+                key = (note.findtext("staff", "1"), note.findtext("voice", "1"))
+                for nt in note.findall("notations"):
+                    sls = list(nt.findall("slur"))
+                    sls.sort(key=lambda s: 0 if s.get("type") == "stop" else 1)
+                    if len(sls) > 1:
+                        for idx, sl in zip(
+                            [i for i, ch in enumerate(nt) if ch.tag == "slur"], sls
+                        ):
+                            nt[idx] = sl
+                    for sl in sls:
+                        sl_type = sl.get("type")
+                        if sl_type == "stop":
+                            if key in open_slur:
+                                open_slur.pop(key)
+                                sl.set("number", "1")
+                            else:
+                                nt.remove(sl)
+                        elif sl_type == "start":
+                            if key in open_slur:
+                                prev_nt, prev_sl = open_slur.pop(key)
+                                prev_nt.remove(prev_sl)
+                            sl.set("number", "1")
+                            open_slur[key] = (nt, sl)
+        for prev_nt, prev_sl in open_slur.values():
+            prev_nt.remove(prev_sl)
+    return root
+
+
 def sanitize_score(root: ET.Element) -> ET.Element:
-    """Fix unclosed tuplets and invalid tremolo ornaments so MuseScore 4 imports cleanly."""
+    """Fix unclosed tuplets, invalid tremolos, and unpaired slurs so MuseScore 4 imports cleanly."""
     for orn in root.findall(".//ornaments"):
         for trem in list(orn.findall("tremolo")):
             orn.remove(trem)
@@ -62,7 +96,7 @@ def sanitize_score(root: ET.Element) -> ET.Element:
                     run = []
         if run:
             _close_tuplet_run(run)
-    return root
+    return sanitize_slurs(root)
 
 
 def _close_tuplet_run(run: list[ET.Element]) -> None:
@@ -85,6 +119,17 @@ def _close_tuplet_run(run: list[ET.Element]) -> None:
                 dur = note.find("duration")
                 if dur is not None and dur.text == "8":
                     dur.text = "12"
+
+
+def strip_layout_breaks(root: ET.Element) -> ET.Element:
+    """Remove forced <print new-system=... / new-page=...> breaks so MuseScore flows lines cleanly."""
+    for measure in root.findall(".//measure"):
+        for pr in list(measure.findall("print")):
+            pr.attrib.pop("new-system", None)
+            pr.attrib.pop("new-page", None)
+            if not pr.attrib and len(pr) == 0:
+                measure.remove(pr)
+    return root
 
 
 def read_score(path: Path) -> ET.Element:
@@ -243,6 +288,8 @@ def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) 
         if wt is None:
             wt = ET.SubElement(work, "work-title")
         wt.text = options.title_override
+    if not options.keep_line_breaks:
+        strip_layout_breaks(root)
     return root
 
 
@@ -260,6 +307,7 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
         for m in p.findall("measure"):
             p.remove(m)
 
+    keep_breaks = bool(options.keep_line_breaks) if options is not None else False
     counters = [0] * len(base_parts)
     for idx, root in enumerate(roots, start=1):
         mtitle = _movement_title(root, idx)
@@ -274,7 +322,7 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
                 counters[pi] += 1
                 m.set("number", str(counters[pi]))
                 if mi == 0 and pi == 0:
-                    _mark_movement_start(m, mtitle, new_page=idx > 1)
+                    _mark_movement_start(m, mtitle, new_page=(keep_breaks and idx > 1))
                 base_parts[pi].append(m)
         log.info("Merged section %d: %s (%d measures)", idx, mtitle,
                  len(parts[0].findall("measure")) if parts else 0)
@@ -295,6 +343,8 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
         wt.text = effective_title
 
     apply_score_options(merged, options)
+    if options is None:
+        strip_layout_breaks(merged)
     return merged
 
 

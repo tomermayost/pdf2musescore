@@ -141,23 +141,27 @@ def _default_run_homr(image_paths: Sequence[Path],
                       min_notehead_size: int = 4,
                       preprocess_mode: str = "auto") -> list[Path]:  # pragma: no cover - integration
     import homr.main as hmain
+    import homr.title_detection as htitle
     import onnxruntime as ort
     from homr.main import ProcessingConfig, XmlGeneratorArguments, download_weights, process_image
-    from homr.title_detection import download_ocr_weights
 
     if is_cancelled():
         raise CancelledError("Conversion aborted by user.")
 
     ort.set_default_logger_severity(3)
-    download_weights(False)
-    download_ocr_weights()
+    download_weights(segnet_use_gpu=False, transformer_use_gpu=False, coreml_encoder=False)
+    if htitle._reader is None:
+        htitle.download_ocr_weights()
     cfg = ProcessingConfig(
         enable_debug=False,
         enable_cache=False,
         write_staff_positions=False,
         read_staff_positions=False,
         selected_staff=-1,
-        use_gpu_inference=False,
+        transformer_use_gpu=False,
+        segnet_use_gpu=False,
+        coreml_encoder=False,
+        title_detection=True,
     )
     xargs = XmlGeneratorArguments(large_page=False, metronome=None, tempo=None)
 

@@ -23,6 +23,7 @@ def test_default_options():
     assert opts.clef_override == "auto"
     assert opts.instrument_name == "auto"
     assert opts.title_override is None
+    assert opts.keep_line_breaks is False
 
 
 def test_options_normalization():
@@ -36,11 +37,13 @@ def test_options_normalization():
         clef_override=" BASS ",
         instrument_name="  Trombone ",
         title_override="  My Sonata  ",
+        keep_line_breaks=True,
     )
     assert opts.preprocess_mode == "faded"
     assert opts.clef_override == "bass"
     assert opts.instrument_name == "Trombone"
     assert opts.title_override == "My Sonata"
+    assert opts.keep_line_breaks is True
 
     empty = ConversionOptions(instrument_name="  ", title_override="   ")
     assert empty.instrument_name == "auto"

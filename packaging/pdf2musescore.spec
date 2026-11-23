@@ -8,7 +8,7 @@ datas = []
 binaries = []
 hiddenimports = ["pdf2musescore.gui"]
 
-for pkg in ("homr", "musicxml", "rapidocr_onnxruntime", "pypdfium2", "pypdfium2_raw"):
+for pkg in ("homr", "rapidocr", "pypdfium2", "pypdfium2_raw"):
     pkg_excludes = ["**/*.onnx", "**/*.pth", "**/*.zip"] if pkg == "homr" else []
     datas += collect_data_files(pkg, excludes=pkg_excludes)
     binaries += collect_dynamic_libs(pkg)

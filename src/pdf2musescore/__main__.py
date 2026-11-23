@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
         import homr.main  # noqa: F401
         import onnxruntime as ort  # noqa: F401
         import pypdfium2  # noqa: F401
+        import rapidocr  # noqa: F401
 
         assert ort.get_available_providers()
         return 0

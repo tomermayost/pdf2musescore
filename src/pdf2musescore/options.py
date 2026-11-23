@@ -128,6 +128,18 @@ PARAMETER_DOCS: tuple[ParameterDoc, ...] = (
             "Leave blank to use the PDF's title automatically."
         ),
     ),
+    ParameterDoc(
+        key="keep_line_breaks",
+        section="3. Score Post-Processing",
+        label="Keep Original Line Breaks",
+        default="False",
+        examples="Off (let MuseScore arrange lines automatically), On (lock line/page breaks to the PDF)",
+        description=(
+            "When turned off (recommended), removes forced system and page breaks so MuseScore flows "
+            "measures neatly across lines and pages. Turn on only if you want every line and page to break "
+            "in the exact same places as the original PDF."
+        ),
+    ),
 )
 
 
@@ -148,6 +160,7 @@ class ConversionOptions:
     clef_override: str = "auto"
     instrument_name: str = "auto"
     title_override: Optional[str] = None
+    keep_line_breaks: bool = False
 
     def __post_init__(self) -> None:
         if not (100 <= int(self.render_dpi) <= 600):
