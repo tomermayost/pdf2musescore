@@ -134,7 +134,7 @@ def test_initial_state(root, calls, tmp_path):
     assert "By Tomer Mayost" in root.title()
     assert not hasattr(app, "title_var")
     assert app.advanced_section.is_expanded is False
-    assert app.log_section.is_expanded is False
+    assert app.log_section.is_expanded is True
     assert not app.result_banner.winfo_manager()
     app.on_convert()  # no pdf -> no-op
     app.on_open_result()  # no output yet -> no-op
@@ -376,6 +376,7 @@ def test_errors_auto_expand_log(root, calls, tmp_path, behaviour, yes, expected)
     FakePipeline.behaviour = behaviour
     app = make_app(root, calls, tmp_path, yes=yes)
     app.on_load()
+    app.log_section.set_expanded(False)
     app.on_convert()
     pump(app, root, lambda: calls["error"])
     assert calls["error"] == [expected]

@@ -605,7 +605,7 @@ class App(ttk.Frame):
         self.log_section = CollapsibleSection(
             self,
             title="Activity Log",
-            expanded=False,
+            expanded=True,
             palette=self.palette,
             card_surface=False,
             on_toggle=lambda _exp: self._fit_window_to_content(),
