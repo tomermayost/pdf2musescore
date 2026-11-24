@@ -197,15 +197,23 @@ def test_extract_dropped_files_and_drop_handle_uninstall(tmp_path: Path) -> None
     bad_handle.uninstall()
 
 
-def test_install_file_drop_handler_non_win32_and_mocked_dispatch(monkeypatch) -> None:
+def test_install_file_drop_handler_non_win32_and_mocked_dispatch(monkeypatch, caplog) -> None:
     dropped: list[list[Path]] = []
+    scheduled: list[tuple[int, object]] = []
+    cancelled: list[str] = []
+
+    def _after(ms, fn):
+        aid = f"after-{len(scheduled) + 1}"
+        scheduled.append((ms, fn))
+        return aid
+
     fake_win = SimpleNamespace(
         update_idletasks=lambda: None,
         winfo_id=lambda: 123,
-        after=lambda _ms, fn: fn(),
+        after=_after,
+        after_cancel=lambda aid: cancelled.append(aid),
     )
 
-    monkeypatch.setattr(win_dnd, "WNDPROC", None, raising=False)
     monkeypatch.setattr(sys, "platform", "linux")
     assert win_dnd.install_file_drop_handler(fake_win, dropped.append) is None
 
@@ -222,27 +230,32 @@ def test_install_file_drop_handler_non_win32_and_mocked_dispatch(monkeypatch) ->
         def __call__(self, *args):
             return self._impl(*args)
 
-    captured_cb = {}
     passthru_calls = []
+    fail_passthru = False
 
     class FakeUser32:
         def __init__(self):
             self.GetParent = _Fn(lambda wid: 500)
-            self.SetWindowLongPtrW = _Fn(self._set_ptr)
-            self.CallWindowProcW = _Fn(lambda prev, h, m, w, l: passthru_calls.append((prev, h, m, w, l)) or 99)
+            self.SetWindowLongPtrW = _Fn(lambda *a: 888)
+            self.CallWindowProcW = _Fn(self._call_wndproc)
             self.ChangeWindowMessageFilterEx = _Fn(lambda *a: 1)
 
-        def _set_ptr(self, hwnd, idx, val):
-            captured_cb["ptr"] = val
-            return 888
+        def _call_wndproc(self, prev, h, m, w, l):
+            if fail_passthru:
+                raise RuntimeError("callwndproc error")
+            passthru_calls.append((prev, h, m, w, l))
+            return 99
 
     class FakeShell32:
         def __init__(self):
+            self.fail_query = False
             self.DragAcceptFiles = _Fn(lambda *a: None)
             self.DragQueryFileW = _Fn(self._query)
             self.DragFinish = _Fn(lambda *a: None)
 
         def _query(self, hdrop, idx, buf, size):
+            if self.fail_query:
+                raise OSError("bad hdrop")
             if idx == 0xFFFFFFFF:
                 return 1
             text = "C:/sheet/note.png"
@@ -255,8 +268,6 @@ def test_install_file_drop_handler_non_win32_and_mocked_dispatch(monkeypatch) ->
     monkeypatch.setattr(win_dnd, "_WNDPROC", lambda fn: fn)
     monkeypatch.setattr(ctypes, "cast", lambda obj, _tp: SimpleNamespace(value=obj))
 
-    # Avoid int(cb_ptr) failing on Python function object during mock
-    orig_set_ptr = fake_wd.user32.SetWindowLongPtrW
     registered = []
 
     def _capture_set(hwnd, idx, val):
@@ -268,18 +279,75 @@ def test_install_file_drop_handler_non_win32_and_mocked_dispatch(monkeypatch) ->
     fake_wd.user32.SetWindowLongPtrW = _Fn(_capture_set)
     handle = win_dnd.install_file_drop_handler(fake_win, dropped.append, windll=fake_wd)
     assert handle is not None and len(registered) == 1
+    assert len(scheduled) == 1  # Initial pump scheduled
 
     cb = registered[0]
+    # WNDPROC must NOT invoke on_files or window.after synchronously!
     assert cb(500, win_dnd.WM_DROPFILES, 12, 0) == 0
+    assert dropped == []
+    assert len(scheduled) == 1
+
+    # Draining the Tk pump delivers the dropped files and reschedules
+    _ms, pump_fn = scheduled.pop(0)
+    pump_fn()
     assert dropped == [[Path("C:/sheet/note.png")]]
+    assert len(scheduled) == 1
+
+    # Query failure inside WNDPROC is queued and logged cleanly during pump()
+    fake_wd.shell32.fail_query = True
+    with caplog.at_level("ERROR", logger="pdf2musescore.win_dnd"):
+        assert cb(500, win_dnd.WM_DROPFILES, 13, 0) == 0
+        scheduled.pop(0)[1]()
+    assert "Failed to read dropped files" in caplog.text
+    fake_wd.shell32.fail_query = False
+
+    # Empty list in queue is ignored safely
+    handle.enqueue([])
+    scheduled.pop(0)[1]()
+
+    # Exception inside on_files callback is logged, not raised
+    def _boom(_paths):
+        raise RuntimeError("handler failed")
+
+    handle._on_files = _boom
+    handle.enqueue([Path("C:/sheet/boom.pdf")])
+    with caplog.at_level("ERROR", logger="pdf2musescore.win_dnd"):
+        scheduled.pop(0)[1]()
+    assert "Failed to handle dropped file(s)" in caplog.text
+
+    # Non-drop Win32 messages pass through, and unexpected WNDPROC errors return 0 safely
     assert cb(500, 0x000F, 1, 2) == 99
     assert passthru_calls == [(888, 500, 0x000F, 1, 2)]
+    fail_passthru = True
+    assert cb(500, 0x000F, 1, 2) == 0
+    fail_passthru = False
+
+    # Uninstall cancels pending pump timer and makes subsequent pump calls no-ops
+    pending_id = handle._pump_after_id
     handle.uninstall()
+    assert cancelled == [pending_id]
+    count_before = len(scheduled)
+    handle.pump()
+    assert len(scheduled) == count_before
+
+    # Reschedule failure when window is torn down is handled safely
+    bad_win = SimpleNamespace(
+        after=lambda _m, _f: (_ for _ in ()).throw(RuntimeError("destroyed")),
+        after_cancel=lambda _id: (_ for _ in ()).throw(RuntimeError("destroyed")),
+    )
+    h_err = win_dnd.DropHandle(100, 777, lambda *a: 0, fake_wd.user32, fake_wd.shell32, window=bad_win)
+    h_err.pump()
+    h_err._pump_after_id = "stale-id"
+    h_err.uninstall()
 
     # Zero hwnd or SetWindowLongPtrW returning 0 fails gracefully without crashing
-    fake_win_zero = SimpleNamespace(update_idletasks=lambda: None, winfo_id=lambda: 0, after=lambda _m, f: None)
+    fake_win_zero = SimpleNamespace(update_idletasks=lambda: None, winfo_id=lambda: 0, after=_after)
     fake_wd_zero = SimpleNamespace(
-        user32=SimpleNamespace(GetParent=_Fn(lambda _w: 0)),
+        user32=SimpleNamespace(
+            GetParent=_Fn(lambda _w: 0),
+            SetWindowLongPtrW=_Fn(lambda *a: 0),
+            CallWindowProcW=_Fn(lambda *a: 0),
+        ),
         shell32=FakeShell32(),
     )
     assert win_dnd.install_file_drop_handler(fake_win_zero, dropped.append, windll=fake_wd_zero) is None
@@ -293,6 +361,12 @@ def test_install_file_drop_handler_non_win32_and_mocked_dispatch(monkeypatch) ->
         shell32=FakeShell32(),
     )
     assert win_dnd.install_file_drop_handler(fake_win, dropped.append, windll=fake_wd_fail) is None
+
+    # Exception during installation returns None
+    broken_win = SimpleNamespace(
+        update_idletasks=lambda: (_ for _ in ()).throw(RuntimeError("no window")),
+    )
+    assert win_dnd.install_file_drop_handler(broken_win, dropped.append, windll=fake_wd) is None
 
 
 def _close_test_app(app: App) -> None:

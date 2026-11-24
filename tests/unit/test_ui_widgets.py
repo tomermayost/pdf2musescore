@@ -84,6 +84,22 @@ def test_render_pdf_page_image_real_fixture():
         render_pdf_page_image(FIXTURE_PDF, 99)
 
 
+def test_render_pdf_page_image_huge_page_bounded(tmp_path):
+    import pypdfium2 as pdfium
+
+    huge_pdf = tmp_path / "huge.pdf"
+    doc = pdfium.PdfDocument.new()
+    try:
+        doc.new_page(14400, 14400)
+        doc.save(str(huge_pdf))
+    finally:
+        doc.close()
+
+    img = render_pdf_page_image(huge_pdf, 1, max_size=(226, 296))
+    assert img.mode == "RGB"
+    assert 1 <= img.width <= 226 and 1 <= img.height <= 296
+
+
 def test_pdf_preview_pane_lifecycle(root, tmp_path):
     events = {"browse": 0, "picked": []}
     render_calls = []

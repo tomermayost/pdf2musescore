@@ -46,8 +46,26 @@ def render_pdf_page_image(
         if page_number < 1 or page_number > total:
             raise ValueError(f"Page {page_number} out of range (1..{total})")
         page = doc[page_number - 1]
-        bitmap = page.render(scale=1.5)
+        w_pt, h_pt = page.get_size()
+        max_w, max_h = max(1, int(max_size[0])), max(1, int(max_size[1]))
+        if w_pt > 0 and h_pt > 0:
+            raw_scale = 2.0 * min(max_w / w_pt, max_h / h_pt)
+            scale = max(0.05, min(1.5, raw_scale))
+        else:
+            scale = 1.5
+        bitmap = page.render(scale=scale)
         pil_img = bitmap.to_pil()
+        log.debug(
+            "Preview rendered %s page %d/%d (%.1fx%.1f pt, scale=%.3f -> %dx%d px)",
+            path.name,
+            page_number,
+            total,
+            w_pt,
+            h_pt,
+            scale,
+            pil_img.width,
+            pil_img.height,
+        )
         rgb = pil_img.convert("RGB")
         rgb.thumbnail(max_size, Image.Resampling.LANCZOS)
         return rgb
@@ -446,7 +464,13 @@ class PdfPreviewPane(tk.Frame):
                 while len(self._cache) > self.CACHE_LIMIT:
                     self._cache.popitem(last=False)
             except Exception as exc:
-                log.debug("Preview render fallback for %s page %s: %s", self.pdf, self.current_page, exc)
+                log.warning(
+                    "Preview render fallback for %s page %s: %s",
+                    self.pdf,
+                    self.current_page,
+                    exc,
+                    exc_info=True,
+                )
                 self._photo_ref = None
                 self.image_lbl.configure(
                     image="",
