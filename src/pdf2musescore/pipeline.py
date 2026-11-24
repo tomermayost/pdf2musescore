@@ -17,6 +17,7 @@ from .diagnostics import memory_snapshot
 from .engines.base import OmrEngine, OmrError
 from .engines.homr_engine import CancelledError, HomrEngine, is_supported_input
 from .exporters.musescore import ExportError, MuseScoreExporter
+from .model_store import ModelDownloadError, ModelManager
 from .musicxml import MergeError, merge_files
 from .options import ConversionOptions, OptionsError
 
@@ -88,6 +89,12 @@ def _map_conversion_error(exc: Exception, detail: str, stage: str) -> Conversion
             detail,
             stage=stage,
         )
+    if isinstance(exc, ModelDownloadError):
+        return ConversionError(
+            "The AI models could not be downloaded. Check your internet connection and try again.",
+            detail,
+            stage=stage,
+        )
     if isinstance(exc, OmrError):
         msg = str(exc)
         if "page" in msg.lower() and ("range" in msg.lower() or "no pages" in msg.lower()):
@@ -145,6 +152,7 @@ class Pipeline:
     ensure: Callable[..., Path] = ensure_tool
     engine_factory: Callable[..., OmrEngine] = field(default=_default_engine_factory)
     exporter_factory: Callable[[Path], MuseScoreExporter] = MuseScoreExporter
+    model_manager: Optional[ModelManager] = None
     _current_stage: str = field(default="Starting", init=False, repr=False)
 
     def _step(self, pct: int, msg: str) -> None:
@@ -197,6 +205,21 @@ class Pipeline:
 
             staged_input = work / f"input{pdf.suffix.lower()}"
             shutil.copy2(pdf, staged_input)
+
+            manager = self.model_manager
+            if manager is None and self.engine_factory is _default_engine_factory:
+                manager = ModelManager(Path(self.config.models_dir))
+            if manager is not None and not manager.status().ready:
+                self._step(10, "Downloading AI models (one time, ~180 MB)...")
+                if manager.is_downloading():
+                    self.progress(10, "Waiting for AI model download to finish...")
+                manager.ensure(
+                    progress=lambda d, t: self.progress(
+                        10 + int(5 * min(d, max(t, 1)) / max(t, 1)),
+                        f"Downloading AI models (one time): {d / 1e6:.0f} of ~{max(t, 1) / 1e6:.0f} MB...",
+                    ),
+                    is_cancelled=self.is_cancelled,
+                )
 
             self._step(15, "Reading the music with AI...")
             page_cb = lambda idx, total: self._step(

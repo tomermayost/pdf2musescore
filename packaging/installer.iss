@@ -43,4 +43,12 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Comment: "{#MyA
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Comment: "{#MyAppCredit}"
 
 [Run]
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--download-models"; StatusMsg: "Downloading AI music-recognition models (~180 MB, one time)..."; Flags: waituntilterminated; Check: not WizardSilent
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--download-models --no-ui"; StatusMsg: "Downloading AI music-recognition models..."; Flags: waituntilterminated runhidden; Check: WizardSilent
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{localappdata}\pdf2musescore\models"
+Type: filesandordirs; Name: "{localappdata}\pdf2musescore\work"
+Type: filesandordirs; Name: "{commonappdata}\pdf2musescore\models"
+Type: filesandordirs; Name: "{commonappdata}\pdf2musescore\work"

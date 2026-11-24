@@ -336,7 +336,7 @@
           <details class="faq-item">
             <summary>Does PDF to MuseScore upload my sheet music anywhere?</summary>
             <div class="faq-body">
-              No. All PDF rendering and AI music recognition runs <strong>100% locally on your CPU</strong>. The only optional network requests are downloading the open-source <code>homr</code> ONNX model weights once on your first conversion, and a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via <code>check_updates = false</code>).
+              No. All PDF rendering and AI music recognition runs <strong>100% locally on your CPU</strong>. The only optional network requests are downloading the open-source <code>homr</code> and <code>RapidOCR</code> ONNX model weights once during installation (or automatically on startup if missing), and a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via <code>check_updates = false</code>).
             </div>
           </details>
 
@@ -357,9 +357,9 @@ gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore
           </details>
 
           <details class="faq-item">
-            <summary>Why does the first conversion download ~134 MB?</summary>
+            <summary>How are the ~180 MB AI models downloaded?</summary>
             <div class="faq-body">
-              To keep the Windows installer compact (~105 MB), the open-source <code>homr</code> neural network weights (~134 MB) are downloaded once during your very first conversion and cached locally for offline use afterward.
+              To keep the Windows installer compact (~105 MB), the open-source <code>homr</code> and <code>RapidOCR</code> neural network weights (~180 MB) are downloaded once during installation (or automatically in the background when the app starts if missing, such as in offline installs or Microsoft Store builds) and cached locally for offline use afterward.
             </div>
           </details>
 

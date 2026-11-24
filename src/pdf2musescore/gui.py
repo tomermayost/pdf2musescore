@@ -38,6 +38,7 @@ from .options import (
     get_parameter_tooltip,
     get_scan_preset,
 )
+from .model_store import ModelManager
 from .pipeline import ConversionError, Pipeline
 from .preferences import (
     UserPreferences,
@@ -155,9 +156,14 @@ class App(ttk.Frame):
         prefs_path: Optional[Path] = None,
         store_mode: Optional[bool] = None,
         enable_dnd: bool = True,
+        model_manager: Optional[ModelManager] = None,
+        prefetch_models: bool = True,
     ) -> None:
         self.config_ = config
         self._store_mode = is_msix_package() if store_mode is None else bool(store_mode)
+        self.model_manager: ModelManager = (
+            model_manager if model_manager is not None else ModelManager(Path(config.models_dir))
+        )
         self._prefs_path: Path = Path(prefs_path) if prefs_path is not None else default_preferences_path()
         self._prefs: UserPreferences = load_preferences(self._prefs_path, default_dpi=self.config_.render_dpi)
         self._last_dir: str = self._prefs.last_dir
@@ -200,6 +206,7 @@ class App(ttk.Frame):
         self.total_pages: int = 0
         self.worker: Optional[threading.Thread] = None
         self.update_thread: Optional[threading.Thread] = None
+        self.model_thread: Optional[threading.Thread] = None
         self._available_update: Optional[UpdateInfo] = None
         self._last_output: Optional[Path] = None
         self._busy = False
@@ -235,6 +242,8 @@ class App(ttk.Frame):
             log.info("Microsoft Store MSIX mode active; in-app GitHub update check disabled")
         elif self.config_.check_updates:
             self._start_update_check()
+        if prefetch_models and not self.model_manager.status().ready:
+            self._start_model_prefetch()
 
     def _default_exit(self) -> None:  # pragma: no cover - terminates interactive Tk root
         try:
@@ -1100,6 +1109,22 @@ class App(ttk.Frame):
         self.update_thread = threading.Thread(target=check, daemon=True, name="update-check")
         self.update_thread.start()
 
+    def _start_model_prefetch(self) -> None:
+        log.info("Starting background AI model download...")
+
+        def prefetch() -> None:
+            try:
+                self.model_manager.ensure(
+                    progress=lambda d, t: self.q.put(("models_progress", (d, t))),
+                )
+                self.q.put(("models_ready", None))
+            except Exception as exc:
+                log.warning("Background AI model download failed: %s", exc, exc_info=True)
+                self.q.put(("models_error", str(exc)))
+
+        self.model_thread = threading.Thread(target=prefetch, daemon=True, name="model-prefetch")
+        self.model_thread.start()
+
     def on_update_clicked(self) -> None:
         info = self._available_update
         if info is None or self._busy:
@@ -1299,6 +1324,7 @@ class App(ttk.Frame):
             confirm=self._confirm_from_worker,
             progress=lambda p, m: self.q.put(("progress", (p, m))),
             is_cancelled=self._cancel_event.is_set,
+            model_manager=self.model_manager,
         )
 
         def work() -> None:
@@ -1438,6 +1464,31 @@ class App(ttk.Frame):
                 self.status_var.set("Update failed. See Activity Log for details.")
                 self.log_section.set_expanded(True)
                 self.show_error("Update failed", payload)
+            elif kind == "models_progress":
+                done_b, total_b = payload
+                if not self._busy:
+                    denom = max(int(total_b), 1)
+                    pct = min(99, max(0, int(100 * int(done_b) / denom)))
+                    self.progress["value"] = pct
+                    self.pct_var.set(f"{pct}%")
+                    self.status_var.set(
+                        f"Downloading AI models (one time): {done_b / 1e6:.0f} of ~{denom / 1e6:.0f} MB..."
+                    )
+            elif kind == "models_ready":
+                if not self._busy:
+                    self.progress["value"] = 0
+                    self.pct_var.set("0%")
+                    if self.pdf is not None:
+                        self.status_var.set("Ready. Pick a preset or click Convert & Save.")
+                    else:
+                        self.status_var.set("AI models ready. Load or drop a sheet music PDF or photo to start.")
+            elif kind == "models_error":
+                if not self._busy:
+                    self.progress["value"] = 0
+                    self.pct_var.set("0%")
+                    self.status_var.set(
+                        "AI models could not be downloaded — they will download when you convert. See Activity Log."
+                    )
 
     def _poll(self) -> None:
         self.process_queue()

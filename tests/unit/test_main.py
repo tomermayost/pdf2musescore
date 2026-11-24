@@ -64,6 +64,67 @@ def test_main_crash(monkeypatch, tmp_path):
         _cleanup_handlers()
 
 
+def test_main_download_models_modes(monkeypatch, tmp_path):
+    from pdf2musescore.engines.homr_engine import CancelledError
+    from pdf2musescore.model_store import ModelStatus
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("PDF2MSCZ_LOG_DIR", str(tmp_path / "logs"))
+
+    class _FakeMgr:
+        mode = "ready"
+        calls = 0
+
+        def __init__(self, models_dir):
+            self.models_dir = models_dir
+
+        def status(self):
+            ready = _FakeMgr.mode == "ready"
+            return ModelStatus(ready=ready, missing=() if ready else ("homr",), homr_dir=tmp_path, ocr_dir=tmp_path)
+
+        def ensure(self, progress=None, is_cancelled=lambda: False):
+            _FakeMgr.calls += 1
+            if progress:
+                progress(0, 100)
+                progress(50, 100)
+                progress(100, 100)
+            if _FakeMgr.mode == "cancel":
+                raise CancelledError("aborted")
+            if _FakeMgr.mode == "fail":
+                raise RuntimeError("network down")
+            return ModelStatus(ready=True, missing=(), homr_dir=tmp_path, ocr_dir=tmp_path)
+
+    monkeypatch.setattr(entry, "ModelManager", _FakeMgr)
+
+    try:
+        # 1. Already ready -> exits 0 immediately without calling ensure
+        _FakeMgr.mode = "ready"
+        assert entry.main(["--download-models", "--no-ui"]) == 0
+        assert _FakeMgr.calls == 0
+
+        # 2. Headless success -> exits 0 and logs progress buckets
+        _FakeMgr.mode = "download"
+        assert entry.main(["--download-models", "--no-ui"]) == 0
+        assert _FakeMgr.calls == 1
+
+        # 3. Cancelled -> exits 2
+        _FakeMgr.mode = "cancel"
+        assert entry.main(["--download-models", "--no-ui"]) == 2
+
+        # 4. Unexpected error -> exits 1
+        _FakeMgr.mode = "fail"
+        assert entry.main(["--download-models", "--no-ui"]) == 1
+
+        # 5. UI mode delegates to run_download_window
+        import pdf2musescore.ui_download as ui_dl
+
+        _FakeMgr.mode = "download"
+        monkeypatch.setattr(ui_dl, "run_download_window", lambda mgr: 0)
+        assert entry.main(["--download-models"]) == 0
+    finally:
+        _cleanup_handlers()
+
+
 def test_frozen_data_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(cfgmod.sys, "frozen", True, raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))

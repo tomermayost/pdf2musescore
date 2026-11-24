@@ -21,8 +21,9 @@ class FakePipeline:
     last_pages_spec = None
     last_options = None
 
-    def __init__(self, config, confirm, progress, is_cancelled=lambda: False):
+    def __init__(self, config, confirm, progress, is_cancelled=lambda: False, model_manager=None):
         self.confirm, self.progress, self.is_cancelled = confirm, progress, is_cancelled
+        self.model_manager = model_manager
 
     def convert(self, pdf, out, pages_spec=None, options=None):
         FakePipeline.last_pages_spec = pages_spec
@@ -47,6 +48,8 @@ def close_app(app):
         app.worker.join(timeout=2)
     if getattr(app, "update_thread", None) is not None and app.update_thread.is_alive():
         app.update_thread.join(timeout=2)
+    if getattr(app, "model_thread", None) is not None and app.model_thread.is_alive():
+        app.model_thread.join(timeout=2)
     app.destroy()
     for name in list(app.__dict__):
         if name.endswith("_var"):
@@ -437,6 +440,80 @@ def test_gui_error_truncation_tk_exception_hook_and_drop_error(root, calls, tmp_
     finally:
         close_app(app)
     assert root.report_callback_exception == orig_hook
+
+
+def test_gui_model_prefetch_progress_ready_and_error(root, calls, tmp_path):
+    from pdf2musescore.model_store import ModelDownloadError, ModelStatus
+
+    class _FakePrefetchManager:
+        def __init__(self, should_fail=False):
+            self.should_fail = should_fail
+            self.calls = 0
+
+        def status(self):
+            return ModelStatus(ready=False, missing=("homr",), homr_dir=tmp_path, ocr_dir=tmp_path)
+
+        def ensure(self, progress=None, is_cancelled=lambda: False):
+            self.calls += 1
+            if progress:
+                progress(90_000_000, 180_000_000)
+            if self.should_fail:
+                raise ModelDownloadError("offline")
+            return ModelStatus(ready=True, missing=(), homr_dir=tmp_path, ocr_dir=tmp_path)
+
+    # Ready flow
+    mgr_ok = _FakePrefetchManager(should_fail=False)
+    app = App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs", work_dir=tmp_path / "work", check_updates=False),
+        musescore_available=lambda: True,
+        prefs_path=tmp_path / "prefs_ok.json",
+        model_manager=mgr_ok,
+        prefetch_models=True,
+    )
+    try:
+        pump(app, root, lambda: mgr_ok.calls == 1 and not app.model_thread.is_alive())
+        app.process_queue()
+        assert "AI models ready" in app.status_var.get()
+
+        # When PDF is loaded, models_ready restores normal Ready text; when busy, updates are ignored
+        app.pdf = tmp_path / "x.pdf"
+        app.q.put(("models_progress", (50_000_000, 180_000_000)))
+        app.process_queue()
+        assert "Downloading AI models" in app.status_var.get()
+        app.q.put(("models_ready", None))
+        app.process_queue()
+        assert "Pick a preset" in app.status_var.get()
+
+        app._busy = True
+        app.status_var.set("Converting...")
+        app.q.put(("models_progress", (10_000_000, 180_000_000)))
+        app.q.put(("models_ready", None))
+        app.q.put(("models_error", "ignored"))
+        app.process_queue()
+        assert app.status_var.get() == "Converting..."
+        app._busy = False
+    finally:
+        close_app(app)
+
+    # Error flow shows non-blocking hint in status bar without error modal
+    mgr_err = _FakePrefetchManager(should_fail=True)
+    app2 = App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs", work_dir=tmp_path / "work", check_updates=False),
+        musescore_available=lambda: True,
+        prefs_path=tmp_path / "prefs_err.json",
+        model_manager=mgr_err,
+        prefetch_models=True,
+        show_error=lambda t, m: calls["error"].append(m),
+    )
+    try:
+        pump(app2, root, lambda: mgr_err.calls == 1 and not app2.model_thread.is_alive())
+        app2.process_queue()
+        assert "could not be downloaded" in app2.status_var.get()
+        assert calls["error"] == []
+    finally:
+        close_app(app2)
 
 
 def test_confirm_yes(root, calls, tmp_path):

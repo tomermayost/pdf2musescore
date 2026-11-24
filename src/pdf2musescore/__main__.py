@@ -6,10 +6,46 @@ import logging
 import sys
 
 from pdf2musescore import AUTHOR_CREDIT, __version__
-from pdf2musescore.config import ConfigError, is_msix_package, load_config
+from pdf2musescore.config import AppConfig, ConfigError, is_msix_package, load_config
 from pdf2musescore.diagnostics import install_crash_handlers, install_stdio_capture, log_environment
-from pdf2musescore.engines.homr_engine import get_engine_version, get_rapidocr_version
+from pdf2musescore.engines.homr_engine import CancelledError, get_engine_version, get_rapidocr_version
 from pdf2musescore.logging_setup import setup_logging
+from pdf2musescore.model_store import ModelManager
+
+
+def _run_download_models(config: AppConfig, log: logging.Logger, *, no_ui: bool) -> int:
+    try:
+        manager = ModelManager(config.models_dir)
+        st = manager.status()
+        if st.ready:
+            log.info("AI models already present and verified (%s, %s)", st.homr_dir, st.ocr_dir)
+            return 0
+        if no_ui:
+            last_bucket = [-1]
+
+            def _log_progress(done_b: int, total_b: int) -> None:
+                pct = min(100, int(100 * done_b / max(total_b, 1)))
+                bucket = pct // 10
+                if bucket != last_bucket[0]:
+                    last_bucket[0] = bucket
+                    log.info(
+                        "Downloading AI models: %.0f / ~%.0f MB (%d%%)",
+                        done_b / 1e6,
+                        max(total_b, 1) / 1e6,
+                        pct,
+                    )
+
+            manager.ensure(progress=_log_progress)
+            return 0
+        from pdf2musescore.ui_download import run_download_window
+
+        return int(run_download_window(manager))
+    except CancelledError:
+        log.info("AI model download cancelled by user")
+        return 2
+    except Exception:
+        log.exception("AI model download failed")
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,26 +81,29 @@ def main(argv: list[str] | None = None) -> int:
     log = setup_logging(config.log_level, config.log_dir, config.third_party_log_level)
     crash_handle = install_crash_handlers(config.log_dir)
     restore_stdio = install_stdio_capture()
-    log.info(
-        "pdf2musescore %s (homr %s) starting (python %s, frozen=%s, msix=%s)",
-        __version__,
-        get_engine_version(),
-        sys.version.split()[0],
-        getattr(sys, "frozen", False),
-        is_msix_package(),
-    )
-    log_environment(log)
-    from pdf2musescore.gui import run_gui
     try:
-        run_gui(config)
-    except Exception as exc:
-        log.exception("Fatal error")
-        _show_fatal(str(exc))
-        return 1
+        log.info(
+            "pdf2musescore %s (homr %s) starting (python %s, frozen=%s, msix=%s)",
+            __version__,
+            get_engine_version(),
+            sys.version.split()[0],
+            getattr(sys, "frozen", False),
+            is_msix_package(),
+        )
+        log_environment(log)
+        if "--download-models" in args:
+            return _run_download_models(config, log, no_ui=("--no-ui" in args))
+        from pdf2musescore.gui import run_gui
+        try:
+            run_gui(config)
+        except Exception as exc:
+            log.exception("Fatal error")
+            _show_fatal(str(exc))
+            return 1
+        return 0
     finally:
         restore_stdio()
         crash_handle.uninstall()
-    return 0
 
 
 def _show_fatal(message: str) -> None:  # pragma: no cover - UI popup

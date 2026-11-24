@@ -85,37 +85,24 @@ def prune_stale_version_dirs(parent_dir: Path, keep_version: str) -> list[Path]:
     return removed
 
 
-def configure_model_cache(
-    models_dir: Path,
-    homr_version: Optional[str] = None,
-    rapidocr_version: Optional[str] = None,
+def sanitize_version(raw: str) -> str:
+    """Normalize an engine version string into a filesystem-safe directory component."""
+    cleaned = (raw or "").strip() or "unknown"
+    return re.sub(r"[^0-9A-Za-z._-]", "_", cleaned)
+
+
+def _apply_homr_model_paths(
+    seg_dir: Path,
+    tr_dir: Path,
     *,
     homr_main: Any = None,
     homr_seg_cfg: Any = None,
     homr_seg_inf: Any = None,
     homr_tr_cfg: Any = None,
-) -> tuple[Path, Path]:
-    """Redirect downloadable homr and rapidocr ONNX weights into version-scoped writable directories.
-
-    Upgrading either engine changes its version folder, forcing fresh weight downloads
-    automatically and cleaning up obsolete model directories. Bundled tokenizer JSON files
-    remain untouched in their package directory.
-    """
-    raw_homr = (homr_version or get_engine_version()).strip() or "unknown"
-    raw_ocr = (rapidocr_version or get_rapidocr_version()).strip() or "unknown"
-    safe_homr = re.sub(r"[^0-9A-Za-z._-]", "_", raw_homr)
-    safe_ocr = re.sub(r"[^0-9A-Za-z._-]", "_", raw_ocr)
-
-    homr_root = Path(models_dir) / "homr"
-    ocr_root = Path(models_dir) / "rapidocr"
-    homr_ver_dir = homr_root / safe_homr
-    seg_dir = homr_ver_dir / "segmentation"
-    tr_dir = homr_ver_dir / "transformer"
-    ocr_ver_dir = ocr_root / safe_ocr
-
+) -> None:
+    """Point homr's segmentation and transformer weight paths at ``seg_dir`` and ``tr_dir``."""
     seg_dir.mkdir(parents=True, exist_ok=True)
     tr_dir.mkdir(parents=True, exist_ok=True)
-    ocr_ver_dir.mkdir(parents=True, exist_ok=True)
 
     if homr_main is None:
         import homr.main as homr_main
@@ -138,6 +125,43 @@ def configure_model_cache(
     for attr in ("encoder_path", "decoder_path", "encoder_path_fp16", "decoder_path_fp16"):
         if hasattr(filepaths, attr):
             setattr(filepaths, attr, str(tr_dir / Path(getattr(filepaths, attr)).name))
+
+
+def configure_model_cache(
+    models_dir: Path,
+    homr_version: Optional[str] = None,
+    rapidocr_version: Optional[str] = None,
+    *,
+    homr_main: Any = None,
+    homr_seg_cfg: Any = None,
+    homr_seg_inf: Any = None,
+    homr_tr_cfg: Any = None,
+) -> tuple[Path, Path]:
+    """Redirect downloadable homr and rapidocr ONNX weights into version-scoped writable directories.
+
+    Upgrading either engine changes its version folder, forcing fresh weight downloads
+    automatically and cleaning up obsolete model directories. Bundled tokenizer JSON files
+    remain untouched in their package directory.
+    """
+    safe_homr = sanitize_version(homr_version or get_engine_version())
+    safe_ocr = sanitize_version(rapidocr_version or get_rapidocr_version())
+
+    homr_root = Path(models_dir) / "homr"
+    ocr_root = Path(models_dir) / "rapidocr"
+    homr_ver_dir = homr_root / safe_homr
+    seg_dir = homr_ver_dir / "segmentation"
+    tr_dir = homr_ver_dir / "transformer"
+    ocr_ver_dir = ocr_root / safe_ocr
+
+    ocr_ver_dir.mkdir(parents=True, exist_ok=True)
+    _apply_homr_model_paths(
+        seg_dir,
+        tr_dir,
+        homr_main=homr_main,
+        homr_seg_cfg=homr_seg_cfg,
+        homr_seg_inf=homr_seg_inf,
+        homr_tr_cfg=homr_tr_cfg,
+    )
 
     prune_stale_version_dirs(homr_root, safe_homr)
     prune_stale_version_dirs(ocr_root, safe_ocr)

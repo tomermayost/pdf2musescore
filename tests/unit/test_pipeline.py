@@ -174,6 +174,59 @@ def test_prune_old_jobs_keeps_newest_three(tmp_path, pdf):
     assert len(list(work_root.iterdir())) == 3
 
 
+def test_pipeline_ensures_missing_models_and_maps_download_error(tmp_path, pdf):
+    from pdf2musescore.model_store import ModelDownloadError, ModelStatus
+
+    messages: list[str] = []
+
+    class _DownloadingManager:
+        def __init__(self, fail=False):
+            self.fail = fail
+            self.ensure_calls = 0
+
+        def status(self):
+            return ModelStatus(ready=False, missing=("homr",), homr_dir=tmp_path, ocr_dir=tmp_path)
+
+        @staticmethod
+        def is_downloading():
+            return True
+
+        def ensure(self, progress=None, is_cancelled=lambda: False):
+            self.ensure_calls += 1
+            if progress:
+                progress(90_000_000, 180_000_000)
+            if self.fail:
+                raise ModelDownloadError("timeout")
+            return ModelStatus(ready=True, missing=(), homr_dir=tmp_path, ocr_dir=tmp_path)
+
+    mgr_ok = _DownloadingManager(fail=False)
+    p = Pipeline(
+        AppConfig(work_dir=tmp_path / "work"),
+        progress=lambda pct, msg: messages.append(msg),
+        ensure=lambda spec, cfg, confirm: Path("ms.exe"),
+        engine_factory=lambda dpi, cb, pages_spec=None, is_cancelled=None: FakeEngine(cb=cb),
+        exporter_factory=FakeExporter,
+        model_manager=mgr_ok,
+    )
+    out = p.convert(pdf, tmp_path / "out.mscz")
+    assert out.is_file()
+    assert mgr_ok.ensure_calls == 1
+    assert any("Waiting for AI model download" in m for m in messages)
+    assert any("Downloading AI models (one time): 90 of ~180 MB" in m for m in messages)
+
+    mgr_fail = _DownloadingManager(fail=True)
+    p_fail = Pipeline(
+        AppConfig(work_dir=tmp_path / "work"),
+        ensure=lambda spec, cfg, confirm: Path("ms.exe"),
+        engine_factory=lambda dpi, cb, pages_spec=None, is_cancelled=None: FakeEngine(cb=cb),
+        exporter_factory=FakeExporter,
+        model_manager=mgr_fail,
+    )
+    with pytest.raises(ConversionError, match="internet connection") as ei:
+        p_fail.convert(pdf, tmp_path / "fail.mscz")
+    assert "ModelDownloadError: timeout" in ei.value.detail
+
+
 def test_default_engine_branch_and_options_error(tmp_path, pdf, monkeypatch):
     from pdf2musescore.options import ConversionOptions, OptionsError
     import pdf2musescore.pipeline as pl_mod

@@ -99,6 +99,7 @@ app = App(
     musescore_available=lambda: True,
     prefs_path=Path({str(prefs_path)!r}),
     enable_dnd=True,
+    prefetch_models=False,
     show_error=lambda t, m: errors.append((t, m)),
 )
 assert app._drop_handle is not None, "App did not install drop handler"
