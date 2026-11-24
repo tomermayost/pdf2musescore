@@ -152,6 +152,7 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 | Key | Default | Description |
 |---|---|---|
 | `log_level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
+| `third_party_log_level` | `INFO` | Verbosity for third-party libraries (`homr`, `RapidOCR`, warnings) |
 | `log_dir` | `%LOCALAPPDATA%\pdf2musescore\logs` (or `tmp/logs` in dev) | Rotating log files |
 | `work_dir` | `%LOCALAPPDATA%\pdf2musescore\work` (or `tmp/work` in dev) | Temporary working directory |
 | `models_dir` | `%LOCALAPPDATA%\pdf2musescore\models` (or `tmp/models` in dev) | Version-scoped local cache for `homr` & `RapidOCR` ONNX weights (auto-updates when engines upgrade) |

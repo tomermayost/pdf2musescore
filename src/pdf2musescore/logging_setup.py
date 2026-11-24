@@ -13,24 +13,38 @@ LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s"
 _HANDLER_TAG = "_pdf2musescore_handler"
 
 
-def setup_logging(level: str = "INFO", log_dir: Path | None = None) -> logging.Logger:
-    """Configure the package logger. Idempotent: replaces handlers it previously added."""
+def setup_logging(
+    level: str = "INFO",
+    log_dir: Path | None = None,
+    third_party_level: str = "INFO",
+) -> logging.Logger:
+    """Configure package and root loggers (plus Python warnings). Idempotent."""
     logger = logging.getLogger(APP_NAME)
     logger.setLevel(level.upper())
     logger.propagate = False
 
-    for h in list(logger.handlers):
-        if getattr(h, _HANDLER_TAG, False):
-            logger.removeHandler(h)
-            h.close()
+    root_logger = logging.getLogger()
+    root_logger.setLevel(third_party_level.upper())
+
+    removed: list[logging.Handler] = []
+    for target in (logger, root_logger):
+        for h in list(target.handlers):
+            if getattr(h, _HANDLER_TAG, False):
+                target.removeHandler(h)
+                if h not in removed:
+                    removed.append(h)
+    for h in removed:
+        h.close()
 
     formatter = logging.Formatter(LOG_FORMAT)
+    new_handlers: list[logging.Handler] = []
 
-    if sys.stderr is not None:
-        console = logging.StreamHandler()
+    console_stream = getattr(sys.stderr, "passthrough", sys.stderr)
+    if console_stream is not None:
+        console = logging.StreamHandler(console_stream)
         console.setFormatter(formatter)
         setattr(console, _HANDLER_TAG, True)
-        logger.addHandler(console)
+        new_handlers.append(console)
 
     if log_dir is not None:
         log_dir = Path(log_dir)
@@ -40,7 +54,17 @@ def setup_logging(level: str = "INFO", log_dir: Path | None = None) -> logging.L
         )
         fh.setFormatter(formatter)
         setattr(fh, _HANDLER_TAG, True)
-        logger.addHandler(fh)
+        new_handlers.append(fh)
 
-    logger.debug("Logging initialised (level=%s, log_dir=%s)", level, log_dir)
+    for h in new_handlers:
+        logger.addHandler(h)
+        root_logger.addHandler(h)
+
+    logging.captureWarnings(True)
+    logger.debug(
+        "Logging initialised (level=%s, third_party_level=%s, log_dir=%s)",
+        level,
+        third_party_level,
+        log_dir,
+    )
     return logger

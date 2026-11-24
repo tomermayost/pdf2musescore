@@ -334,14 +334,17 @@ def test_shortcuts_and_log_badges(root, calls, tmp_path):
     close_app(app)
 
 
-def test_load_page_counter_error_fallback(root, calls, tmp_path):
+def test_load_page_counter_error_fallback(root, calls, tmp_path, caplog):
     def bad_counter(p):
         raise ValueError("bad pdf")
 
     app = make_app(root, calls, tmp_path, page_counter=bad_counter)
-    app.on_load()
+    with caplog.at_level("WARNING", logger="pdf2musescore.gui"):
+        app.on_load()
     assert app.file_var.get() == "song.pdf"
     assert app.preview_pane.total_pages == 1
+    assert "Could not count pages" in caplog.text
+    assert "ValueError: bad pdf" in caplog.text
     close_app(app)
 
 
@@ -377,24 +380,63 @@ def test_load_cancelled(root, calls, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "behaviour,yes,expected",
+    "behaviour,yes,expected_parts",
     [
-        ("error", True, "friendly message"),
-        ("crash", True, "Unexpected error: boom"),
-        ("confirm", False, "declined"),
+        ("error", True, ["friendly message", "Full technical log:", "pdf2musescore.log"]),
+        ("crash", True, ["Unexpected error.", "Details: RuntimeError: boom", "pdf2musescore.log"]),
+        ("confirm", False, ["declined", "Full technical log:", "pdf2musescore.log"]),
     ],
 )
-def test_errors_auto_expand_log(root, calls, tmp_path, behaviour, yes, expected):
+def test_errors_auto_expand_log(root, calls, tmp_path, behaviour, yes, expected_parts):
     FakePipeline.behaviour = behaviour
     app = make_app(root, calls, tmp_path, yes=yes)
     app.on_load()
     app.log_section.set_expanded(False)
     app.on_convert()
     pump(app, root, lambda: calls["error"])
-    assert calls["error"] == [expected]
+    assert len(calls["error"]) == 1
+    popup = calls["error"][0]
+    for part in expected_parts:
+        assert part in popup
     assert "failed" in app.status_var.get()
     assert app.log_section.is_expanded is True
     close_app(app)
+
+
+def test_gui_error_truncation_tk_exception_hook_and_drop_error(root, calls, tmp_path, caplog):
+    orig_hook = root.report_callback_exception
+    app = make_app(root, calls, tmp_path)
+    try:
+        # Long technical details are truncated cleanly to stay readable in messagebox
+        formatted = app._format_error("Scan failed", "X" * 1000)
+        assert ("Details: " + "X" * 797 + "...") in formatted
+        assert "X" * 800 not in formatted
+        assert "pdf2musescore.log" in formatted
+
+        # Unhandled UI callback exceptions are routed to logger and expand the log drawer
+        app.log_section.set_expanded(False)
+        with caplog.at_level("ERROR", logger="pdf2musescore.gui"):
+            try:
+                raise RuntimeError("tk callback boom")
+            except RuntimeError:
+                import sys
+
+                root.report_callback_exception(*sys.exc_info())
+        assert "Unhandled error in UI callback" in caplog.text
+        assert "tk callback boom" in caplog.text
+        assert app.log_section.is_expanded is True
+
+        # Unexpected exception inside on_drop_files is caught, logged, and reported
+        app.load_source = lambda _p: (_ for _ in ()).throw(OSError("unreadable file"))
+        bad_pdf = tmp_path / "broken.pdf"
+        bad_pdf.write_bytes(b"%PDF")
+        with caplog.at_level("ERROR", logger="pdf2musescore.gui"):
+            app.on_drop_files([bad_pdf])
+        assert "Failed to open dropped file(s)" in caplog.text
+        assert calls["error"] and "OSError: unreadable file" in calls["error"][-1]
+    finally:
+        close_app(app)
+    assert root.report_callback_exception == orig_hook
 
 
 def test_confirm_yes(root, calls, tmp_path):

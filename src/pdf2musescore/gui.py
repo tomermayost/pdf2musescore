@@ -12,7 +12,7 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, ttk
-from typing import Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 import webbrowser
 
 from PIL import Image, ImageTk
@@ -220,6 +220,8 @@ class App(ttk.Frame):
 
         self.log_handler = QueueLogHandler(self.q)
         logging.getLogger(APP_NAME).addHandler(self.log_handler)
+        self._orig_tk_exception_handler = getattr(self.master, "report_callback_exception", None)
+        self.master.report_callback_exception = self._report_tk_exception
 
         self._build()
         self.apply_theme(self.theme_name)
@@ -1183,6 +1185,7 @@ class App(ttk.Frame):
             self.file_var.set(f"{source.name} ({n_pages} page{'s' if n_pages != 1 else ''})")
             self.file_meta_var.set(parent_str)
         except Exception:
+            log.warning("Could not count pages in %s", source, exc_info=True)
             self.total_pages = 1
             self.file_var.set(source.name)
             self.file_meta_var.set(parent_str)
@@ -1203,21 +1206,28 @@ class App(ttk.Frame):
 
     def on_drop_files(self, paths: Sequence[Path]) -> None:
         """Handle files dropped onto the application window via Windows Explorer."""
-        if self._busy:
-            log.info("Ignoring dropped file(s) while conversion is running")
-            self.status_var.set("Wait for the current conversion to finish before loading another file.")
-            return
-        candidates = [Path(p) for p in paths]
-        chosen = next((p for p in candidates if p.is_file() and is_supported_input(p)), None)
-        if chosen is not None:
-            log.info("Dropped file: %s", chosen)
-            self.load_source(chosen)
-            return
-        if candidates:
-            log.warning("Dropped unsupported file(s): %s", [str(p) for p in candidates])
+        try:
+            if self._busy:
+                log.info("Ignoring dropped file(s) while conversion is running")
+                self.status_var.set("Wait for the current conversion to finish before loading another file.")
+                return
+            candidates = [Path(p) for p in paths]
+            chosen = next((p for p in candidates if p.is_file() and is_supported_input(p)), None)
+            if chosen is not None:
+                log.info("Dropped file: %s", chosen)
+                self.load_source(chosen)
+                return
+            if candidates:
+                log.warning("Dropped unsupported file(s): %s", [str(p) for p in candidates])
+                self.show_error(
+                    "Unsupported file",
+                    "Drop a sheet music PDF or image (.png, .jpg, .webp, .bmp, .tif).",
+                )
+        except Exception as exc:
+            log.exception("Failed to open dropped file(s): %s", [str(p) for p in paths])
             self.show_error(
-                "Unsupported file",
-                "Drop a sheet music PDF or image (.png, .jpg, .webp, .bmp, .tif).",
+                "Could not open file",
+                self._format_error("Could not open dropped file.", f"{type(exc).__name__}: {exc}"),
             )
 
     def on_convert(self) -> None:
@@ -1247,6 +1257,25 @@ class App(ttk.Frame):
         self._cancel_event.set()
         self.abort_btn.configure(state="disabled")
         self.status_var.set("Aborting conversion (stopping after current step)...")
+
+    def _format_error(self, message: str, detail: str = "") -> str:
+        parts = [message.strip()]
+        cleaned = (detail or "").strip()
+        if cleaned:
+            if len(cleaned) > 800:
+                cleaned = cleaned[:797] + "..."
+            parts.append(f"Details: {cleaned}")
+        log_file = Path(self.config_.log_dir).resolve() / f"{APP_NAME}.log"
+        parts.append(f"Full technical log:\n{log_file}")
+        return "\n\n".join(parts)
+
+    def _report_tk_exception(self, exc: type[BaseException], val: BaseException, tb: Any) -> None:
+        log.error("Unhandled error in UI callback", exc_info=(exc, val, tb))
+        try:
+            self.status_var.set("An unexpected error occurred. See Activity Log.")
+            self.log_section.set_expanded(True)
+        except Exception:
+            pass
 
     def start_conversion(
         self,
@@ -1278,11 +1307,11 @@ class App(ttk.Frame):
             except CancelledError:
                 self.q.put(("aborted", None))
             except ConversionError as exc:
-                log.error("Conversion failed: %s", exc)
-                self.q.put(("error", exc.user_message))
+                log.error("Conversion failed [stage=%s]: %s", exc.stage, exc, exc_info=exc)
+                self.q.put(("error", self._format_error(exc.user_message, exc.detail)))
             except Exception as exc:  # unexpected - log full traceback
-                log.exception("Unexpected error")
-                self.q.put(("error", f"Unexpected error: {exc}"))
+                log.exception("Unexpected error during conversion")
+                self.q.put(("error", self._format_error("Unexpected error.", f"{type(exc).__name__}: {exc}")))
 
         self.worker = threading.Thread(target=work, daemon=True, name="conversion")
         self.worker.start()
@@ -1438,6 +1467,12 @@ class App(ttk.Frame):
             except Exception:
                 pass
         self._shortcut_bindings.clear()
+        if getattr(self, "_orig_tk_exception_handler", None) is not None:
+            try:
+                self.master.report_callback_exception = self._orig_tk_exception_handler
+            except Exception:
+                pass
+            self._orig_tk_exception_handler = None
         logging.getLogger(APP_NAME).removeHandler(self.log_handler)
         super().destroy()
 

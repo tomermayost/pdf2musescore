@@ -7,6 +7,7 @@ import sys
 
 from pdf2musescore import AUTHOR_CREDIT, __version__
 from pdf2musescore.config import ConfigError, is_msix_package, load_config
+from pdf2musescore.diagnostics import install_crash_handlers, install_stdio_capture, log_environment
 from pdf2musescore.engines.homr_engine import get_engine_version, get_rapidocr_version
 from pdf2musescore.logging_setup import setup_logging
 
@@ -41,7 +42,9 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("pdf2musescore").error("Invalid configuration: %s", exc)
         _show_fatal(f"Invalid configuration:\n{exc}")
         return 2
-    log = setup_logging(config.log_level, config.log_dir)
+    log = setup_logging(config.log_level, config.log_dir, config.third_party_log_level)
+    crash_handle = install_crash_handlers(config.log_dir)
+    restore_stdio = install_stdio_capture()
     log.info(
         "pdf2musescore %s (homr %s) starting (python %s, frozen=%s, msix=%s)",
         __version__,
@@ -50,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         getattr(sys, "frozen", False),
         is_msix_package(),
     )
+    log_environment(log)
     from pdf2musescore.gui import run_gui
     try:
         run_gui(config)
@@ -57,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
         log.exception("Fatal error")
         _show_fatal(str(exc))
         return 1
+    finally:
+        restore_stdio()
+        crash_handle.uninstall()
     return 0
 
 

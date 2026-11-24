@@ -192,3 +192,135 @@ def test_no_output(pdf, tmp_path):
 
     with pytest.raises(OmrError, match="no MusicXML"):
         HomrEngine(renderer=fake_render, runner=lambda pages, cb, *a: []).recognize(pdf, tmp_path / "out")
+
+
+def test_render_failure_modes(monkeypatch, tmp_path):
+    from PIL import Image
+
+    # imwrite returning False raises OmrError instead of silently continuing
+    monkeypatch.setattr(cv2, "imwrite", lambda *_a, **_k: False)
+    with pytest.raises(OmrError, match="Could not save rendered page 1"):
+        _default_render_pdf(FIXTURE, tmp_path, dpi=72, pages_spec="1")
+
+    # Image branch imwrite False
+    img_in = tmp_path / "score.png"
+    Image.new("RGB", (60, 80), (255, 255, 255)).save(img_in)
+    with pytest.raises(OmrError, match="Could not save rendered page 1"):
+        _default_render_pdf(img_in, tmp_path, dpi=72)
+    monkeypatch.undo()
+
+    # MemoryError during PDF page render gives lower-DPI hint
+    import pypdfium2 as pdfium
+
+    class _OomPage:
+        def get_size(self):
+            return (612.0, 792.0)
+
+        def render(self, scale=1.0):
+            raise MemoryError("oom")
+
+    class _OomDoc:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, idx):
+            return _OomPage()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(pdfium, "PdfDocument", lambda _p: _OomDoc())
+    with pytest.raises(OmrError, match="try a lower Render DPI"):
+        _default_render_pdf(FIXTURE, tmp_path, dpi=300)
+
+    # Generic exception during PDF page render includes exception type
+    class _BrokenPage:
+        def get_size(self):
+            return (612.0, 792.0)
+
+        def render(self, scale=1.0):
+            raise RuntimeError("corrupt stream")
+
+    class _BrokenDoc(_OomDoc):
+        def __getitem__(self, idx):
+            return _BrokenPage()
+
+    monkeypatch.setattr(pdfium, "PdfDocument", lambda _p: _BrokenDoc())
+    with pytest.raises(OmrError, match="RuntimeError: corrupt stream"):
+        _default_render_pdf(FIXTURE, tmp_path, dpi=72)
+    monkeypatch.undo()
+
+    # Image branch MemoryError and generic exception
+    import pdf2musescore.engines.homr_engine as he
+
+    monkeypatch.setattr(he, "load_pil_image_rgb", lambda *_a, **_k: (_ for _ in ()).throw(MemoryError("img oom")))
+    with pytest.raises(OmrError, match="Out of memory loading image page 1"):
+        _default_render_pdf(img_in, tmp_path, dpi=72)
+
+    monkeypatch.setattr(he, "load_pil_image_rgb", lambda *_a, **_k: (_ for _ in ()).throw(ValueError("bad img")))
+    with pytest.raises(OmrError, match="ValueError: bad img"):
+        _default_render_pdf(img_in, tmp_path, dpi=72)
+
+
+def test_run_pages_success_partial_failure_all_fail_and_cancel(tmp_path, caplog):
+    from PIL import Image
+    from pdf2musescore.engines.homr_engine import run_pages
+
+    p1 = tmp_path / "page_001.png"
+    p2 = tmp_path / "page_002.png"
+    Image.new("RGB", (40, 50), (255, 255, 255)).save(p1)
+    # p2 intentionally missing so _image_dimensions exercises fallback safely
+    seen_cb: list[tuple[int, int]] = []
+
+    def ok_proc(img: Path) -> Path:
+        out = img.with_suffix(".musicxml")
+        out.write_text("<score-partwise/>")
+        return out
+
+    with caplog.at_level("INFO", logger="pdf2musescore.engines.homr_engine"):
+        res = run_pages([p1, p2], ok_proc, page_cb=lambda i, t: seen_cb.append((i, t)))
+    assert len(res) == 2
+    assert seen_cb == [(1, 2), (2, 2)]
+    assert "40x50 px" in caplog.text
+
+    # Partial failure logs warning summary and returns surviving pages
+    caplog.clear()
+
+    def partial_proc(img: Path):
+        if img == p1:
+            raise ValueError("No staffs found")
+        return img.with_suffix(".musicxml")
+
+    with caplog.at_level("WARNING", logger="pdf2musescore.engines.homr_engine"):
+        res_partial = run_pages([p1, p2], partial_proc)
+    assert res_partial == [p2.with_suffix(".musicxml")]
+    assert "1 of 2 page(s) could not be read" in caplog.text
+    assert "ValueError: No staffs found" in caplog.text
+
+    # All fail raises OmrError with every page's error details
+    def all_fail_proc(img: Path):
+        if img == p1:
+            raise RuntimeError("No staffs found")
+        return None  # NoOutput
+
+    with pytest.raises(OmrError, match="No staffs found") as ei:
+        run_pages([p1, p2], all_fail_proc)
+    assert "NoOutput" in str(ei.value)
+
+    # OmrError raised by runner passes through HomrEngine.recognize without double-wrapping
+    eng = HomrEngine(
+        renderer=lambda p, out_dir, dpi, *a: [p1, p2],
+        runner=lambda pages, cb, *a: run_pages(pages, all_fail_proc),
+    )
+    with pytest.raises(OmrError, match=r"^homr could not read any"):
+        eng.recognize(FIXTURE, tmp_path / "out")
+
+    # Cancelled propagates immediately
+    with pytest.raises(CancelledError):
+        run_pages([p1], ok_proc, is_cancelled=lambda: True)
+
+    def cancel_mid(_img: Path):
+        raise CancelledError("stop")
+
+    with pytest.raises(CancelledError):
+        run_pages([p1], cancel_mid)

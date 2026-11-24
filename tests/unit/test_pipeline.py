@@ -58,14 +58,19 @@ def make(tmp_path, level="INFO", engine=None, exporter=FakeExporter, ensure=None
     return p, seen
 
 
-def test_convert_mscz(tmp_path, pdf):
-    steps = []
+def test_convert_mscz(tmp_path, pdf, caplog):
+    steps: list[int] = []
+    messages: list[str] = []
     p, seen = make(tmp_path, steps=steps)
-    out = p.convert(pdf, tmp_path / "out.mscz", pages_spec="2-3")
+    p.progress = lambda pct, m: (steps.append(pct), messages.append(m))
+    with caplog.at_level("INFO", logger="pdf2musescore.pipeline"):
+        out = p.convert(pdf, tmp_path / "out.mscz", pages_spec="2-3")
     assert out.read_text() == "mscz"
     assert seen == ["MuseScore"]
     assert 100 in steps
     assert not any((tmp_path / "work").iterdir())
+    assert "sha256=" in caplog.text
+    assert all("first run" not in m.lower() for m in messages)
 
 
 def test_convert_cancelled(tmp_path, pdf):
@@ -120,19 +125,53 @@ def _raiser(exc):
     return f
 
 
-@pytest.mark.parametrize("kwargs,match", [
-    (dict(ensure=_raiser(ToolNotFoundError("x"))), "not installed"),
-    (dict(ensure=_raiser(InstallError("x"))), "Installing"),
-    (dict(engine=FakeEngine(exc=OmrError("x"))), "could not be read"),
-    (dict(engine=FakeEngine(exc=OmrError("Page 5 is out of range"))), "out of range"),
-    (dict(engine=FakeEngine(n=0)), "combined"),
-    (dict(exporter=lambda exe: FakeExporter(exe, ExportError("x"))), "MuseScore could not"),
+@pytest.mark.parametrize("kwargs,match,detail_type", [
+    (dict(ensure=_raiser(ToolNotFoundError("x"))), "not installed", "ToolNotFoundError"),
+    (dict(ensure=_raiser(InstallError("x"))), "Installing", "InstallError"),
+    (dict(engine=FakeEngine(exc=OmrError("x"))), "could not be read", "OmrError"),
+    (dict(engine=FakeEngine(exc=OmrError("Page 5 is out of range"))), "out of range", "OmrError"),
+    (dict(engine=FakeEngine(n=0)), "combined", "MergeError"),
+    (dict(exporter=lambda exe: FakeExporter(exe, ExportError("x"))), "MuseScore could not", "ExportError"),
+    (dict(engine=FakeEngine(exc=RuntimeError("unexpected boom"))), "Something unexpected", "RuntimeError"),
 ])
-def test_errors_mapped(tmp_path, pdf, kwargs, match):
+def test_errors_mapped(tmp_path, pdf, kwargs, match, detail_type, caplog):
     p, _ = make(tmp_path, **kwargs)
-    with pytest.raises(ConversionError, match=match) as ei:
-        p.convert(pdf, tmp_path / "o.mscz")
+    with caplog.at_level("ERROR", logger="pdf2musescore.pipeline"):
+        with pytest.raises(ConversionError, match=match) as ei:
+            p.convert(pdf, tmp_path / "o.mscz")
     assert ei.value.user_message
+    assert detail_type in ei.value.detail
+    assert ei.value.stage
+    assert "Traceback" in caplog.text
+    # Failed conversion preserves its work folder for diagnosis
+    assert any(d.name.startswith("job-") for d in (tmp_path / "work").iterdir())
+
+
+def test_prune_old_jobs_keeps_newest_three(tmp_path, pdf):
+    import os
+    from pdf2musescore.pipeline import _prune_old_jobs
+
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    dirs = []
+    for i in range(5):
+        d = work_root / f"job-2026010{i}-000000-1"
+        d.mkdir()
+        (d / "page_001.png").write_bytes(b"png")
+        os.utime(d, (1000 + i * 100, 1000 + i * 100))
+        dirs.append(d)
+
+    removed = _prune_old_jobs(work_root, keep=3)
+    assert len(removed) == 2
+    remaining = sorted(p.name for p in work_root.iterdir())
+    assert remaining == [d.name for d in dirs[-3:]]
+
+    # Successful conversion also runs prune and cleans up its own temp work dir
+    (work_root / "job-20260109-000000-1").mkdir()
+    os.utime(work_root / "job-20260109-000000-1", (2000, 2000))
+    p, _ = make(tmp_path)
+    p.convert(pdf, tmp_path / "ok.mscz")
+    assert len(list(work_root.iterdir())) == 3
 
 
 def test_default_engine_branch_and_options_error(tmp_path, pdf, monkeypatch):

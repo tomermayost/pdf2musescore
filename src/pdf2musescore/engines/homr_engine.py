@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import importlib.metadata
 import logging
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
@@ -13,6 +15,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+from ..diagnostics import memory_snapshot
 from .base import OmrEngine, OmrError
 
 log = logging.getLogger(__name__)
@@ -260,16 +263,33 @@ def _default_render_pdf(pdf: Path, out_dir: Path, dpi: int,
     if is_image_file(pdf):
         n_pages = get_pdf_page_count(pdf)
         page_numbers = parse_page_spec(pages_spec, n_pages)
+        log.info(
+            "Rendering image %s (total_frames=%d, selected=%s, preprocess=%s, deskew=%s)",
+            pdf.name, n_pages, page_numbers, preprocess_mode, deskew,
+        )
         pages: list[Path] = []
         for pno in page_numbers:
             if is_cancelled():
                 raise CancelledError("Conversion aborted by user.")
-            pil = load_pil_image_rgb(pdf, page_number=pno)
-            bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-            bgr = preprocess_page_image(bgr, mode=preprocess_mode, deskew=deskew)
-            img_path = out_dir / f"page_{pno:03d}.png"
-            cv2.imwrite(str(img_path), bgr)
-            pages.append(img_path)
+            try:
+                pil = load_pil_image_rgb(pdf, page_number=pno)
+                bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+                bgr = preprocess_page_image(bgr, mode=preprocess_mode, deskew=deskew)
+                h_px, w_px = bgr.shape[:2]
+                img_path = out_dir / f"page_{pno:03d}.png"
+                if not cv2.imwrite(str(img_path), bgr):
+                    raise OmrError(f"Could not save rendered page {pno} ({w_px}x{h_px} px) to {img_path}")
+                file_bytes = img_path.stat().st_size if img_path.is_file() else 0
+                log.info("Image page %d saved: %s (%dx%d px, %d bytes)", pno, img_path.name, w_px, h_px, file_bytes)
+                pages.append(img_path)
+            except (OmrError, CancelledError):
+                raise
+            except MemoryError as exc:
+                raise OmrError(
+                    f"Out of memory loading image page {pno} — try a smaller image ({memory_snapshot()})"
+                ) from exc
+            except Exception as exc:
+                raise OmrError(f"Failed to prepare image page {pno}: {type(exc).__name__}: {exc}") from exc
         return pages
 
     import pypdfium2 as pdfium
@@ -279,22 +299,118 @@ def _default_render_pdf(pdf: Path, out_dir: Path, dpi: int,
         n_pages = len(doc)
         if n_pages == 0:
             raise OmrError(f"PDF has no pages: {pdf}")
+        try:
+            pdf_ver = doc.get_version()
+        except Exception:
+            pdf_ver = "unknown"
         page_numbers = parse_page_spec(pages_spec, n_pages)
+        log.info(
+            "Rendering PDF %s (version=%s, total_pages=%d, selected=%s, dpi=%d, preprocess=%s, deskew=%s)",
+            pdf.name, pdf_ver, n_pages, page_numbers, dpi, preprocess_mode, deskew,
+        )
         scale = dpi / 72.0
         pages = []
         for pno in page_numbers:
             if is_cancelled():
                 raise CancelledError("Conversion aborted by user.")
-            pil = doc[pno - 1].render(scale=scale).to_pil()
-            bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-            bgr = preprocess_page_image(bgr, mode=preprocess_mode, deskew=deskew)
-            img_path = out_dir / f"page_{pno:03d}.png"
-            cv2.imwrite(str(img_path), bgr)
-            pages.append(img_path)
+            try:
+                page = doc[pno - 1]
+                w_pt, h_pt = page.get_size()
+                pil = page.render(scale=scale).to_pil()
+                bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+                bgr = preprocess_page_image(bgr, mode=preprocess_mode, deskew=deskew)
+                h_px, w_px = bgr.shape[:2]
+                log.info("Page %d: %.0fx%.0f pt -> %dx%d px at %d DPI", pno, w_pt, h_pt, w_px, h_px, dpi)
+                img_path = out_dir / f"page_{pno:03d}.png"
+                if not cv2.imwrite(str(img_path), bgr):
+                    raise OmrError(f"Could not save rendered page {pno} ({w_px}x{h_px} px) to {img_path}")
+                file_bytes = img_path.stat().st_size if img_path.is_file() else 0
+                log.info("Page %d saved: %s (%d bytes)", pno, img_path.name, file_bytes)
+                pages.append(img_path)
+            except (OmrError, CancelledError):
+                raise
+            except MemoryError as exc:
+                raise OmrError(
+                    f"Out of memory rendering page {pno} at {dpi} DPI — try a lower Render DPI ({memory_snapshot()})"
+                ) from exc
+            except Exception as exc:
+                raise OmrError(f"Failed to render page {pno}: {type(exc).__name__}: {exc}") from exc
         return pages
     finally:
         if hasattr(doc, "close"):
             doc.close()
+
+
+@dataclass(frozen=True)
+class PageFailure:
+    """Details of a single page OMR failure for diagnostics and user reporting."""
+
+    page: int
+    image: str
+    error_type: str
+    message: str
+
+    def format_summary(self) -> str:
+        return f"page {self.page} ({self.image}): {self.error_type}: {self.message}"
+
+
+def _image_dimensions(path: Path) -> str:
+    try:
+        with Image.open(path) as im:
+            return f"{im.width}x{im.height} px"
+    except Exception:
+        return "unknown size"
+
+
+def run_pages(
+    image_paths: Sequence[Path],
+    process_one: Callable[[Path], Optional[Path]],
+    page_cb: Optional[Callable[[int, int], None]] = None,
+    is_cancelled: Callable[[], bool] = lambda: False,
+) -> list[Path]:
+    """Run ``process_one`` on each rendered page with verbose logging, timing, and error capture."""
+    outputs: list[Path] = []
+    failures: list[PageFailure] = []
+    total = len(image_paths)
+    for idx, img in enumerate(image_paths, start=1):
+        if is_cancelled():
+            raise CancelledError("Conversion aborted by user.")
+        if page_cb:
+            page_cb(idx, total)
+        dims = _image_dimensions(img)
+        log.info("homr: page %d/%d start (%s, %s, %s)", idx, total, img.name, dims, memory_snapshot())
+        started = time.monotonic()
+        try:
+            xml_path = process_one(img)
+            elapsed = time.monotonic() - started
+            if xml_path is not None and Path(xml_path).is_file():
+                outputs.append(Path(xml_path))
+                log.info("homr: page %d/%d done in %.2fs -> %s", idx, total, elapsed, Path(xml_path).name)
+            else:
+                log.warning("homr produced no MusicXML for page %d (%s) after %.2fs", idx, img.name, elapsed)
+                failures.append(PageFailure(idx, img.name, "NoOutput", "homr produced no MusicXML"))
+        except CancelledError:
+            raise
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            log.error(
+                "homr failed on page %d (%s) after %.2fs: %s: %s",
+                idx,
+                img.name,
+                elapsed,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            failures.append(PageFailure(idx, img.name, type(exc).__name__, str(exc) or type(exc).__name__))
+
+    if failures and outputs:
+        summary = "; ".join(f.format_summary() for f in failures)
+        log.warning("%d of %d page(s) could not be read: %s", len(failures), total, summary)
+    elif failures and not outputs:
+        summary = "; ".join(f.format_summary() for f in failures)
+        raise OmrError(f"homr could not read any of the {total} page(s): {summary}")
+    return outputs
 
 
 def _default_run_homr(image_paths: Sequence[Path],
@@ -359,23 +475,12 @@ def _default_run_homr(image_paths: Sequence[Path],
         hmain.color_adjust.apply_clahe = lambda img: img
 
     try:
-        outputs: list[Path] = []
-        total = len(image_paths)
-        for idx, img in enumerate(image_paths, start=1):
-            if is_cancelled():
-                raise CancelledError("Conversion aborted by user.")
-            if page_cb:
-                page_cb(idx, total)
-            try:
-                process_image(str(img), cfg, xargs)
-                xml_path = img.with_suffix(".musicxml")
-                if xml_path.is_file():
-                    outputs.append(xml_path)
-                else:
-                    log.warning("homr produced no MusicXML for page %d (%s)", idx, img.name)
-            except Exception as exc:
-                log.warning("homr failed on page %d (%s): %s", idx, img.name, exc)
-        return outputs
+        def _process_one(img: Path) -> Optional[Path]:
+            process_image(str(img), cfg, xargs)
+            xml_path = img.with_suffix(".musicxml")
+            return xml_path if xml_path.is_file() else None
+
+        return run_pages(image_paths, _process_one, page_cb=page_cb, is_cancelled=is_cancelled)
     finally:
         hmain.extract = orig_extract
         hmain.create_bounding_ellipses = orig_ellipses
@@ -424,7 +529,8 @@ class HomrEngine(OmrEngine):
         except (OmrError, CancelledError):
             raise
         except Exception as exc:
-            raise OmrError(f"Failed to render PDF pages: {exc}") from exc
+            log.exception("Failed to render PDF pages")
+            raise OmrError(f"Failed to render PDF pages: {type(exc).__name__}: {exc}") from exc
 
         log.info(
             "Rendered %d page(s) at %d DPI (preprocess=%s, deskew=%s, step=%d, min_notehead=%d); running homr AI...",
@@ -442,10 +548,11 @@ class HomrEngine(OmrEngine):
                 )
             else:
                 outputs = sorted(self._run(pages, self._page_cb, self._is_cancelled))
-        except CancelledError:
+        except (OmrError, CancelledError):
             raise
         except Exception as exc:
-            raise OmrError(f"homr recognition failed: {exc}") from exc
+            log.exception("homr recognition failed")
+            raise OmrError(f"homr recognition failed: {type(exc).__name__}: {exc}") from exc
 
         if not outputs:
             raise OmrError("homr produced no MusicXML output (score may be unreadable)")

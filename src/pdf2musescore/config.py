@@ -92,6 +92,7 @@ def default_config_path() -> Path:
 @dataclass(frozen=True)
 class AppConfig:
     log_level: str = "INFO"
+    third_party_log_level: str = "INFO"
     log_dir: Path = field(default_factory=lambda: default_data_dir() / "logs")
     work_dir: Path = field(default_factory=lambda: default_data_dir() / "work")
     models_dir: Path = field(default_factory=lambda: default_data_dir() / "models")
@@ -104,6 +105,12 @@ class AppConfig:
         if level not in VALID_LOG_LEVELS:
             raise ConfigError(f"Invalid log_level {self.log_level!r}; expected one of {VALID_LOG_LEVELS}")
         object.__setattr__(self, "log_level", level)
+        tp_level = str(self.third_party_log_level).upper()
+        if tp_level not in VALID_LOG_LEVELS:
+            raise ConfigError(
+                f"Invalid third_party_log_level {self.third_party_log_level!r}; expected one of {VALID_LOG_LEVELS}"
+            )
+        object.__setattr__(self, "third_party_log_level", tp_level)
         if int(self.render_dpi) < 72:
             raise ConfigError("render_dpi must be >= 72")
 

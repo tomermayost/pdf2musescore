@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -12,6 +13,7 @@ from typing import Callable, Optional
 
 from .config import AppConfig, ascii_safe_base_dir
 from .deps import MUSESCORE, InstallError, ToolNotFoundError, ensure_tool
+from .diagnostics import memory_snapshot
 from .engines.base import OmrEngine, OmrError
 from .engines.homr_engine import CancelledError, HomrEngine, is_supported_input
 from .exporters.musescore import ExportError, MuseScoreExporter
@@ -29,10 +31,89 @@ CancelFn = Callable[[], bool]
 class ConversionError(RuntimeError):
     """Error with a plain-language message suitable for end users."""
 
-    def __init__(self, user_message: str, detail: str = "") -> None:
+    def __init__(self, user_message: str, detail: str = "", stage: str = "") -> None:
         super().__init__(f"{user_message} {detail}".strip())
         self.user_message = user_message
         self.detail = detail
+        self.stage = stage
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while chunk := fh.read(1024 * 1024):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _prune_old_jobs(safe_root: Path, keep: int = 3) -> list[Path]:
+    """Delete oldest ``job-*`` folders under ``safe_root`` beyond the newest ``keep``."""
+    if not safe_root.is_dir() or keep < 0:
+        return []
+    jobs: list[tuple[float, str, Path]] = []
+    for entry in safe_root.iterdir():
+        if entry.is_dir() and entry.name.startswith("job-"):
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            jobs.append((mtime, entry.name, entry))
+    if len(jobs) <= keep:
+        return []
+    jobs.sort(key=lambda item: (item[0], item[1]))
+    to_remove = [item[2] for item in jobs[:-keep]] if keep > 0 else [item[2] for item in jobs]
+    removed: list[Path] = []
+    for old_dir in to_remove:
+        try:
+            shutil.rmtree(old_dir)
+            removed.append(old_dir)
+            log.info("Removed old work folder: %s", old_dir)
+        except OSError as exc:
+            log.warning("Could not remove old work folder %s: %s", old_dir, exc)
+    return removed
+
+
+def _map_conversion_error(exc: Exception, detail: str, stage: str) -> ConversionError:
+    if isinstance(exc, OptionsError):
+        return ConversionError(str(exc), detail, stage=stage)
+    if isinstance(exc, ToolNotFoundError):
+        return ConversionError(
+            "MuseScore is not installed. Save as MusicXML (.musicxml) or install MuseScore 4 from musescore.org.",
+            detail,
+            stage=stage,
+        )
+    if isinstance(exc, InstallError):
+        return ConversionError(
+            "Installing MuseScore failed. Check your internet connection and try again.",
+            detail,
+            stage=stage,
+        )
+    if isinstance(exc, OmrError):
+        msg = str(exc)
+        if "page" in msg.lower() and ("range" in msg.lower() or "no pages" in msg.lower()):
+            return ConversionError(msg, detail, stage=stage)
+        return ConversionError(
+            "The music could not be read from this PDF. Clear, printed scores work best.",
+            detail,
+            stage=stage,
+        )
+    if isinstance(exc, MergeError):
+        return ConversionError(
+            "The recognized music could not be combined into one score.",
+            detail,
+            stage=stage,
+        )
+    if isinstance(exc, ExportError):
+        return ConversionError(
+            "MuseScore could not save the file. Try saving as MusicXML instead.",
+            detail,
+            stage=stage,
+        )
+    return ConversionError(
+        "Something unexpected went wrong while converting.",
+        detail,
+        stage=stage,
+    )
 
 
 def _default_engine_factory(
@@ -64,33 +145,48 @@ class Pipeline:
     ensure: Callable[..., Path] = ensure_tool
     engine_factory: Callable[..., OmrEngine] = field(default=_default_engine_factory)
     exporter_factory: Callable[[Path], MuseScoreExporter] = MuseScoreExporter
+    _current_stage: str = field(default="Starting", init=False, repr=False)
 
     def _step(self, pct: int, msg: str) -> None:
         if self.is_cancelled():
             raise CancelledError("Conversion aborted by user.")
+        self._current_stage = msg
         log.info("[%3d%%] %s", pct, msg)
         self.progress(pct, msg)
 
     def convert(self, pdf: Path, output: Path, pages_spec: Optional[str] = None,
                 options: Optional[ConversionOptions] = None) -> Path:
+        self._current_stage = "Validating input"
         pdf, output = Path(pdf), Path(output)
         suffix = output.suffix.lower()
         if suffix not in SUPPORTED_OUTPUTS:
-            raise ConversionError(f"Unsupported output type '{suffix}'. Choose .mscz or .musicxml.")
+            raise ConversionError(
+                f"Unsupported output type '{suffix}'. Choose .mscz or .musicxml.",
+                stage=self._current_stage,
+            )
         if not pdf.is_file():
-            raise ConversionError("The selected file could not be found.", str(pdf))
+            raise ConversionError("The selected file could not be found.", str(pdf), stage=self._current_stage)
         if not is_supported_input(pdf):
             raise ConversionError(
-                f"Unsupported input file '{pdf.suffix}'. Choose a PDF or sheet-music image (.png, .jpg, .webp, .bmp, .tif)."
+                f"Unsupported input file '{pdf.suffix}'. Choose a PDF or sheet-music image (.png, .jpg, .webp, .bmp, .tif).",
+                stage=self._current_stage,
             )
 
         opts = options or ConversionOptions(render_dpi=self.config.render_dpi)
         safe_root = ascii_safe_base_dir(Path(self.config.work_dir).resolve())
+        _prune_old_jobs(safe_root, keep=3)
         work = safe_root / f"job-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+        try:
+            file_size = pdf.stat().st_size
+            file_hash = _sha256_file(pdf)
+        except OSError:
+            file_size = -1
+            file_hash = "unavailable"
         log.info(
-            "Converting %s (pages=%r, options=%s) -> %s (work dir %s)",
-            pdf, pages_spec or "all", opts, output, work,
+            "Converting %s (size=%d bytes, sha256=%s, pages=%r, options=%s, %s) -> %s (work dir %s)",
+            pdf, file_size, file_hash, pages_spec or "all", opts, memory_snapshot(), output, work,
         )
+        failed = False
         try:
             work.mkdir(parents=True, exist_ok=True)
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +198,7 @@ class Pipeline:
             staged_input = work / f"input{pdf.suffix.lower()}"
             shutil.copy2(pdf, staged_input)
 
-            self._step(15, "Reading the music with AI (first run downloads models once)...")
+            self._step(15, "Reading the music with AI...")
             page_cb = lambda idx, total: self._step(
                 15 + int(55 * (idx - 1) / max(total, 1)),
                 f"Reading page {idx} of {total} with AI...",
@@ -134,32 +230,17 @@ class Pipeline:
             self._step(100, f"Done! Saved {output.name}")
             return output
         except CancelledError:
-            log.info("Conversion aborted by user")
+            log.info("Conversion aborted by user at stage %r", self._current_stage)
             raise
-        except OptionsError as exc:
-            raise ConversionError(str(exc)) from exc
-        except ToolNotFoundError as exc:
-            raise ConversionError(
-                "MuseScore is not installed. Save as MusicXML (.musicxml) or install MuseScore 4 from musescore.org.",
-                str(exc),
-            ) from exc
-        except InstallError as exc:
-            raise ConversionError("Installing MuseScore failed. Check your internet connection "
-                                  "and try again.", str(exc)) from exc
-        except OmrError as exc:
-            msg = str(exc)
-            if "page" in msg.lower() and ("range" in msg.lower() or "no pages" in msg.lower()):
-                raise ConversionError(msg) from exc
-            raise ConversionError("The music could not be read from this PDF. Clear, printed scores "
-                                  "work best.", msg) from exc
-        except MergeError as exc:
-            raise ConversionError("The recognized music could not be combined into one score.",
-                                  str(exc)) from exc
-        except ExportError as exc:
-            raise ConversionError("MuseScore could not save the file. Try saving as MusicXML instead.",
-                                  str(exc)) from exc
+        except Exception as exc:
+            failed = True
+            detail = f"{type(exc).__name__}: {exc}"
+            log.error("Conversion failed during stage %r: %s", self._current_stage, detail, exc_info=True)
+            raise _map_conversion_error(exc, detail, self._current_stage) from exc
         finally:
-            if self.config.log_level == "DEBUG":
+            if failed:
+                log.warning("Kept work folder for diagnosis: %s", work)
+            elif self.config.log_level == "DEBUG":
                 log.debug("Keeping work dir for debugging: %s", work)
             else:
                 shutil.rmtree(work, ignore_errors=True)
