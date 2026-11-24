@@ -142,7 +142,7 @@ def test_initial_state(root, calls, tmp_path):
     assert app.credit_label.cget("text") == "By Tomer Mayost"
     assert "MuseScore detected" in app.ms_badge_lbl.cget("text")
     assert "(homr 0.7.1)" in root.title()
-    assert "By Tomer Mayost" in root.title()
+    assert "By Tomer Mayost" not in root.title()
     assert not hasattr(app, "title_var")
     assert app.advanced_section.is_expanded is False
     assert app.log_section.is_expanded is True

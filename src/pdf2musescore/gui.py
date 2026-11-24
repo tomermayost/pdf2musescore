@@ -264,7 +264,7 @@ class App(ttk.Frame):
 
     # ---------- UI Construction ----------
     def _build(self) -> None:
-        self.master.title(f"PDF to MuseScore {__version__} (homr {self.engine_version}) — {AUTHOR_CREDIT}")
+        self.master.title(f"PDF to MuseScore {__version__} (homr {self.engine_version})")
         self.master.minsize(780, 520)
 
         self._has_musescore = bool(self.musescore_available())
