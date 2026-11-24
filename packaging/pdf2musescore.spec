@@ -8,7 +8,7 @@ datas = copy_metadata("homr") + copy_metadata("rapidocr") + [
     (str(ROOT / "src" / "pdf2musescore" / "assets"), "pdf2musescore/assets"),
 ]
 binaries = []
-hiddenimports = ["pdf2musescore.gui", "PIL.ImageTk", "PIL._tkinter_finder"]
+hiddenimports = ["pdf2musescore.gui", "pdf2musescore.ui_download", "PIL.ImageTk", "PIL._tkinter_finder"]
 
 for pkg in ("homr", "rapidocr", "pypdfium2", "pypdfium2_raw"):
     pkg_excludes = ["**/*.onnx", "**/*.pth", "**/*.zip"] if pkg in ("homr", "rapidocr") else []

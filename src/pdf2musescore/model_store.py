@@ -72,7 +72,13 @@ def _default_download_homr(seg_staging: Path, tr_staging: Path, final_models_dir
 def _default_init_ocr(ocr_dir: Path) -> None:  # pragma: no cover
     from rapidocr import RapidOCR
 
-    RapidOCR(params={"Global.model_root_dir": str(ocr_dir)})
+    reader = RapidOCR(params={"Global.model_root_dir": str(ocr_dir)})
+    if getattr(reader, "use_det", True) and hasattr(reader, "_load_det_model"):
+        reader._load_det_model()
+    if getattr(reader, "use_cls", True) and hasattr(reader, "_load_cls_model"):
+        reader._load_cls_model()
+    if getattr(reader, "use_rec", True) and hasattr(reader, "_load_rec_model"):
+        reader._load_rec_model()
 
 
 def _read_manifest(ver_dir: Path) -> Optional[dict[str, int]]:
