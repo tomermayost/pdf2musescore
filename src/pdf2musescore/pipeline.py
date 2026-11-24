@@ -13,7 +13,7 @@ from typing import Callable, Optional
 from .config import AppConfig, ascii_safe_base_dir
 from .deps import MUSESCORE, InstallError, ToolNotFoundError, ensure_tool
 from .engines.base import OmrEngine, OmrError
-from .engines.homr_engine import CancelledError, HomrEngine
+from .engines.homr_engine import CancelledError, HomrEngine, is_supported_input
 from .exporters.musescore import ExportError, MuseScoreExporter
 from .musicxml import MergeError, merge_files
 from .options import ConversionOptions, OptionsError
@@ -78,7 +78,11 @@ class Pipeline:
         if suffix not in SUPPORTED_OUTPUTS:
             raise ConversionError(f"Unsupported output type '{suffix}'. Choose .mscz or .musicxml.")
         if not pdf.is_file():
-            raise ConversionError("The selected PDF file could not be found.", str(pdf))
+            raise ConversionError("The selected file could not be found.", str(pdf))
+        if not is_supported_input(pdf):
+            raise ConversionError(
+                f"Unsupported input file '{pdf.suffix}'. Choose a PDF or sheet-music image (.png, .jpg, .webp, .bmp, .tif)."
+            )
 
         opts = options or ConversionOptions(render_dpi=self.config.render_dpi)
         safe_root = ascii_safe_base_dir(Path(self.config.work_dir).resolve())
@@ -95,8 +99,8 @@ class Pipeline:
             musescore = (self.ensure(MUSESCORE, self.config.musescore_path, self.confirm)
                          if suffix == ".mscz" else None)
 
-            staged_pdf = work / "input.pdf"
-            shutil.copy2(pdf, staged_pdf)
+            staged_input = work / f"input{pdf.suffix.lower()}"
+            shutil.copy2(pdf, staged_input)
 
             self._step(15, "Reading the music with AI (first run downloads models once)...")
             page_cb = lambda idx, total: self._step(
@@ -113,7 +117,7 @@ class Pipeline:
                 )
             if getattr(engine, "models_dir", None) is None and hasattr(engine, "models_dir"):
                 engine.models_dir = Path(self.config.models_dir)
-            pages_xml = engine.recognize(staged_pdf, work / "omr")
+            pages_xml = engine.recognize(staged_input, work / "omr")
 
             self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
             staged_xml = work / "score.musicxml"

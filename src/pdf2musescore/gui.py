@@ -12,7 +12,7 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, ttk
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 import webbrowser
 
 from PIL import Image, ImageTk
@@ -20,7 +20,13 @@ from PIL import Image, ImageTk
 from . import APP_NAME, AUTHOR_CREDIT, __version__
 from .config import AppConfig, is_msix_package
 from .deps import MUSESCORE, find_tool
-from .engines.homr_engine import CancelledError, get_engine_version, get_pdf_page_count, parse_page_spec
+from .engines.homr_engine import (
+    CancelledError,
+    get_engine_version,
+    get_pdf_page_count,
+    is_supported_input,
+    parse_page_spec,
+)
 from .options import (
     CLEF_CHOICES,
     INSTRUMENT_PRESETS,
@@ -54,11 +60,15 @@ from .ui_theme import (
 )
 from .ui_widgets import CollapsibleSection, PdfPreviewPane, ToolTip, render_pdf_page_image
 from .updater import UpdateError, UpdateInfo, check_for_update, download_installer
+from .win_dnd import DropHandle, install_file_drop_handler
 
 log = logging.getLogger(__name__)
 
 MSCZ_TYPE = ("MuseScore file", "*.mscz")
 XML_TYPE = ("MusicXML file", "*.musicxml")
+GITHUB_REPO_URL = "https://github.com/tomermayost/pdf2musescore"
+GITHUB_FEEDBACK_URL = "https://github.com/tomermayost/pdf2musescore/issues/new/choose"
+_SUPPORTED_IMAGE_GLOB = "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff"
 
 PAGES_TOOLTIP = (
     "Which Pages to Convert  (Default: all pages)\n"
@@ -144,6 +154,7 @@ class App(ttk.Frame):
         theme: Optional[str] = None,
         prefs_path: Optional[Path] = None,
         store_mode: Optional[bool] = None,
+        enable_dnd: bool = True,
     ) -> None:
         self.config_ = config
         self._store_mode = is_msix_package() if store_mode is None else bool(store_mode)
@@ -205,6 +216,7 @@ class App(ttk.Frame):
         self._log_error_count = 0
         self._elapsed_after_id: Optional[str] = None
         self._shortcut_bindings: list[tuple[str, str]] = []
+        self._drop_handle: Optional[DropHandle] = None
 
         self.log_handler = QueueLogHandler(self.q)
         logging.getLogger(APP_NAME).addHandler(self.log_handler)
@@ -212,6 +224,8 @@ class App(ttk.Frame):
         self._build()
         self.apply_theme(self.theme_name)
         self._bind_shortcuts()
+        if enable_dnd:
+            self._drop_handle = install_file_drop_handler(self.master, self.on_drop_files)
         self.pack(fill="both", expand=True)
 
         self._after_id: Optional[str] = self.after(self.POLL_MS, self._poll)
@@ -287,8 +301,8 @@ class App(ttk.Frame):
         self._sync_pages_feedback()
 
     def _build_variables(self) -> None:
-        self.file_var = tk.StringVar(self, value="No PDF selected")
-        self.file_meta_var = tk.StringVar(self, value="Choose a sheet music PDF to begin (Ctrl+O)")
+        self.file_var = tk.StringVar(self, value="No file selected")
+        self.file_meta_var = tk.StringVar(self, value="Choose or drop a sheet music PDF or photo (Ctrl+O)")
         self.pages_var = tk.StringVar(self, value="")
         self.pages_feedback_var = tk.StringVar(self, value="Leave empty to convert all pages")
         self.preset_badge_var = tk.StringVar(self, value="")
@@ -306,7 +320,7 @@ class App(ttk.Frame):
         self.instrument_var = tk.StringVar(self, value=self._prefs.instrument_name)
         self.keep_breaks_var = tk.BooleanVar(self, value=self._prefs.keep_line_breaks)
 
-        self.status_var = tk.StringVar(self, value="Load a PDF with sheet music to start.")
+        self.status_var = tk.StringVar(self, value="Load or drop a sheet music PDF or photo to start.")
         self.pct_var = tk.StringVar(self, value="0%")
         self.elapsed_var = tk.StringVar(self, value="")
         self.result_msg_var = tk.StringVar(self, value="")
@@ -317,7 +331,7 @@ class App(ttk.Frame):
 
         ttk.Label(
             header,
-            text="Convert sheet music PDFs into editable MuseScore & MusicXML scores",
+            text="Convert sheet music PDFs & photos into editable MuseScore & MusicXML scores",
             style="HeaderSub.TLabel",
         ).pack(side="left", anchor="w")
 
@@ -352,8 +366,8 @@ class App(ttk.Frame):
 
         file_row = ttk.Frame(card, style="Card.TFrame")
         file_row.pack(fill="x", pady=(6, 6))
-        # Pack button first on the right so long paths never squish the Load PDF button
-        self.load_btn = ttk.Button(file_row, text="Load PDF...", style="Secondary.TButton", command=self.on_load)
+        # Pack button first on the right so long paths never squish the Load File button
+        self.load_btn = ttk.Button(file_row, text="Load File...", style="Secondary.TButton", command=self.on_load)
         self.load_btn.pack(side="right", padx=(8, 0))
         file_info = ttk.Frame(file_row, style="Card.TFrame")
         file_info.pack(side="left", fill="x", expand=True)
@@ -674,6 +688,22 @@ class App(ttk.Frame):
 
         self.logs_btn = ttk.Button(footer, text="Open log folder", style="Ghost.TButton", command=self.on_open_logs)
         self.logs_btn.pack(side="right")
+
+        self.feedback_btn = ttk.Button(footer, text="Feedback", style="Ghost.TButton", command=self.on_open_feedback)
+        self.feedback_btn.pack(side="right", padx=(0, 8))
+        self._attach_tip(
+            "feedback_link",
+            self.feedback_btn,
+            custom_text="Send Feedback or Report a Bug\nOpens GitHub Issues to report tricky scans or suggest features.",
+        )
+
+        self.github_btn = ttk.Button(footer, text="GitHub ★", style="Ghost.TButton", command=self.on_open_github)
+        self.github_btn.pack(side="right", padx=(0, 4))
+        self._attach_tip(
+            "github_link",
+            self.github_btn,
+            custom_text="Open Source on GitHub\nView the source code, release notes, or star PDF2MuseScore!",
+        )
 
     def _primary_cta_label(self) -> str:
         if self._has_musescore:
@@ -1115,8 +1145,12 @@ class App(ttk.Frame):
 
     def on_load(self) -> None:
         open_kwargs: dict[str, object] = {
-            "title": "Choose a PDF",
-            "filetypes": [("PDF files", "*.pdf")],
+            "title": "Choose Sheet Music (PDF or Image)",
+            "filetypes": [
+                ("Sheet Music (PDF & Images)", f"*.pdf {_SUPPORTED_IMAGE_GLOB}"),
+                ("PDF files", "*.pdf"),
+                ("Image files", _SUPPORTED_IMAGE_GLOB),
+            ],
         }
         if self._last_dir and Path(self._last_dir).is_dir():
             open_kwargs["initialdir"] = self._last_dir
@@ -1124,31 +1158,67 @@ class App(ttk.Frame):
         if not path:
             log.debug("Load cancelled")
             return
-        self.pdf = Path(path)
-        self._last_dir = str(self.pdf.parent)
+        self.load_source(Path(path))
+
+    def load_source(self, path: Path) -> bool:
+        """Load a PDF or sheet-music image into the studio workspace."""
+        source = Path(path)
+        if not is_supported_input(source):
+            log.warning("Rejected unsupported source file: %s", source)
+            self.show_error(
+                "Unsupported file",
+                f"Unsupported file '{source.suffix or source.name}'. Choose a PDF or image (.png, .jpg, .webp, .bmp, .tif).",
+            )
+            return False
+
+        self.pdf = source
+        self._last_dir = str(source.parent)
         self._hide_result_banner()
-        parent_str = str(self.pdf.parent)
+        parent_str = str(source.parent)
         if len(parent_str) > 46:
             parent_str = "..." + parent_str[-43:]
         try:
-            n_pages = int(self.page_counter(self.pdf))
+            n_pages = int(self.page_counter(source))
             self.total_pages = max(1, n_pages)
-            self.file_var.set(f"{self.pdf.name} ({n_pages} page{'s' if n_pages != 1 else ''})")
+            self.file_var.set(f"{source.name} ({n_pages} page{'s' if n_pages != 1 else ''})")
             self.file_meta_var.set(parent_str)
         except Exception:
             self.total_pages = 1
-            self.file_var.set(self.pdf.name)
+            self.file_var.set(source.name)
             self.file_meta_var.set(parent_str)
 
-        self.preview_pane.set_pdf(self.pdf, total_pages=self.total_pages)
+        if self.total_pages == 1 and self.pages_var.get().strip():
+            self.pages_var.set("")
+
+        self.preview_pane.set_pdf(source, total_pages=self.total_pages)
         self._sync_pages_feedback()
         self.progress["value"] = 0
         self.pct_var.set("0%")
         self.elapsed_var.set("")
         self.status_var.set("Ready. Pick a preset or click Convert & Save.")
-        log.info("Selected PDF: %s", self.pdf)
+        log.info("Selected source file: %s (%d page(s))", source, self.total_pages)
         self.save_preferences()
         self._set_busy(False)
+        return True
+
+    def on_drop_files(self, paths: Sequence[Path]) -> None:
+        """Handle files dropped onto the application window via Windows Explorer."""
+        if self._busy:
+            log.info("Ignoring dropped file(s) while conversion is running")
+            self.status_var.set("Wait for the current conversion to finish before loading another file.")
+            return
+        candidates = [Path(p) for p in paths]
+        chosen = next((p for p in candidates if p.is_file() and is_supported_input(p)), None)
+        if chosen is not None:
+            log.info("Dropped file: %s", chosen)
+            self.load_source(chosen)
+            return
+        if candidates:
+            log.warning("Dropped unsupported file(s): %s", [str(p) for p in candidates])
+            self.show_error(
+                "Unsupported file",
+                "Drop a sheet music PDF or image (.png, .jpg, .webp, .bmp, .tif).",
+            )
 
     def on_convert(self) -> None:
         if not self.pdf or self._busy:
@@ -1227,6 +1297,14 @@ class App(ttk.Frame):
         path = Path(self.config_.log_dir).resolve()
         path.mkdir(parents=True, exist_ok=True)
         self.open_folder(str(path))
+
+    def on_open_github(self) -> None:
+        log.info("Opening GitHub repository: %s", GITHUB_REPO_URL)
+        self.open_url(GITHUB_REPO_URL)
+
+    def on_open_feedback(self) -> None:
+        log.info("Opening GitHub feedback page: %s", GITHUB_FEEDBACK_URL)
+        self.open_url(GITHUB_FEEDBACK_URL)
 
     def on_open_result(self) -> None:
         if self._last_output is None:
@@ -1351,6 +1429,9 @@ class App(ttk.Frame):
                 except Exception:
                     pass
                 setattr(self, aid_name, None)
+        if self._drop_handle is not None:
+            self._drop_handle.uninstall()
+            self._drop_handle = None
         for seq, fid in self._shortcut_bindings:
             try:
                 self.master.unbind(seq, fid)

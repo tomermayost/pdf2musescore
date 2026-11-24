@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from PIL import Image, ImageTk
 
+from .engines.homr_engine import is_image_file, load_pil_image_rgb
 from .ui_theme import THEMES, ThemePalette, get_assets_dir
 
 log = logging.getLogger(__name__)
@@ -29,10 +30,16 @@ def render_pdf_page_image(
     page_number: int,
     max_size: tuple[int, int] = (240, 325),
 ) -> Image.Image:
-    """Render a 1-based page from ``pdf`` into a bounded RGB PIL Image, releasing handles immediately."""
+    """Render a 1-based page from ``pdf`` (or image file) into a bounded RGB PIL Image."""
+    path = Path(pdf)
+    if is_image_file(path):
+        rgb = load_pil_image_rgb(path, page_number=page_number)
+        rgb.thumbnail(max_size, Image.Resampling.LANCZOS)
+        return rgb
+
     import pypdfium2 as pdfium
 
-    doc = pdfium.PdfDocument(str(pdf))
+    doc = pdfium.PdfDocument(str(path))
     page = None
     try:
         total = len(doc)
@@ -349,7 +356,7 @@ class PdfPreviewPane(tk.Frame):
 
         self.empty_title_lbl = tk.Label(
             self.empty_frame,
-            text="Select a Sheet Music PDF",
+            text="Select or Drop Sheet Music",
             font=("Segoe UI", 9, "bold"),
             justify="center",
             wraplength=self.PREVIEW_W - 24,
@@ -359,7 +366,7 @@ class PdfPreviewPane(tk.Frame):
 
         self.empty_sub_lbl = tk.Label(
             self.empty_frame,
-            text="Click here or press Ctrl+O\nto browse your files",
+            text="Drop a PDF or photo here,\nclick, or press Ctrl+O",
             font=("Segoe UI", 8),
             justify="center",
             wraplength=self.PREVIEW_W - 20,

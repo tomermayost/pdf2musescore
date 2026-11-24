@@ -11,10 +11,42 @@ from typing import Any, Callable, Optional, Sequence
 
 import cv2
 import numpy as np
+from PIL import Image, ImageOps
 
 from .base import OmrEngine, OmrError
 
 log = logging.getLogger(__name__)
+
+SUPPORTED_IMAGE_EXTS: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+SUPPORTED_INPUT_EXTS: tuple[str, ...] = (".pdf",) + SUPPORTED_IMAGE_EXTS
+
+
+def is_image_file(path: Path) -> bool:
+    """Return True if ``path`` has a supported sheet-music image file extension."""
+    return Path(path).suffix.lower() in SUPPORTED_IMAGE_EXTS
+
+
+def is_supported_input(path: Path) -> bool:
+    """Return True if ``path`` is a supported PDF or sheet-music image file."""
+    return Path(path).suffix.lower() in SUPPORTED_INPUT_EXTS
+
+
+def load_pil_image_rgb(path: Path, page_number: int = 1) -> Image.Image:
+    """Load an image file (or specific frame of a multi-page TIFF) as RGB with EXIF orientation and white alpha composite."""
+    path = Path(path)
+    with Image.open(path) as im:
+        n_frames = max(1, int(getattr(im, "n_frames", 1)))
+        if page_number < 1 or page_number > n_frames:
+            raise ValueError(f"Page {page_number} out of range (1..{n_frames})")
+        if n_frames > 1:
+            im.seek(page_number - 1)
+        frame = ImageOps.exif_transpose(im)
+        if frame.mode in ("RGBA", "LA") or (frame.mode == "P" and "transparency" in frame.info):
+            rgba = frame.convert("RGBA")
+            bg = Image.new("RGB", rgba.size, (255, 255, 255))
+            bg.paste(rgba, mask=rgba.split()[3])
+            return bg
+        return frame.convert("RGB")
 
 
 def get_engine_version() -> str:
@@ -125,11 +157,20 @@ _RANGE_TOKEN_RE = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?$")
 
 
 def get_pdf_page_count(pdf: Path) -> int:
-    """Return the total number of pages in ``pdf``."""
+    """Return the total number of pages in ``pdf`` (or frames in a sheet-music image)."""
+    path = Path(pdf)
+    if is_image_file(path):
+        with Image.open(path) as im:
+            return max(1, int(getattr(im, "n_frames", 1)))
+
     import pypdfium2 as pdfium
 
-    doc = pdfium.PdfDocument(str(pdf))
-    return len(doc)
+    doc = pdfium.PdfDocument(str(path))
+    try:
+        return len(doc)
+    finally:
+        if hasattr(doc, "close"):
+            doc.close()
 
 
 def parse_page_spec(spec: str | None, total_pages: int) -> list[int]:
@@ -215,25 +256,45 @@ def _default_render_pdf(pdf: Path, out_dir: Path, dpi: int,
                         is_cancelled: Callable[[], bool] = lambda: False,
                         preprocess_mode: str = "auto",
                         deskew: bool = False) -> list[Path]:
+    pdf = Path(pdf)
+    if is_image_file(pdf):
+        n_pages = get_pdf_page_count(pdf)
+        page_numbers = parse_page_spec(pages_spec, n_pages)
+        pages: list[Path] = []
+        for pno in page_numbers:
+            if is_cancelled():
+                raise CancelledError("Conversion aborted by user.")
+            pil = load_pil_image_rgb(pdf, page_number=pno)
+            bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+            bgr = preprocess_page_image(bgr, mode=preprocess_mode, deskew=deskew)
+            img_path = out_dir / f"page_{pno:03d}.png"
+            cv2.imwrite(str(img_path), bgr)
+            pages.append(img_path)
+        return pages
+
     import pypdfium2 as pdfium
 
     doc = pdfium.PdfDocument(str(pdf))
-    n_pages = len(doc)
-    if n_pages == 0:
-        raise OmrError(f"PDF has no pages: {pdf}")
-    page_numbers = parse_page_spec(pages_spec, n_pages)
-    scale = dpi / 72.0
-    pages: list[Path] = []
-    for pno in page_numbers:
-        if is_cancelled():
-            raise CancelledError("Conversion aborted by user.")
-        pil = doc[pno - 1].render(scale=scale).to_pil()
-        bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-        bgr = preprocess_page_image(bgr, mode=preprocess_mode, deskew=deskew)
-        img_path = out_dir / f"page_{pno:03d}.png"
-        cv2.imwrite(str(img_path), bgr)
-        pages.append(img_path)
-    return pages
+    try:
+        n_pages = len(doc)
+        if n_pages == 0:
+            raise OmrError(f"PDF has no pages: {pdf}")
+        page_numbers = parse_page_spec(pages_spec, n_pages)
+        scale = dpi / 72.0
+        pages = []
+        for pno in page_numbers:
+            if is_cancelled():
+                raise CancelledError("Conversion aborted by user.")
+            pil = doc[pno - 1].render(scale=scale).to_pil()
+            bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+            bgr = preprocess_page_image(bgr, mode=preprocess_mode, deskew=deskew)
+            img_path = out_dir / f"page_{pno:03d}.png"
+            cv2.imwrite(str(img_path), bgr)
+            pages.append(img_path)
+        return pages
+    finally:
+        if hasattr(doc, "close"):
+            doc.close()
 
 
 def _default_run_homr(image_paths: Sequence[Path],

@@ -8,7 +8,7 @@
 
 **By Tomer Mayost**
 
-Convert sheet music PDFs into editable **MuseScore 4 (`.mscz`)** and **MusicXML (`.musicxml`)** files — **100% free, runs locally on your PC, no account, no page limits, and no Python or Java setup**.
+Convert sheet music PDFs and photos (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) into editable **MuseScore 4 (`.mscz`)** and **MusicXML (`.musicxml`)** files — **100% free, runs locally on your PC, no account, no page limits, and no Python or Java setup**.
 
 > 👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** · 🌐 **[Website](https://tomermayost.github.io/pdf2musescore/)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
 
@@ -49,6 +49,7 @@ Notice how `pdf2musescore` preserves the **bass clef, D minor key signature (B�
 
 ## Key Features
 
+- **Direct Image Input & Drag-and-Drop:** Drop a PDF or sheet-music photo (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) straight onto the window — smartphone EXIF rotation and transparent PNGs are handled automatically.
 - **Live Sheet-Music Preview & Interactive Page Picker:** Flip through PDF pages (`◀` / `▶` or `←` / `→`) inside the app and click **Pick / Include page** (or type ranges like `2-3, 5`) to convert only the movements or pages you need.
 - **One-Click Scan Presets:** Choose **Clean PDF**, **Faded Scan** (enhances light photocopies + auto-deskews), or **Phone Photo** (adaptive shadow removal + auto-deskew) — no guesswork required.
 - **Musician-First Score Setup:** Pick **Instrument**, override **Clef**, or **Transpose** (`−` / `+` half-steps with live musical hints like `+2 (Up M2 · B♭)` for trumpet/clarinet/tenor sax) before opening in MuseScore.
