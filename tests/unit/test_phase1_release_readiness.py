@@ -154,6 +154,9 @@ def test_readme_assets_and_trust_statements() -> None:
     assert "AGPL-3.0-or-later" in readme
     assert "SHA256SUMS.txt" in readme
     assert "gh attestation verify" in readme
+    assert "models_dir" in readme
+    assert "build_msix.ps1" in readme
+    assert "RapidOCR" in readme
     assert not re.search(r"\]\([^)]+\.pdf\)", readme, re.IGNORECASE)
 
     asset_refs = re.findall(r"docs/assets/[A-Za-z0-9_.-]+\.png", readme)

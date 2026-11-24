@@ -131,15 +131,18 @@ Run from source:
 
 Coverage report: `tmp/coverage_html/index.html` (minimum coverage gate: 85%).
 
-## Building the Windows Installer (`pdf2musescore-setup.exe`)
+## Building the Windows Installer (`pdf2musescore-setup.exe`) & Microsoft Store MSIX
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1
+# Optional (requires Windows 10/11 SDK makeappx.exe; built automatically in GitHub Actions):
+powershell -ExecutionPolicy Bypass -File .\packaging\build_msix.ps1
 ```
 
 Outputs in `tmp/dist/`:
 - `tmp/dist/pdf2musescore/pdf2musescore.exe` — standalone portable folder
 - `tmp/dist/pdf2musescore-setup.exe` — Windows Setup Wizard installer
+- `tmp/dist/pdf2musescore.msix` — Microsoft Store MSIX package (when `packaging/build_msix.ps1` is run)
 
 ## Configuration
 
@@ -150,17 +153,18 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 | `log_level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `log_dir` | `%LOCALAPPDATA%\pdf2musescore\logs` (or `tmp/logs` in dev) | Rotating log files |
 | `work_dir` | `%LOCALAPPDATA%\pdf2musescore\work` (or `tmp/work` in dev) | Temporary working directory |
+| `models_dir` | `%LOCALAPPDATA%\pdf2musescore\models` (or `tmp/models` in dev) | Version-scoped local cache for `homr` & `RapidOCR` ONNX weights (auto-updates when engines upgrade) |
 | `musescore_path` | auto-detect | Path to `MuseScore4.exe` |
 | `render_dpi` | `300` | PDF page rendering DPI for OMR |
-| `check_updates` | `true` | Silently check GitHub Releases on startup (`false` to disable) |
+| `check_updates` | `true` | Silently check GitHub Releases on startup (`false` to disable; automatically off in Store MSIX builds) |
 
 ---
 
 ## Code Signing, Trust & Privacy Policy
 
-- **Signing Status:** Standalone `.exe` GitHub installers are currently **unsigned** while the project builds community traction to qualify for free open-source code signing via [SignPath Foundation](https://signpath.org/) (our CI pipeline already supports SignPath integration once approved, and signed Microsoft Store MSIX packaging is planned as well). Every release publishes `SHA256SUMS.txt` and GitHub build provenance attestations from public GitHub Actions workflows.
+- **Signing Status:** Standalone `.exe` GitHub installers are currently **unsigned** while the project builds community traction to qualify for free open-source code signing via [SignPath Foundation](https://signpath.org/) (our CI pipeline already supports SignPath integration once approved, and Microsoft Store MSIX packaging is live in CI and submitted for Store review). Every release publishes `SHA256SUMS.txt` and GitHub build provenance attestations from public GitHub Actions workflows.
 - **Committers and Reviewers:** [Tomer Mayost](https://github.com/tomermayost)
-- **Privacy Policy:** This program will not transfer personal information or your sheet music PDFs to external servers. Network access is strictly limited to: (1) a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional installer download only when the user explicitly clicks **Yes** to update, and (3) downloading the open-source `homr` ONNX optical music recognition model weights once on the first conversion run.
+- **Privacy Policy:** This program will not transfer personal information or your sheet music PDFs to external servers. Network access is strictly limited to: (1) in standalone GitHub builds, a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional installer download only when the user explicitly clicks **Yes** to update, and (3) downloading the open-source `homr` and `RapidOCR` ONNX AI model weights once on the first conversion run into `%LOCALAPPDATA%\pdf2musescore\models`. In Microsoft Store (MSIX) builds, in-app GitHub update checks and external installers are automatically disabled, as updates are delivered exclusively through the Microsoft Store.
 
 ---
 
