@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 from .config import AppConfig, ascii_safe_base_dir
 from .deps import MUSESCORE, InstallError, ToolNotFoundError, ensure_tool
-from .diagnostics import memory_snapshot
+from .diagnostics import check_low_memory_warning, memory_snapshot
 from .engines.base import OmrEngine, OmrError
 from .engines.homr_engine import CancelledError, HomrEngine, is_supported_input
 from .exporters.musescore import ExportError, MuseScoreExporter
@@ -194,6 +194,7 @@ class Pipeline:
             "Converting %s (size=%d bytes, sha256=%s, pages=%r, options=%s, %s) -> %s (work dir %s)",
             pdf, file_size, file_hash, pages_spec or "all", opts, memory_snapshot(), output, work,
         )
+        check_low_memory_warning(log, render_dpi=opts.render_dpi)
         failed = False
         try:
             work.mkdir(parents=True, exist_ok=True)

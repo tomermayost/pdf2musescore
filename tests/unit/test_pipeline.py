@@ -227,6 +227,18 @@ def test_pipeline_ensures_missing_models_and_maps_download_error(tmp_path, pdf):
     assert "ModelDownloadError: timeout" in ei.value.detail
 
 
+def test_pipeline_logs_low_memory_warning(monkeypatch, tmp_path, pdf, caplog):
+    import pdf2musescore.diagnostics as diag
+
+    gib = 1024**3
+    monkeypatch.setattr(diag, "get_memory_status", lambda: (4 * gib, int(1.2 * gib), 70))
+    p, _ = make(tmp_path)
+    with caplog.at_level("WARNING", logger="pdf2musescore.pipeline"):
+        p.convert(pdf, tmp_path / "lowram.mscz")
+    assert "Low available memory: 1.2 GB" in caplog.text
+    assert "200" in caplog.text
+
+
 def test_default_engine_branch_and_options_error(tmp_path, pdf, monkeypatch):
     from pdf2musescore.options import ConversionOptions, OptionsError
     import pdf2musescore.pipeline as pl_mod

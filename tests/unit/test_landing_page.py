@@ -139,3 +139,5 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "https://tomermayost.github.io/pdf2musescore/" in readme
+    assert "What are the minimum system requirements?" in html_text
+    assert "AVX2" in html_text

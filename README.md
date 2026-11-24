@@ -77,6 +77,13 @@ Optical music recognition (OMR) has come a long way, and setting clear expectati
 5. **Score Setup & Convert:** Set **Instrument**, **Clef**, **Transpose**, or expand **Advanced AI & Layout Settings** (hover any control for defaults & examples), then click **Convert & Save** (`Ctrl+Enter`). When finished, click **Open in MuseScore** or **Show Folder** in the completion banner. Toggle **🌙 Dark / ☀ Light** anytime in the top right.
 6. During installation, the Setup Wizard downloads the open-source `homr` and `RapidOCR` ONNX AI models once (~180 MB) and caches them locally in `%LOCALAPPDATA%\pdf2musescore\models` (offline installs and Microsoft Store builds download them automatically on app startup if missing).
 
+### System Requirements
+
+- **OS:** Windows 10 (Home and upwards) or Windows 11 (64-bit)
+- **CPU:** x86-64 processor with **SSE4.2 & AVX2** support (Intel 4th-gen Core 2013+ / AMD 2015+)
+- **RAM:** **8 GB recommended** (4 GB minimum — on 4 GB machines, close other apps or lower **Scan Quality (DPI)** to `200`)
+- **Disk Space:** ~500 MB free (~220 MB app + ~190 MB cached AI models + temporary work files)
+
 ### Verifying Your Download (`SHA256SUMS.txt` & Build Provenance)
 
 Every public CI release is built automatically on GitHub-hosted Windows runners and publishes both `SHA256SUMS.txt` and a cryptographic [GitHub Build Provenance Attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations):

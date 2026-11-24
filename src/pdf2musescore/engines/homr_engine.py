@@ -456,7 +456,10 @@ def _default_run_homr(image_paths: Sequence[Path],
     ocr_ver_dir: Optional[Path] = None
     if models_dir is not None:
         _, ocr_ver_dir = configure_model_cache(models_dir)
-    download_weights(segnet_use_gpu=False, transformer_use_gpu=False, coreml_encoder=False)
+    from ..model_store import patched_homr_download_timeout
+
+    with patched_homr_download_timeout():
+        download_weights(segnet_use_gpu=False, transformer_use_gpu=False, coreml_encoder=False)
     if htitle._reader is None:
         if ocr_ver_dir is not None:
             from rapidocr import RapidOCR

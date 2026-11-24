@@ -205,3 +205,33 @@ def test_install_crash_handlers_writes_crash_log_and_hooks(monkeypatch, tmp_path
         assert sys.excepthook is fake_sys_hook
         assert threading.excepthook is fake_thr_hook
         assert sys.unraisablehook is fake_unr_hook
+
+
+def test_check_low_memory_warning(monkeypatch, caplog) -> None:
+    gib = 1024**3
+    logger = logging.getLogger("pdf2musescore.lowram_test")
+
+    # Below 2.5 GB at 300 DPI -> warns with 200 DPI suggestion
+    monkeypatch.setattr(diagnostics, "get_memory_status", lambda: (4 * gib, int(1.4 * gib), 65))
+    with caplog.at_level("WARNING", logger="pdf2musescore.lowram_test"):
+        assert diagnostics.check_low_memory_warning(logger, render_dpi=300) is True
+    assert "Low available memory: 1.4 GB free" in caplog.text
+    assert "lower Scan Quality (DPI) to 200" in caplog.text
+
+    # Below 2.5 GB already at 200 DPI -> warns without repeating the 200 DPI suggestion
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="pdf2musescore.lowram_test"):
+        assert diagnostics.check_low_memory_warning(logger, render_dpi=200) is True
+    assert "Low available memory" in caplog.text
+    assert "lower Scan Quality (DPI) to 200" not in caplog.text
+
+    # Above threshold -> False, no warning
+    caplog.clear()
+    monkeypatch.setattr(diagnostics, "get_memory_status", lambda: (8 * gib, 4 * gib, 50))
+    with caplog.at_level("WARNING", logger="pdf2musescore.lowram_test"):
+        assert diagnostics.check_low_memory_warning(logger, render_dpi=300) is False
+    assert caplog.text == ""
+
+    # Unavailable RAM info -> False, no warning
+    monkeypatch.setattr(diagnostics, "get_memory_status", lambda: None)
+    assert diagnostics.check_low_memory_warning(logger, render_dpi=300) is False

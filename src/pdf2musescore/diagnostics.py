@@ -48,6 +48,9 @@ def get_memory_status() -> Optional[tuple[int, int, int]]:
         return None
 
 
+LOW_RAM_THRESHOLD_BYTES = int(2.5 * (1024**3))
+
+
 def memory_snapshot() -> str:
     """Return a concise single-line summary of physical memory availability."""
     status = get_memory_status()
@@ -56,6 +59,32 @@ def memory_snapshot() -> str:
     total_b, avail_b, load_pct = status
     gb = float(1024**3)
     return f"RAM available {avail_b / gb:.1f} GB of {total_b / gb:.1f} GB ({load_pct}% in use)"
+
+
+def check_low_memory_warning(
+    logger: logging.Logger,
+    *,
+    render_dpi: int = 300,
+    threshold_bytes: int = LOW_RAM_THRESHOLD_BYTES,
+) -> bool:
+    """Log an actionable warning if free physical RAM is below ``threshold_bytes``."""
+    status = get_memory_status()
+    if status is None:
+        return False
+    total_b, avail_b, load_pct = status
+    if avail_b < threshold_bytes:
+        gb = float(1024**3)
+        dpi_hint = " or lower Scan Quality (DPI) to 200" if render_dpi > 200 else ""
+        logger.warning(
+            "Low available memory: %.1f GB free of %.1f GB (%d%% in use). "
+            "AI sheet-music recognition typically needs ~2.5 GB of free memory — close other applications%s if conversion fails.",
+            avail_b / gb,
+            total_b / gb,
+            load_pct,
+            dpi_hint,
+        )
+        return True
+    return False
 
 
 def _pkg_version(*names: str, module_attr: Optional[Callable[[], str]] = None) -> str:

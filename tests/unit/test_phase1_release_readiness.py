@@ -157,6 +157,8 @@ def test_readme_assets_and_trust_statements() -> None:
     assert "models_dir" in readme
     assert "build_msix.ps1" in readme
     assert "RapidOCR" in readme
+    assert "System Requirements" in readme
+    assert "AVX2" in readme
     assert not re.search(r"\]\([^)]+\.pdf\)", readme, re.IGNORECASE)
 
     asset_refs = re.findall(r"docs/assets/[A-Za-z0-9_.-]+\.png", readme)

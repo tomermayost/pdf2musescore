@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Any, Callable, Iterator, Optional, Sequence
 
 from .engines.homr_engine import (
     CancelledError,
@@ -26,6 +27,7 @@ from .engines.homr_engine import (
 log = logging.getLogger(__name__)
 
 EXPECTED_DOWNLOAD_BYTES = 190_000_000
+MODEL_DOWNLOAD_TIMEOUT_SECONDS = 60.0
 MANIFEST_NAME = ".pdf2musescore-models.json"
 _MODEL_DOWNLOAD_LOCK = threading.Lock()
 
@@ -59,12 +61,43 @@ def _default_required_homr_files() -> dict[str, str]:  # pragma: no cover - impo
     }
 
 
+@contextlib.contextmanager
+def patched_homr_download_timeout(
+    timeout_seconds: float = MODEL_DOWNLOAD_TIMEOUT_SECONDS,
+    *,
+    download_utils_mod: Any = None,
+) -> Iterator[None]:
+    """Temporarily raise homr's 5-second socket timeout during AI model downloads."""
+    if download_utils_mod is None:  # pragma: no cover - thin default import
+        import homr.download_utils as download_utils_mod
+
+    req_mod = getattr(download_utils_mod, "requests", None)
+    orig_get = getattr(req_mod, "get", None)
+    if req_mod is None or orig_get is None:
+        yield
+        return
+
+    def _get_with_timeout(*args: Any, **kwargs: Any) -> Any:
+        cur = kwargs.get("timeout")
+        if cur is None or (isinstance(cur, (int, float)) and cur < timeout_seconds):
+            kwargs["timeout"] = timeout_seconds
+        return orig_get(*args, **kwargs)
+
+    req_mod.get = _get_with_timeout
+    log.debug("Raised homr download socket timeout to %.0fs", timeout_seconds)
+    try:
+        yield
+    finally:
+        req_mod.get = orig_get
+
+
 def _default_download_homr(seg_staging: Path, tr_staging: Path, final_models_dir: Path) -> None:  # pragma: no cover
     import homr.main as homr_main
 
     _apply_homr_model_paths(seg_staging, tr_staging, homr_main=homr_main)
     try:
-        homr_main.download_weights(segnet_use_gpu=False, transformer_use_gpu=False, coreml_encoder=False)
+        with patched_homr_download_timeout():
+            homr_main.download_weights(segnet_use_gpu=False, transformer_use_gpu=False, coreml_encoder=False)
     finally:
         configure_model_cache(final_models_dir)
 

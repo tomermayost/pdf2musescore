@@ -202,3 +202,39 @@ def test_installer_iss_has_model_download_and_uninstall_cleanup() -> None:
     assert "[UninstallDelete]" in iss
     assert r"{localappdata}\pdf2musescore\models" in iss
     assert r"{commonappdata}\pdf2musescore\models" in iss
+
+
+def test_patched_homr_download_timeout_behavior_and_restore() -> None:
+    from types import SimpleNamespace
+    from pdf2musescore.model_store import patched_homr_download_timeout
+
+    seen: list[object] = []
+
+    def orig_get(url, **kwargs):
+        seen.append((url, kwargs.get("timeout")))
+        return "ok"
+
+    fake_requests = SimpleNamespace(get=orig_get)
+    fake_dl = SimpleNamespace(requests=fake_requests)
+
+    # Raises short/missing timeouts to 60.0 and preserves larger explicit timeouts
+    with patched_homr_download_timeout(60.0, download_utils_mod=fake_dl):
+        assert fake_requests.get("https://example.com/a", timeout=5) == "ok"
+        assert fake_requests.get("https://example.com/b") == "ok"
+        assert fake_requests.get("https://example.com/c", timeout=120) == "ok"
+    assert seen == [
+        ("https://example.com/a", 60.0),
+        ("https://example.com/b", 60.0),
+        ("https://example.com/c", 120),
+    ]
+    assert fake_requests.get is orig_get
+
+    # Exception inside context still restores original requests.get
+    with pytest.raises(RuntimeError, match="boom"):
+        with patched_homr_download_timeout(60.0, download_utils_mod=fake_dl):
+            raise RuntimeError("boom")
+    assert fake_requests.get is orig_get
+
+    # Missing requests attribute degrades cleanly
+    with patched_homr_download_timeout(60.0, download_utils_mod=SimpleNamespace()):
+        pass
