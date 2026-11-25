@@ -685,3 +685,106 @@ def test_preferences_persist_across_restarts(root, calls, tmp_path):
     assert app3.theme_name == "light"
     assert app3.collect_options() == ConversionOptions()
     close_app(app3)
+
+
+def test_dual_install_banner_actions_and_dismiss_persistence(root, calls, tmp_path):
+    from pdf2musescore.install_detect import (
+        MSIX_STORE_URI,
+        WINDOWS_INSTALLED_APPS_URI,
+        DualInstallNotice,
+        InstalledEdition,
+    )
+
+    prefs_file = tmp_path / "dual_prefs.json"
+    notice_with_store = DualInstallNotice(
+        current_kind="standalone",
+        current_version="0.4.6",
+        other=InstalledEdition(kind="store", version="0.4.3"),
+        comparison="current_newer",
+        message="Running Standalone .exe v0.4.6, while older Microsoft Store v0.4.3 is also installed.",
+        show_store_update=True,
+        dismiss_key="standalone:0.4.6|store:0.4.3",
+    )
+
+    app1 = App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs1", work_dir=tmp_path / "work1", check_updates=False),
+        musescore_available=lambda: True,
+        open_url=lambda u: calls["url"].append(u) or True,
+        prefs_path=prefs_file,
+        store_mode=False,
+        prefetch_models=False,
+        dual_install_checker=lambda: notice_with_store,
+    )
+    try:
+        assert app1.edition_badge_lbl is None
+        assert app1.dual_install_banner.winfo_manager()
+        assert app1.dual_install_store_btn.winfo_manager()
+        assert "0.4.3" in app1.dual_install_lbl.cget("text")
+
+        app1.on_open_store_page()
+        app1.on_open_installed_apps()
+        assert calls["url"] == [MSIX_STORE_URI, WINDOWS_INSTALLED_APPS_URI]
+
+        app1.toggle_theme()
+        assert app1.theme_name == "light"
+
+        app1.on_dismiss_dual_install()
+        assert not app1.dual_install_banner.winfo_manager()
+        assert app1._dismissed_dual_install == "standalone:0.4.6|store:0.4.3"
+    finally:
+        close_app(app1)
+
+    # Same dismiss_key stays suppressed across restarts
+    app2 = App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs2", work_dir=tmp_path / "work2", check_updates=False),
+        musescore_available=lambda: True,
+        prefs_path=prefs_file,
+        store_mode=False,
+        prefetch_models=False,
+        dual_install_checker=lambda: notice_with_store,
+    )
+    try:
+        assert not app2.dual_install_banner.winfo_manager()
+    finally:
+        close_app(app2)
+
+    # Changed versions or show_store_update=False shows banner again without Store button
+    notice_same = DualInstallNotice(
+        current_kind="standalone",
+        current_version="0.4.6",
+        other=InstalledEdition(kind="store", version="0.4.6"),
+        comparison="same",
+        message="Both Standalone .exe (v0.4.6) and Microsoft Store (v0.4.6) are installed.",
+        show_store_update=False,
+        dismiss_key="standalone:0.4.6|store:0.4.6",
+    )
+    app3 = App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs3", work_dir=tmp_path / "work3", check_updates=False),
+        musescore_available=lambda: True,
+        prefs_path=prefs_file,
+        store_mode=False,
+        prefetch_models=False,
+        dual_install_checker=lambda: notice_same,
+    )
+    try:
+        assert app3.dual_install_banner.winfo_manager()
+        assert not app3.dual_install_store_btn.winfo_manager()
+    finally:
+        close_app(app3)
+
+    # Failing dual_install_checker never crashes startup
+    app4 = App(
+        root,
+        AppConfig(log_dir=tmp_path / "logs4", work_dir=tmp_path / "work4", check_updates=False),
+        musescore_available=lambda: True,
+        prefs_path=tmp_path / "p4.json",
+        prefetch_models=False,
+        dual_install_checker=lambda: (_ for _ in ()).throw(RuntimeError("reg fail")),
+    )
+    try:
+        assert not app4.dual_install_banner.winfo_manager()
+    finally:
+        close_app(app4)

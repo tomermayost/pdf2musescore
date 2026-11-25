@@ -27,6 +27,13 @@ from .engines.homr_engine import (
     is_supported_input,
     parse_page_spec,
 )
+from .install_detect import (
+    MSIX_STORE_URI,
+    MSIX_STORE_WEB_URL,
+    WINDOWS_INSTALLED_APPS_URI,
+    DualInstallNotice,
+    check_dual_install,
+)
 from .options import (
     CLEF_CHOICES,
     INSTRUMENT_PRESETS,
@@ -158,6 +165,7 @@ class App(ttk.Frame):
         enable_dnd: bool = True,
         model_manager: Optional[ModelManager] = None,
         prefetch_models: bool = True,
+        dual_install_checker: Optional[Callable[[], Optional[DualInstallNotice]]] = None,
     ) -> None:
         self.config_ = config
         self._store_mode = is_msix_package() if store_mode is None else bool(store_mode)
@@ -167,6 +175,13 @@ class App(ttk.Frame):
         self._prefs_path: Path = Path(prefs_path) if prefs_path is not None else default_preferences_path()
         self._prefs: UserPreferences = load_preferences(self._prefs_path, default_dpi=self.config_.render_dpi)
         self._last_dir: str = self._prefs.last_dir
+        self._dismissed_dual_install: str = self._prefs.dismissed_dual_install
+        self._dual_install_notice: Optional[DualInstallNotice] = None
+        self._dual_install_checker: Callable[[], Optional[DualInstallNotice]] = (
+            dual_install_checker
+            if dual_install_checker is not None
+            else (lambda: check_dual_install(__version__, store_mode=self._store_mode))
+        )
         self.pipeline_factory = pipeline_factory
         self.musescore_available = musescore_available or (
             lambda: find_tool(MUSESCORE, config.musescore_path) is not None
@@ -239,11 +254,12 @@ class App(ttk.Frame):
 
         self._after_id: Optional[str] = self.after(self.POLL_MS, self._poll)
         if self._store_mode:
-            log.info("Microsoft Store MSIX mode active; in-app GitHub update check disabled")
-        elif self.config_.check_updates:
+            log.info("Microsoft Store MSIX mode active; external installers disabled (updates open Microsoft Store)")
+        if self.config_.check_updates:
             self._start_update_check()
         if prefetch_models and not self.model_manager.status().ready:
             self._start_model_prefetch()
+        self._check_and_show_dual_install()
 
     def _default_exit(self) -> None:  # pragma: no cover - terminates interactive Tk root
         try:
@@ -281,11 +297,13 @@ class App(ttk.Frame):
         self._has_musescore = bool(self.musescore_available())
         self._build_variables()
         self._build_header()
+        self._build_dual_install_banner()
 
         # Two-column workspace body (left preview, right cards)
         workspace = ttk.Frame(self, style="App.TFrame")
         workspace.pack(fill="x", pady=(6, 4))
         workspace.columnconfigure(1, weight=1)
+        self._workspace = workspace
 
         self.preview_pane = PdfPreviewPane(
             workspace,
@@ -364,6 +382,63 @@ class App(ttk.Frame):
             style="Update.TButton",
             command=self.on_update_clicked,
         )
+
+    def _build_dual_install_banner(self) -> None:
+        self.dual_install_banner = tk.Frame(
+            self,
+            background=self.palette.warn_bg,
+            highlightbackground=self.palette.warn_border,
+            highlightthickness=1,
+            padx=10,
+            pady=6,
+        )
+        self.dual_install_dismiss_btn = ttk.Button(
+            self.dual_install_banner,
+            text="×",
+            width=2,
+            style="Secondary.TButton",
+            command=self.on_dismiss_dual_install,
+        )
+        self.dual_install_dismiss_btn.pack(side="right", padx=(6, 0))
+        self._attach_tip(
+            "dual_install_dismiss",
+            self.dual_install_dismiss_btn,
+            custom_text="Dismiss this notice until an installed version changes",
+        )
+
+        self.dual_install_apps_btn = ttk.Button(
+            self.dual_install_banner,
+            text="Installed Apps",
+            style="Secondary.TButton",
+            command=self.on_open_installed_apps,
+        )
+        self.dual_install_apps_btn.pack(side="right", padx=(6, 0))
+        self._attach_tip(
+            "dual_install_apps",
+            self.dual_install_apps_btn,
+            custom_text="Open Windows Installed Apps settings to remove any duplicate installation",
+        )
+
+        self.dual_install_store_btn = ttk.Button(
+            self.dual_install_banner,
+            text="Open Microsoft Store",
+            style="Secondary.TButton",
+            command=self.on_open_store_page,
+        )
+        self._attach_tip(
+            "dual_install_store",
+            self.dual_install_store_btn,
+            custom_text="Open PDF2MuseScore in the Microsoft Store app to check for updates",
+        )
+
+        self.dual_install_lbl = ttk.Label(
+            self.dual_install_banner,
+            text="",
+            style="WarnBannerText.TLabel",
+            wraplength=560,
+            justify="left",
+        )
+        self.dual_install_lbl.pack(side="left", fill="x", expand=True)
 
     def _build_source_card(self, parent: ttk.Frame) -> None:
         card_outer, card = self._make_card(parent, padx=14, pady=9)
@@ -697,6 +772,15 @@ class App(ttk.Frame):
         self.ms_badge_lbl = ttk.Label(footer, text=ms_text, style=ms_style)
         self.ms_badge_lbl.pack(side="left", padx=(12, 0))
 
+        self.edition_badge_lbl: Optional[ttk.Label] = None
+        if self._store_mode:
+            self.edition_badge_lbl = ttk.Label(
+                footer,
+                text="Microsoft Store",
+                style="FooterBadgeMuted.TLabel",
+            )
+            self.edition_badge_lbl.pack(side="left", padx=(12, 0))
+
         self.logs_btn = ttk.Button(footer, text="Open log folder", style="Ghost.TButton", command=self.on_open_logs)
         self.logs_btn.pack(side="right")
 
@@ -834,6 +918,7 @@ class App(ttk.Frame):
         self.preview_pane.apply_theme(p)
         self.advanced_section.apply_theme(p)
         self.log_section.apply_theme(p)
+        self.dual_install_banner.configure(background=p.warn_bg, highlightbackground=p.warn_border)
         self.result_banner.configure(background=p.success_bg, highlightbackground=p.success_border)
         self.log_frame.configure(background=p.log_bg, highlightbackground=p.border_strong)
 
@@ -893,6 +978,7 @@ class App(ttk.Frame):
             instrument_name=inst,
             keep_line_breaks=bool(self.keep_breaks_var.get()),
             last_dir=self._last_dir,
+            dismissed_dual_install=self._dismissed_dual_install,
         )
 
     def save_preferences(self) -> bool:
@@ -1129,6 +1215,20 @@ class App(ttk.Frame):
         info = self._available_update
         if info is None or self._busy:
             return
+        if self._store_mode:
+            yes = bool(
+                self.ask_yes_no(
+                    "Update available in Microsoft Store",
+                    f"A newer version of PDF to MuseScore (v{info.version}) is available "
+                    f"(you are running Store v{__version__}).\n\n"
+                    "Would you like to open the Microsoft Store page to get the latest update?",
+                )
+            )
+            if not yes:
+                log.info("Microsoft Store update prompt for v%s deferred by user.", info.version)
+                return
+            self.on_open_store_page()
+            return
         yes = bool(
             self.ask_yes_no(
                 "Update available",
@@ -1348,6 +1448,54 @@ class App(ttk.Frame):
         self._confirm_event.wait()
         return self._confirm_answer
 
+    def _check_and_show_dual_install(self) -> None:
+        try:
+            notice = self._dual_install_checker()
+        except Exception as exc:
+            log.debug("Dual install check failed: %s", exc)
+            return
+        if notice is None:
+            return
+        if notice.dismiss_key and notice.dismiss_key == self._dismissed_dual_install:
+            log.debug("Suppressing dismissed dual-install banner (%s)", notice.dismiss_key)
+            return
+        self._dual_install_notice = notice
+        self.dual_install_lbl.configure(text=notice.message)
+        if notice.show_store_update:
+            if not self.dual_install_store_btn.winfo_manager():
+                self.dual_install_store_btn.pack(
+                    side="right", padx=(6, 0), before=self.dual_install_lbl
+                )
+        elif self.dual_install_store_btn.winfo_manager():
+            self.dual_install_store_btn.pack_forget()
+        if not self.dual_install_banner.winfo_manager():
+            self.dual_install_banner.pack(fill="x", pady=(4, 4), before=self._workspace)
+            self._fit_window_to_content()
+
+    def on_dismiss_dual_install(self) -> None:
+        if self.dual_install_banner.winfo_manager():
+            self.dual_install_banner.pack_forget()
+            self._fit_window_to_content()
+        if self._dual_install_notice is not None:
+            self._dismissed_dual_install = self._dual_install_notice.dismiss_key
+            self.save_preferences()
+            log.info("Dismissed dual-install notice (%s)", self._dismissed_dual_install)
+
+    def on_open_store_page(self) -> None:
+        log.info("Opening Microsoft Store product page: %s", MSIX_STORE_URI)
+        opened = False
+        try:
+            opened = bool(self.open_url(MSIX_STORE_URI))
+        except Exception as exc:
+            log.warning("Could not open Store app URI (%s); falling back to web Store URL", exc)
+        if not opened:
+            log.info("Opening Microsoft Store web URL: %s", MSIX_STORE_WEB_URL)
+            self.open_url(MSIX_STORE_WEB_URL)
+
+    def on_open_installed_apps(self) -> None:
+        log.info("Opening Windows Installed Apps settings: %s", WINDOWS_INSTALLED_APPS_URI)
+        self.open_url(WINDOWS_INSTALLED_APPS_URI)
+
     def on_open_logs(self) -> None:
         path = Path(self.config_.log_dir).resolve()
         path.mkdir(parents=True, exist_ok=True)
@@ -1445,6 +1593,15 @@ class App(ttk.Frame):
                     text=f"↑ Update v{payload.version}",
                     state="disabled" if self._busy else "normal",
                 )
+                tip_text = (
+                    f"Open Microsoft Store to update to v{payload.version} (running Store v{__version__})"
+                    if self._store_mode
+                    else f"Download and install v{payload.version} (running v{__version__})"
+                )
+                if "update_btn" in self.tooltips:
+                    self.tooltips["update_btn"].text = tip_text
+                else:
+                    self._attach_tip("update_btn", self.update_btn, custom_text=tip_text)
                 if not self.update_btn.winfo_manager():
                     self.update_btn.pack(side="right", padx=(0, 8))
                 if not self._busy:

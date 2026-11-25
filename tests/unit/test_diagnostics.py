@@ -55,9 +55,31 @@ def test_collect_and_log_environment_info(monkeypatch, caplog) -> None:
         "cpu_count",
         "frozen",
         "msix",
+        "edition",
+        "other_install",
         "memory",
     ):
         assert key in info and info[key]
+
+    from pdf2musescore.install_detect import InstalledEdition
+
+    monkeypatch.setattr(diagnostics, "is_msix_package", lambda: True)
+    monkeypatch.setattr(
+        diagnostics,
+        "detect_other_edition",
+        lambda store_mode: InstalledEdition(kind="standalone", version="0.4.5"),
+    )
+    info_store = diagnostics.collect_environment_info()
+    assert info_store["edition"] == "store"
+    assert info_store["other_install"] == "standalone v0.4.5"
+
+    monkeypatch.setattr(
+        diagnostics,
+        "detect_other_edition",
+        lambda store_mode: (_ for _ in ()).throw(RuntimeError("probe fail")),
+    )
+    info_err = diagnostics.collect_environment_info()
+    assert info_err["other_install"] == "unknown"
 
     with caplog.at_level("INFO", logger="pdf2musescore.diagtest"):
         logger = logging.getLogger("pdf2musescore.diagtest")

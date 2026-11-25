@@ -43,6 +43,7 @@ def test_save_and_load_roundtrip(tmp_path):
         instrument_name="Cello",
         keep_line_breaks=True,
         last_dir="C:/Scores/Bach",
+        dismissed_dual_install="store:0.4.3|standalone:0.4.5",
     )
     assert save_preferences(original, p) is True
     assert p.is_file()
@@ -81,6 +82,7 @@ def test_corrupt_and_out_of_range_preferences_fall_back_safely(tmp_path, caplog)
                 "instrument_name": 123,
                 "keep_line_breaks": True,
                 "last_dir": 456,
+                "dismissed_dual_install": 789,
             }
         ),
         encoding="utf-8",
@@ -102,6 +104,7 @@ def test_corrupt_and_out_of_range_preferences_fall_back_safely(tmp_path, caplog)
         instrument_name="auto",
         keep_line_breaks=True,
         last_dir="",
+        dismissed_dual_install="",
     )
 
 

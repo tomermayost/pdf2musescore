@@ -173,7 +173,7 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 | `models_dir` | `%LOCALAPPDATA%\pdf2musescore\models` (or `tmp/models` in dev) | Version-scoped local cache for `homr` & `RapidOCR` ONNX weights (auto-updates when engines upgrade) |
 | `musescore_path` | auto-detect | Path to `MuseScore4.exe` |
 | `render_dpi` | `300` | PDF page rendering DPI for OMR |
-| `check_updates` | `true` | Silently check GitHub Releases on startup (`false` to disable; automatically off in Store MSIX builds) |
+| `check_updates` | `true` | Silently check GitHub Releases on startup (`false` to disable; Store MSIX builds link to Microsoft Store instead of `.exe`) |
 
 ---
 
@@ -181,7 +181,7 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 
 - **Signing Status:** The official **[Microsoft Store](https://apps.microsoft.com/detail/9N6NCBWM3BHT)** edition is **Microsoft-signed** and installs with zero SmartScreen warnings. Standalone `.exe` GitHub installers are currently **unsigned** while the project builds community traction to qualify for free open-source code signing via [SignPath Foundation](https://signpath.org/) (our CI pipeline already supports SignPath integration once approved). Every release publishes `SHA256SUMS.txt` and GitHub build provenance attestations from public GitHub Actions workflows.
 - **Committers and Reviewers:** [Tomer Mayost](https://github.com/tomermayost)
-- **Privacy Policy:** This program will not transfer personal information or your sheet music PDFs to external servers. Network access is strictly limited to: (1) in standalone GitHub builds, a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional installer download only when the user explicitly clicks **Yes** to update, and (3) downloading the open-source `homr` and `RapidOCR` ONNX AI model weights once during installation (or automatically on startup if missing) into `%LOCALAPPDATA%\pdf2musescore\models`. In Microsoft Store (MSIX) builds, in-app GitHub update checks and external installers are automatically disabled, as updates are delivered exclusively through the Microsoft Store.
+- **Privacy Policy:** This program will not transfer personal information or your sheet music PDFs to external servers. Network access is strictly limited to: (1) a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional update action only when the user explicitly clicks **Yes** (downloading the GitHub installer in standalone builds, or opening the official Microsoft Store page in Store MSIX builds — external installers are always disabled in Store builds), and (3) downloading the open-source `homr` and `RapidOCR` ONNX AI model weights once during installation (or automatically on startup if missing) into `%LOCALAPPDATA%\pdf2musescore\models`.
 
 ---
 

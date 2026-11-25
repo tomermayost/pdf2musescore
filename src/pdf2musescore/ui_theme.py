@@ -244,6 +244,7 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
     style.configure("Card.TFrame", background=palette.card)
     style.configure("CardAlt.TFrame", background=palette.card_alt)
     style.configure("Banner.TFrame", background=palette.success_bg)
+    style.configure("WarnBanner.TFrame", background=palette.warn_bg)
 
     style.configure("App.TLabel", background=palette.bg, foreground=palette.text, font=(ui_font, 9))
     style.configure("HeaderTitle.TLabel", background=palette.bg, foreground=palette.text, font=(ui_font, 15, "bold"))
@@ -274,6 +275,12 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         background=palette.success_bg,
         foreground=palette.success_text,
         font=(ui_font, 9, "bold"),
+    )
+    style.configure(
+        "WarnBannerText.TLabel",
+        background=palette.warn_bg,
+        foreground=palette.warn_text,
+        font=(ui_font, 8, "bold"),
     )
     style.configure("Footer.TLabel", background=palette.bg, foreground=palette.text_subtle, font=(ui_font, 8))
     style.configure(

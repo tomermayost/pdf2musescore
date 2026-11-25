@@ -42,6 +42,7 @@ class UserPreferences:
     instrument_name: str = "auto"
     keep_line_breaks: bool = False
     last_dir: str = ""
+    dismissed_dual_install: str = ""
 
 
 def _clamp_default_dpi(default_dpi: int) -> int:
@@ -91,6 +92,16 @@ def _coerce_choice(raw: Mapping[str, Any], key: str, valid: tuple[str, ...], def
     return default
 
 
+def _coerce_str(raw: Mapping[str, Any], key: str, default: str = "") -> str:
+    if key not in raw:
+        return default
+    val = raw[key]
+    if isinstance(val, str):
+        return val.strip()
+    log.warning("Invalid preference %s=%r - ignoring", key, val)
+    return default
+
+
 def _sanitize_preferences(raw: Mapping[str, Any], default_dpi: int = 300) -> UserPreferences:
     """Validate and normalize every preference field independently without raising."""
     safe_dpi = _clamp_default_dpi(default_dpi)
@@ -101,13 +112,6 @@ def _sanitize_preferences(raw: Mapping[str, Any], default_dpi: int = 300) -> Use
     else:
         log.warning("Invalid preference instrument_name=%r - using 'auto'", inst_raw)
         inst = "auto"
-
-    last_dir_raw = raw.get("last_dir", "")
-    if isinstance(last_dir_raw, str):
-        last_dir = last_dir_raw.strip()
-    else:
-        log.warning("Invalid preference last_dir=%r - ignoring", last_dir_raw)
-        last_dir = ""
 
     return UserPreferences(
         theme=_coerce_choice(raw, "theme", VALID_THEMES, "dark"),
@@ -122,7 +126,8 @@ def _sanitize_preferences(raw: Mapping[str, Any], default_dpi: int = 300) -> Use
         clef_override=_coerce_choice(raw, "clef_override", CLEF_CHOICES, "auto"),
         instrument_name=inst,
         keep_line_breaks=_coerce_bool(raw, "keep_line_breaks", False),
-        last_dir=last_dir,
+        last_dir=_coerce_str(raw, "last_dir"),
+        dismissed_dual_install=_coerce_str(raw, "dismissed_dual_install"),
     )
 
 

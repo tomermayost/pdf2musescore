@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional, TextIO
 
 from . import APP_NAME, __version__
 from .config import is_msix_package
+from .install_detect import detect_other_edition
 
 
 class _MEMORYSTATUSEX(ctypes.Structure):
@@ -123,6 +124,13 @@ def collect_environment_info() -> dict[str, str]:
     except Exception as exc:
         ort_prov = f"unavailable ({type(exc).__name__}: {exc})"
 
+    msix = is_msix_package()
+    try:
+        sibling = detect_other_edition(store_mode=msix)
+        other_install = f"{sibling.kind} v{sibling.version}" if sibling is not None else "none"
+    except Exception:
+        other_install = "unknown"
+
     return {
         "app": __version__,
         "homr": _pkg_version("homr"),
@@ -138,7 +146,9 @@ def collect_environment_info() -> dict[str, str]:
         "machine": platform.machine() or "unknown",
         "cpu_count": str(os.cpu_count() or "unknown"),
         "frozen": str(bool(getattr(sys, "frozen", False))),
-        "msix": str(is_msix_package()),
+        "msix": str(msix),
+        "edition": "store" if msix else "standalone",
+        "other_install": other_install,
         "memory": memory_snapshot(),
     }
 

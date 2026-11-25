@@ -5,7 +5,9 @@ from __future__ import annotations
 import ctypes
 import importlib.metadata
 import importlib.util
+import re
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +15,7 @@ from types import SimpleNamespace
 from PIL import Image
 import pytest
 
-from pdf2musescore import deps
+from pdf2musescore import __version__, deps
 from pdf2musescore.config import AppConfig, is_msix_package, load_config
 from pdf2musescore.deps import MUSESCORE, ToolNotFoundError, ensure_tool
 from pdf2musescore.engines.homr_engine import (
@@ -23,6 +25,8 @@ from pdf2musescore.engines.homr_engine import (
     prune_stale_version_dirs,
 )
 from pdf2musescore.gui import App
+from pdf2musescore.install_detect import MSIX_STORE_URI, MSIX_STORE_WEB_URL
+from pdf2musescore.updater import UpdateInfo
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -183,23 +187,119 @@ def test_ensure_tool_disables_winget_in_store_mode(monkeypatch) -> None:
     assert not confirm_called
 
 
-def test_gui_skips_update_check_in_store_mode(root, tmp_path: Path) -> None:
+def test_gui_store_mode_update_alerts_and_opens_store(root, tmp_path: Path) -> None:
     calls: list[str] = []
-    app = App(
+    app_disabled = App(
         root,
-        AppConfig(work_dir=tmp_path / "work", log_dir=tmp_path / "logs", check_updates=True),
+        AppConfig(work_dir=tmp_path / "w0", log_dir=tmp_path / "l0", check_updates=False),
         musescore_available=lambda: True,
         update_checker=lambda ver: calls.append(ver) or None,
-        prefs_path=tmp_path / "prefs.json",
+        prefs_path=tmp_path / "prefs0.json",
         store_mode=True,
+        prefetch_models=False,
     )
     try:
         root.update_idletasks()
-        assert app._store_mode is True
-        assert app.update_thread is None
+        assert app_disabled._store_mode is True
+        assert app_disabled.update_thread is None
         assert calls == []
+        assert app_disabled.edition_badge_lbl is not None
+        assert app_disabled.edition_badge_lbl.cget("text") == "Microsoft Store"
     finally:
+        app_disabled.destroy()
+
+    prompts: list[tuple[str, str]] = []
+    opened_urls: list[str] = []
+    downloads: list[object] = []
+    launches: list[str] = []
+    exits: list[bool] = []
+    url_results = [True, False]
+
+    def fake_open_url(url: str) -> bool:
+        opened_urls.append(url)
+        if url_results:
+            val = url_results.pop(0)
+            if isinstance(val, Exception):
+                raise val
+            return bool(val)
+        return True
+
+    info = UpdateInfo("9.9.9", "https://example.com/pdf2musescore-setup.exe", "https://example.com/rel")
+    answers = [False, True]
+    app = App(
+        root,
+        AppConfig(work_dir=tmp_path / "w1", log_dir=tmp_path / "l1", check_updates=True),
+        musescore_available=lambda: True,
+        update_checker=lambda ver: calls.append(ver) or info,
+        ask_yes_no=lambda t, m: (prompts.append((t, m)) or answers.pop(0)),
+        installer_downloader=lambda *a, **kw: downloads.append(a) or Path("never.exe"),
+        launch_installer=lambda p: launches.append(p),
+        open_url=fake_open_url,
+        on_exit=lambda: exits.append(True),
+        prefs_path=tmp_path / "prefs1.json",
+        store_mode=True,
+        prefetch_models=False,
+    )
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline and not prompts:
+            app.process_queue()
+            root.update()
+            time.sleep(0.02)
+        assert len(calls) == 1
+        assert app.update_btn.winfo_manager()
+        assert "v9.9.9" in app.update_btn.cget("text")
+        assert "Microsoft Store" in prompts[0][0]
+        assert opened_urls == []
+
+        # Clicking Update and confirming opens Microsoft Store deep link (never downloads .exe)
+        app.on_update_clicked()
+        assert opened_urls == [MSIX_STORE_URI]
+        assert downloads == []
+        assert launches == []
+        assert exits == []
+
+        # If ms-windows-store:// URI returns False or raises, falls back to Store web URL
+        app.on_open_store_page()
+        assert opened_urls[-2:] == [MSIX_STORE_URI, MSIX_STORE_WEB_URL]
+
+        def failing_open_url(url: str) -> bool:
+            opened_urls.append(url)
+            if url == MSIX_STORE_URI:
+                raise OSError("scheme blocked")
+            return True
+
+        app.open_url = failing_open_url
+        app.on_open_store_page()
+        assert opened_urls[-2:] == [MSIX_STORE_URI, MSIX_STORE_WEB_URL]
+    finally:
+        if app.update_thread is not None and app.update_thread.is_alive():
+            app.update_thread.join(timeout=2)
         app.destroy()
+
+
+def test_installer_iss_downgrade_and_dual_install_guards() -> None:
+    iss_text = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    assert f'#define MyAppVersion "{__version__}"' in iss_text
+    for token in (
+        "InitializeSetup",
+        "CompareVersionStrings",
+        "GetStoreInstalledVersion",
+        "GetStandaloneInstalledVersion",
+        "CurUninstallStepChanged",
+        "TomerMayost.PDF2MuseScore_",
+        "{8D4F61C0-5A2E-4E91-9A23-7B8C1F42E101}_is1",
+    ):
+        assert token in iss_text
+
+    # Models directory cleanup must be guarded in [Code], never unconditional in [UninstallDelete]
+    uninstall_section = iss_text.split("[UninstallDelete]", 1)[1].split("[Code]", 1)[0]
+    assert r"\models" not in uninstall_section
+
+    code_section = iss_text.split("[Code]", 1)[1]
+    begins = len(re.findall(r"\bbegin\b", code_section, flags=re.IGNORECASE))
+    ends = len(re.findall(r"\bend\b", code_section, flags=re.IGNORECASE))
+    assert begins > 0 and begins == ends
 
 
 def test_pipeline_injects_models_dir_into_engine(tmp_path: Path) -> None:
