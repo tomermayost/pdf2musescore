@@ -101,11 +101,13 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     ld = json.loads("".join(parser.jsonld_chunks))
     assert ld["@type"] == "SoftwareApplication"
     assert ld["offers"]["price"] == "0"
+    assert ld["installUrl"] == "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
     assert ld["downloadUrl"] == (
         "https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe"
     )
 
-    # Primary installer download link exists
+    # Primary Store install link and standalone .exe download link exist
+    assert "https://apps.microsoft.com/detail/9N6NCBWM3BHT" in parser.anchors
     assert (
         "https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe"
         in parser.anchors
@@ -141,3 +143,6 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert "https://tomermayost.github.io/pdf2musescore/" in readme
     assert "What are the minimum system requirements?" in html_text
     assert "AVX2" in html_text
+    assert "preparing a Microsoft-signed" not in html_text
+    assert "submitted for Store review" not in html_text
+    assert "drag and drop" in html_text.lower()

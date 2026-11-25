@@ -1,5 +1,6 @@
 # PDF to MuseScore
 
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-Free%20Download-0078D4?logo=microsoft&logoColor=white)](https://apps.microsoft.com/detail/9N6NCBWM3BHT)
 [![Latest Release](https://img.shields.io/github/v/release/tomermayost/pdf2musescore?label=Download&color=2563EB)](https://github.com/tomermayost/pdf2musescore/releases/latest)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform: Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6)](#download--installation-no-python-or-java-required)
@@ -10,7 +11,7 @@
 
 Convert sheet music PDFs and photos (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) into editable **MuseScore 4 (`.mscz`)** and **MusicXML (`.musicxml`)** files — **100% free, runs locally on your PC, no account, no page limits, and no Python or Java setup**.
 
-> 👉 **[Download Windows Installer (`pdf2musescore-setup.exe`, ~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** · 🌐 **[Website](https://tomermayost.github.io/pdf2musescore/)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
+> 👉 **[Get it from Microsoft Store (Recommended — Signed, Zero SmartScreen)](https://apps.microsoft.com/detail/9N6NCBWM3BHT)** · **[Standalone `.exe` Installer (~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** · 🌐 **[Website](https://tomermayost.github.io/pdf2musescore/)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
 
 ![PDF to MuseScore Light Studio Interface](docs/assets/ui-light.png)
 
@@ -41,7 +42,7 @@ Notice how `pdf2musescore` preserves the **bass clef, D minor key signature (B�
 | **Account Required?** | **No** | Yes (MuseScore.com) | No | Usually / License key |
 | **Privacy / Offline** | **100% Local on CPU** | Uploads PDF to cloud | Local | Local or cloud |
 | **Page / Score Limits** | **Unlimited** | Limited on free tier | Unlimited | Page limits on trials |
-| **Windows Setup** | **1-Click Installer (~105 MB)** | Built into MuseScore | Requires Java runtime | Standard installer |
+| **Windows Setup** | **Microsoft Store (1-Click) or `.exe` Installer** | Built into MuseScore | Requires Java runtime | Standard installer |
 | **Direct `.mscz` Output** | **Yes** *(plus `.musicxml`)* | Yes | Exports MusicXML first | Exports MusicXML first |
 | **Transpose & Clef Fix** | **Built-in before export** | Edit after import | Edit after import | Varies |
 
@@ -69,13 +70,20 @@ Optical music recognition (OMR) has come a long way, and setting clear expectati
 
 ## Download & Installation (No Python or Java Required)
 
-1. Download **[`pdf2musescore-setup.exe` (~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** from the [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases) page (supports **Windows 10 Home and upwards & Windows 11**, 64-bit).
-2. Run **`pdf2musescore-setup.exe`** and follow the Setup Wizard.
-   - **Windows SmartScreen note:** Standalone GitHub `.exe` releases are currently **unsigned** (see [Code Signing & Trust](#code-signing-trust--privacy-policy)), so Windows SmartScreen may show *"Windows protected your PC"*. Click **More info** → **Run anyway** after verifying the checksum/provenance below. *(Signed Microsoft Store MSIX distribution is planned next to remove SmartScreen completely.)*
-3. Launch **PDF to MuseScore** from the Start Menu or Desktop shortcut.
-4. **Preview & Pick Pages:** Click the preview pane or **Load PDF...** (`Ctrl+O`), browse pages (`←` / `→`), optionally click **Pick / Include page** or type a range (e.g. `2-3`), and select **Clean PDF**, **Faded Scan**, or **Phone Photo**.
-5. **Score Setup & Convert:** Set **Instrument**, **Clef**, **Transpose**, or expand **Advanced AI & Layout Settings** (hover any control for defaults & examples), then click **Convert & Save** (`Ctrl+Enter`). When finished, click **Open in MuseScore** or **Show Folder** in the completion banner. Toggle **🌙 Dark / ☀ Light** anytime in the top right.
-6. During installation, the Setup Wizard downloads the open-source `homr` and `RapidOCR` ONNX AI models once (~180 MB) and caches them locally in `%LOCALAPPDATA%\pdf2musescore\models` (offline installs and Microsoft Store builds download them automatically on app startup if missing).
+### Option 1 — Microsoft Store *(Recommended)*
+- Install **[PDF2MuseScore from the Microsoft Store](https://apps.microsoft.com/detail/9N6NCBWM3BHT)** (supports **Windows 10 Home and upwards & Windows 11**, 64-bit).
+- **Microsoft-signed:** Installs directly with **zero Windows SmartScreen warnings** and stays up to date automatically through the Microsoft Store.
+- On first launch, the app automatically downloads the open-source `homr` and `RapidOCR` ONNX AI models once (~180 MB) and caches them locally in `%LOCALAPPDATA%\pdf2musescore\models`.
+
+### Option 2 — Standalone GitHub Installer (`.exe`)
+- Download **[`pdf2musescore-setup.exe` (~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** from [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases).
+- During installation, the Setup Wizard downloads the open-source `homr` and `RapidOCR` ONNX AI models once (~180 MB) into `%LOCALAPPDATA%\pdf2musescore\models` (with automatic startup download fallback for offline installs).
+- **Windows SmartScreen note:** Standalone GitHub `.exe` releases are currently **unsigned** (see [Code Signing & Trust](#code-signing-trust--privacy-policy)), so Windows SmartScreen may show *"Windows protected your PC"*. For zero SmartScreen warnings, install via **Option 1 (Microsoft Store)** above, or click **More info** → **Run anyway** after verifying the checksum/provenance below.
+
+### Quick Start
+1. Launch **PDF to MuseScore** from the Start Menu (or Desktop shortcut).
+2. **Load & Preview:** Drag and drop a sheet music PDF or photo directly onto the window, or click the preview pane / **Load File...** (`Ctrl+O`). Flip through PDF pages (`←` / `→`), optionally click **Pick / Include page** or type a range (e.g. `2-3`), and select **Clean PDF**, **Faded Scan**, or **Phone Photo**.
+3. **Score Setup & Convert:** Set **Instrument**, **Clef**, **Transpose**, or expand **Advanced AI & Layout Settings** (hover any control for defaults & examples), then click **Convert & Save** (`Ctrl+Enter`). When finished, click **Open in MuseScore** or **Show Folder** in the completion banner. Toggle **🌙 Dark / ☀ Light** anytime in the top right.
 
 ### System Requirements
 
@@ -171,7 +179,7 @@ Optional `%APPDATA%\pdf2musescore\config.toml`, overridable by environment varia
 
 ## Code Signing, Trust & Privacy Policy
 
-- **Signing Status:** Standalone `.exe` GitHub installers are currently **unsigned** while the project builds community traction to qualify for free open-source code signing via [SignPath Foundation](https://signpath.org/) (our CI pipeline already supports SignPath integration once approved, and Microsoft Store MSIX packaging is live in CI and submitted for Store review). Every release publishes `SHA256SUMS.txt` and GitHub build provenance attestations from public GitHub Actions workflows.
+- **Signing Status:** The official **[Microsoft Store](https://apps.microsoft.com/detail/9N6NCBWM3BHT)** edition is **Microsoft-signed** and installs with zero SmartScreen warnings. Standalone `.exe` GitHub installers are currently **unsigned** while the project builds community traction to qualify for free open-source code signing via [SignPath Foundation](https://signpath.org/) (our CI pipeline already supports SignPath integration once approved). Every release publishes `SHA256SUMS.txt` and GitHub build provenance attestations from public GitHub Actions workflows.
 - **Committers and Reviewers:** [Tomer Mayost](https://github.com/tomermayost)
 - **Privacy Policy:** This program will not transfer personal information or your sheet music PDFs to external servers. Network access is strictly limited to: (1) in standalone GitHub builds, a read-only check on startup against GitHub Releases to notify the user if a newer version exists (which sends no user data, fails quietly offline, and can be disabled via `check_updates = false` or `PDF2MSCZ_CHECK_UPDATES=false`), (2) optional installer download only when the user explicitly clicks **Yes** to update, and (3) downloading the open-source `homr` and `RapidOCR` ONNX AI model weights once during installation (or automatically on startup if missing) into `%LOCALAPPDATA%\pdf2musescore\models`. In Microsoft Store (MSIX) builds, in-app GitHub update checks and external installers are automatically disabled, as updates are delivered exclusively through the Microsoft Store.
 

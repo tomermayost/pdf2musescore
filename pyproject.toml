@@ -37,6 +37,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://tomermayost.github.io/pdf2musescore/"
+"Microsoft Store" = "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
 Repository = "https://github.com/tomermayost/pdf2musescore"
 Issues = "https://github.com/tomermayost/pdf2musescore/issues"
 Releases = "https://github.com/tomermayost/pdf2musescore/releases"

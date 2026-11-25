@@ -33,6 +33,7 @@
     "softwareVersion": "0.4.5",
     "license": "https://www.gnu.org/licenses/agpl-3.0.en.html",
     "url": "https://tomermayost.github.io/pdf2musescore/",
+    "installUrl": "https://apps.microsoft.com/detail/9N6NCBWM3BHT",
     "downloadUrl": "https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe",
     "author": {
       "@type": "Person",
@@ -67,7 +68,7 @@
 
       <div class="nav-actions">
         <button id="themeToggle" class="btn-theme" type="button" aria-label="Switch to light theme">☀ Light</button>
-        <a class="btn btn-primary btn-sm" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">Download</a>
+        <a class="btn btn-primary btn-sm" href="https://apps.microsoft.com/detail/9N6NCBWM3BHT" target="_blank" rel="noopener">Microsoft Store</a>
       </div>
     </div>
   </header>
@@ -76,8 +77,8 @@
     <section id="top" class="hero">
       <div class="container hero-grid">
         <div>
-          <span class="eyebrow">100% Free · Offline Local AI · GNU AGPL-3.0</span>
-          <h1>Turn Sheet Music PDFs into Editable MuseScore 4 Scores</h1>
+          <span class="eyebrow">100% Free · Microsoft Store Verified · Offline Local AI · AGPL-3.0</span>
+          <h1>Turn Sheet Music PDFs &amp; Photos into Editable MuseScore 4 Scores</h1>
           <p class="hero-sub">
             Convert printed PDFs, faded photocopies, and smartphone photos straight into
             <strong>.mscz</strong> and <strong>MusicXML</strong> files — running locally on your Windows PC
@@ -85,16 +86,25 @@
           </p>
 
           <div class="hero-cta-row">
-            <a id="heroDownloadBtn" class="btn btn-primary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">
-              <span>Download for Windows (.exe)</span>
-              <span id="releaseTagBadge" class="version-tag">Latest</span>
+            <a id="heroStoreBtn" class="btn btn-primary" href="https://apps.microsoft.com/detail/9N6NCBWM3BHT" target="_blank" rel="noopener">
+              <svg class="ms-icon" width="16" height="16" viewBox="0 0 21 21" fill="currentColor" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" />
+                <rect x="11" y="1" width="9" height="9" />
+                <rect x="1" y="11" width="9" height="9" />
+                <rect x="11" y="11" width="9" height="9" />
+              </svg>
+              <span>Get it from Microsoft Store</span>
             </a>
-            <a class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore">View Source on GitHub</a>
+            <a id="heroDownloadBtn" class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">
+              <span>Standalone .exe</span>
+              <span id="releaseTagBadge" class="version-tag version-tag-muted">Latest</span>
+            </a>
           </div>
 
           <p class="hero-meta">
-            Windows 10 &amp; 11 (64-bit) · ~105 MB Setup Wizard · Zero Python or Java setup ·
-            <a href="#faq">SmartScreen &amp; SHA-256 verification</a>
+            Windows 10 &amp; 11 (64-bit) · Signed Store install (zero SmartScreen) · Zero Python or Java ·
+            <a href="https://github.com/tomermayost/pdf2musescore">Source on GitHub</a> ·
+            <a href="#faq">SHA-256 verification</a>
           </p>
 
           <div class="trust-chips" aria-label="Key highlights">
@@ -148,17 +158,17 @@
     <section class="section">
       <div class="container">
         <div class="section-head">
-          <h2>From PDF to Playable Score in Three Simple Steps</h2>
+          <h2>From PDF or Photo to Playable Score in Three Simple Steps</h2>
           <p>Built for musicians, students, and band directors — no command line or Java configuration.</p>
         </div>
 
         <div class="steps-grid">
           <article class="card">
             <div class="step-num">1</div>
-            <h3>Load PDF &amp; Pick Pages</h3>
+            <h3>Drop PDF or Photo &amp; Pick Pages</h3>
             <p>
-              Preview every page right inside the studio window (<code>←</code> / <code>→</code>) and click
-              <strong>Pick page</strong> or enter ranges like <code>2-3, 5</code> so you only convert the movements you need.
+              Drag and drop a sheet music PDF or photo (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>, <code>.bmp</code>, <code>.tif</code>),
+              preview pages inside the studio window (<code>←</code> / <code>→</code>), and click <strong>Pick page</strong> or enter ranges like <code>2-3, 5</code>.
             </p>
           </article>
 
@@ -192,8 +202,8 @@
 
         <div class="features-grid">
           <article class="card">
-            <h3>Live Preview &amp; Page Picker</h3>
-            <p>Inspect multi-page PDFs visually before converting so you never waste time scanning title pages or extra movements.</p>
+            <h3>Direct Photo Input &amp; Drag-and-Drop</h3>
+            <p>Drag and drop PDFs or photos (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>, <code>.bmp</code>, <code>.tif</code>) directly onto the window, preview pages visually, and convert only what you need.</p>
           </article>
           <article class="card">
             <h3>One-Click Scan Presets</h3>
@@ -212,8 +222,8 @@
             <p>Powered by open-source <code>homr 0.7+</code> ONNX models running offline on your CPU — your unpublished arrangements never leave your PC.</p>
           </article>
           <article class="card">
-            <h3>Zero Setup &amp; Saves Preferences</h3>
-            <p>Self-contained Windows installer with Light/Dark themes, safe Unicode folder handling, remembered settings, and optional GitHub update alerts.</p>
+            <h3>Microsoft Store &amp; Zero Setup</h3>
+            <p>Signed Microsoft Store install (zero SmartScreen) or standalone installer with Light/Dark themes, safe Unicode folder handling, and remembered settings.</p>
           </article>
         </div>
       </div>
@@ -268,7 +278,7 @@
               </tr>
               <tr>
                 <td><strong>Windows Installation</strong></td>
-                <td class="col-ours">1-Click Installer (~105 MB)</td>
+                <td class="col-ours">Microsoft Store (1-Click) or .exe</td>
                 <td>Built into MuseScore</td>
                 <td>Requires Java runtime</td>
                 <td>Standard installer</td>
@@ -341,9 +351,9 @@
           </details>
 
           <details class="faq-item">
-            <summary>Why does Windows SmartScreen warn about the installer, and how do I verify it?</summary>
+            <summary>Why does Windows SmartScreen warn about the standalone .exe installer?</summary>
             <div class="faq-body">
-              Independent open-source Windows installers aren't signed with an expensive commercial EV certificate yet (we're also preparing a Microsoft-signed <strong>Microsoft Store</strong> release to remove SmartScreen completely). Click <strong>More info → Run anyway</strong>, or verify every public CI build using <code>SHA256SUMS.txt</code> and GitHub Build Provenance Attestations:
+              For zero SmartScreen warnings and automatic updates, install the Microsoft-signed <a href="https://apps.microsoft.com/detail/9N6NCBWM3BHT" target="_blank" rel="noopener">Microsoft Store</a> edition. The standalone GitHub <code>.exe</code> installer is not signed with a commercial EV certificate yet, so SmartScreen may appear — click <strong>More info → Run anyway</strong>, or verify every public CI build using <code>SHA256SUMS.txt</code> and GitHub Build Provenance Attestations:
               <pre>Get-FileHash .\pdf2musescore-setup.exe -Algorithm SHA256
 gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore</pre>
             </div>
@@ -388,8 +398,16 @@ gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore
             <p>Free forever, local AI on your Windows PC, open source under GNU AGPL-3.0.</p>
           </div>
           <div class="hero-cta-row">
-            <a class="btn btn-primary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">Download for Windows (.exe)</a>
-            <a class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases">All Releases &amp; Checksums</a>
+            <a class="btn btn-primary" href="https://apps.microsoft.com/detail/9N6NCBWM3BHT" target="_blank" rel="noopener">
+              <svg class="ms-icon" width="16" height="16" viewBox="0 0 21 21" fill="currentColor" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" />
+                <rect x="11" y="1" width="9" height="9" />
+                <rect x="1" y="11" width="9" height="9" />
+                <rect x="11" y="11" width="9" height="9" />
+              </svg>
+              <span>Get it from Microsoft Store</span>
+            </a>
+            <a class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">Standalone .exe</a>
           </div>
         </div>
       </div>
@@ -400,6 +418,7 @@ gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore
     <div class="container footer-inner">
       <span>PDF to MuseScore by <strong>Tomer Mayost</strong> · Powered by <a href="https://github.com/liebharc/homr">homr</a> AI · GNU AGPL-3.0-or-later</span>
       <div class="footer-links">
+        <a href="https://apps.microsoft.com/detail/9N6NCBWM3BHT" target="_blank" rel="noopener">Microsoft Store</a>
         <a href="https://github.com/tomermayost/pdf2musescore">GitHub</a>
         <a href="https://github.com/tomermayost/pdf2musescore/releases">Releases</a>
         <a href="https://github.com/tomermayost/pdf2musescore/discussions">Discussions</a>

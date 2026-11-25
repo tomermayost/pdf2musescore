@@ -140,6 +140,7 @@ def test_license_and_pyproject_metadata_aligned_agplv3() -> None:
     assert "musescore" in proj["keywords"]
     assert any("AGPLv3+" in c for c in proj["classifiers"])
     assert proj["urls"]["Homepage"] == "https://tomermayost.github.io/pdf2musescore/"
+    assert proj["urls"]["Microsoft Store"] == "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
     for key in ("Repository", "Issues", "Releases"):
         assert proj["urls"][key].startswith("https://github.com/tomermayost/pdf2musescore")
 
@@ -151,6 +152,9 @@ def test_readme_assets_and_trust_statements() -> None:
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "Free code signing is provided by [SignPath.io]" not in readme
+    assert "https://apps.microsoft.com/detail/9N6NCBWM3BHT" in readme
+    assert "planned next" not in readme
+    assert "submitted for Store review" not in readme
     assert "AGPL-3.0-or-later" in readme
     assert "SHA256SUMS.txt" in readme
     assert "gh attestation verify" in readme
