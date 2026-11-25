@@ -42,6 +42,8 @@ def test_save_and_load_roundtrip(tmp_path):
         clef_override="bass",
         instrument_name="Cello",
         keep_line_breaks=True,
+        full_score=True,
+        full_score_target_width=4096,
         last_dir="C:/Scores/Bach",
         dismissed_dual_install="store:0.4.3|standalone:0.4.5",
     )
@@ -81,6 +83,8 @@ def test_corrupt_and_out_of_range_preferences_fall_back_safely(tmp_path, caplog)
                 "clef_override": "subcontrabass",
                 "instrument_name": 123,
                 "keep_line_breaks": True,
+                "full_score": "invalid",
+                "full_score_target_width": 9000,
                 "last_dir": 456,
                 "dismissed_dual_install": 789,
             }
@@ -103,6 +107,8 @@ def test_corrupt_and_out_of_range_preferences_fall_back_safely(tmp_path, caplog)
         clef_override="auto",
         instrument_name="auto",
         keep_line_breaks=True,
+        full_score=False,
+        full_score_target_width=3840,
         last_dir="",
         dismissed_dual_install="",
     )

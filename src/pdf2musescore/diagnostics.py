@@ -50,6 +50,7 @@ def get_memory_status() -> Optional[tuple[int, int, int]]:
 
 
 LOW_RAM_THRESHOLD_BYTES = int(2.5 * (1024**3))
+LOW_RAM_FULLSCORE_THRESHOLD_BYTES = int(3.5 * (1024**3))
 
 
 def memory_snapshot() -> str:
@@ -66,24 +67,40 @@ def check_low_memory_warning(
     logger: logging.Logger,
     *,
     render_dpi: int = 300,
-    threshold_bytes: int = LOW_RAM_THRESHOLD_BYTES,
+    threshold_bytes: Optional[int] = None,
+    full_score: bool = False,
 ) -> bool:
     """Log an actionable warning if free physical RAM is below ``threshold_bytes``."""
     status = get_memory_status()
     if status is None:
         return False
+    effective_threshold = (
+        threshold_bytes
+        if threshold_bytes is not None
+        else (LOW_RAM_FULLSCORE_THRESHOLD_BYTES if full_score else LOW_RAM_THRESHOLD_BYTES)
+    )
     total_b, avail_b, load_pct = status
-    if avail_b < threshold_bytes:
+    if avail_b < effective_threshold:
         gb = float(1024**3)
-        dpi_hint = " or lower Scan Quality (DPI) to 200" if render_dpi > 200 else ""
-        logger.warning(
-            "Low available memory: %.1f GB free of %.1f GB (%d%% in use). "
-            "AI sheet-music recognition typically needs ~2.5 GB of free memory — close other applications%s if conversion fails.",
-            avail_b / gb,
-            total_b / gb,
-            load_pct,
-            dpi_hint,
-        )
+        if full_score:
+            logger.warning(
+                "Low available memory for Full Score Mode: %.1f GB free of %.1f GB (%d%% in use). "
+                "Full orchestral scores typically need ~3.5 GB of free memory — close other applications "
+                "or lower Full Score Width / Scan Quality (DPI) if conversion fails.",
+                avail_b / gb,
+                total_b / gb,
+                load_pct,
+            )
+        else:
+            dpi_hint = " or lower Scan Quality (DPI) to 200" if render_dpi > 200 else ""
+            logger.warning(
+                "Low available memory: %.1f GB free of %.1f GB (%d%% in use). "
+                "AI sheet-music recognition typically needs ~2.5 GB of free memory — close other applications%s if conversion fails.",
+                avail_b / gb,
+                total_b / gb,
+                load_pct,
+                dpi_hint,
+            )
         return True
     return False
 

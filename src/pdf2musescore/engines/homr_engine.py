@@ -555,7 +555,11 @@ class HomrEngine(OmrEngine):
                  renderer: Callable[..., list[Path]] = _default_render_pdf,
                  runner: Callable[..., list[Path]] = _default_run_homr,
                  page_callback: Optional[Callable[[int, int], None]] = None,
-                 models_dir: Optional[Path] = None) -> None:
+                 models_dir: Optional[Path] = None,
+                 full_score: bool = False,
+                 full_score_target_width: int = 3840,
+                 staff_callback: Optional[Callable[[int, int, int, int], None]] = None,
+                 fullscore_runner: Optional[Callable[..., list[Path]]] = None) -> None:
         self.dpi = dpi
         self.pages_spec = pages_spec
         self._is_cancelled = is_cancelled
@@ -567,6 +571,10 @@ class HomrEngine(OmrEngine):
         self._run = runner
         self._page_cb = page_callback
         self.models_dir = models_dir
+        self.full_score = bool(full_score)
+        self.full_score_target_width = int(full_score_target_width)
+        self._staff_cb = staff_callback
+        self._fullscore_run = fullscore_runner
 
     def recognize(self, pdf: Path, out_dir: Path) -> list[Path]:
         pdf, out_dir = Path(pdf), Path(out_dir)
@@ -588,12 +596,31 @@ class HomrEngine(OmrEngine):
             raise OmrError(f"Failed to render PDF pages: {type(exc).__name__}: {exc}") from exc
 
         log.info(
-            "Rendered %d page(s) at %d DPI (preprocess=%s, deskew=%s, step=%d, min_notehead=%d); running homr AI...",
+            "Rendered %d page(s) at %d DPI (preprocess=%s, deskew=%s, step=%d, min_notehead=%d, full_score=%s); running homr AI...",
             len(pages), self.dpi, self.preprocess_mode, self.deskew,
-            self.segnet_step_size, self.min_notehead_size,
+            self.segnet_step_size, self.min_notehead_size, self.full_score,
         )
         try:
-            if self._run is _default_run_homr:
+            if self.full_score:
+                fs_runner = self._fullscore_run
+                if fs_runner is None:
+                    from ..fullscore.runner import run_fullscore_homr
+
+                    fs_runner = run_fullscore_homr
+                outputs = sorted(
+                    fs_runner(
+                        pages,
+                        page_cb=self._page_cb,
+                        staff_cb=self._staff_cb,
+                        is_cancelled=self._is_cancelled,
+                        target_width=self.full_score_target_width,
+                        segnet_step_size=self.segnet_step_size,
+                        min_notehead_size=self.min_notehead_size,
+                        preprocess_mode=self.preprocess_mode,
+                        models_dir=self.models_dir,
+                    )
+                )
+            elif self._run is _default_run_homr:
                 outputs = sorted(
                     self._run(
                         pages, self._page_cb, self._is_cancelled,

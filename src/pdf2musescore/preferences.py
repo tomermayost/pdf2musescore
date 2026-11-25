@@ -12,7 +12,13 @@ from typing import Any, Mapping, Optional
 
 from . import APP_NAME
 from .config import is_frozen
-from .options import CLEF_CHOICES, PREPROCESS_MODES
+from .options import (
+    CLEF_CHOICES,
+    FULL_SCORE_DEFAULT_WIDTH,
+    FULL_SCORE_MAX_WIDTH,
+    FULL_SCORE_MIN_WIDTH,
+    PREPROCESS_MODES,
+)
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +47,8 @@ class UserPreferences:
     clef_override: str = "auto"
     instrument_name: str = "auto"
     keep_line_breaks: bool = False
+    full_score: bool = False
+    full_score_target_width: int = FULL_SCORE_DEFAULT_WIDTH
     last_dir: str = ""
     dismissed_dual_install: str = ""
 
@@ -126,6 +134,10 @@ def _sanitize_preferences(raw: Mapping[str, Any], default_dpi: int = 300) -> Use
         clef_override=_coerce_choice(raw, "clef_override", CLEF_CHOICES, "auto"),
         instrument_name=inst,
         keep_line_breaks=_coerce_bool(raw, "keep_line_breaks", False),
+        full_score=_coerce_bool(raw, "full_score", False),
+        full_score_target_width=_coerce_int_range(
+            raw, "full_score_target_width", FULL_SCORE_MIN_WIDTH, FULL_SCORE_MAX_WIDTH, FULL_SCORE_DEFAULT_WIDTH
+        ),
         last_dir=_coerce_str(raw, "last_dir"),
         dismissed_dual_install=_coerce_str(raw, "dismissed_dual_install"),
     )

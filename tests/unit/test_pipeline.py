@@ -272,5 +272,69 @@ def test_default_factories():
         ConversionOptions(render_dpi=400, preprocess_mode="faded", deskew=True, segnet_step_size=240, min_notehead_size=3),
     )
     assert eng.dpi == 400 and eng.pages_spec == "1-2" and eng.preprocess_mode == "faded" and eng.deskew is True
+    assert eng.full_score is False
+    eng_fs = p.engine_factory(
+        500, None, "4-6", lambda: False,
+        ConversionOptions(render_dpi=500, full_score=True, full_score_target_width=4000),
+    )
+    assert eng_fs.full_score is True and eng_fs.full_score_target_width == 4000
     assert p.confirm("x") is False
     p.progress(1, "x")
+
+
+def test_pipeline_full_score_routes_to_fullscore_merge(tmp_path, pdf, monkeypatch):
+    import xml.etree.ElementTree as ET
+    import pdf2musescore.pipeline as pl_mod
+    from pdf2musescore.fullscore.align import PageSidecar, write_page_sidecar
+    from pdf2musescore.fullscore.instruments import InstrumentLabel
+    from pdf2musescore.options import ConversionOptions
+
+    class _FullScoreFakeEngine(OmrEngine):
+        def __init__(self, staff_cb=None):
+            self.staff_cb = staff_cb
+
+        def recognize(self, _pdf, out_dir):
+            out_dir.mkdir(parents=True, exist_ok=True)
+            if self.staff_cb:
+                self.staff_cb(1, 1, 1, 2)
+            xml_path = out_dir / "page_004.musicxml"
+            root = score(2, parts=2)
+            for p in root.findall("part"):
+                a = p.find("./measure/attributes")
+                t = ET.SubElement(a, "time")
+                ET.SubElement(t, "beats").text = "4"
+                ET.SubElement(t, "beat-type").text = "4"
+            ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
+            write_page_sidecar(
+                PageSidecar(
+                    4, 2, [100.0, 200.0], [0.0, 1.0],
+                    [InstrumentLabel("Flute", "Fl."), InstrumentLabel("Percussion 1", "Perc. 1")],
+                ),
+                xml_path,
+            )
+            return [xml_path]
+
+    messages: list[str] = []
+    monkeypatch.setattr(
+        pl_mod,
+        "_default_engine_factory",
+        lambda dpi, cb, pages_spec=None, is_cancelled=None, options=None, staff_cb=None: _FullScoreFakeEngine(staff_cb),
+    )
+    p = Pipeline(
+        AppConfig(work_dir=tmp_path / "work"),
+        progress=lambda _pct, msg: messages.append(msg),
+        ensure=lambda spec, cfg, confirm: Path("ms.exe"),
+        engine_factory=pl_mod._default_engine_factory,
+        exporter_factory=FakeExporter,
+    )
+    out = p.convert(
+        pdf,
+        tmp_path / "Symphony.musicxml",
+        options=ConversionOptions(render_dpi=500, full_score=True),
+    )
+    assert out.is_file()
+    root = ET.parse(out).getroot()
+    assert root.findtext("./part-list/score-part[@id='P1']/part-name") == "Flute"
+    assert root.findtext("./part-list/score-part[@id='P2']/midi-instrument/midi-channel") == "10"
+    assert any("staff 1/2" in m for m in messages)
+    assert any("full-score page(s)" in m for m in messages)

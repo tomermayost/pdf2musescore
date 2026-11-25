@@ -35,6 +35,7 @@ from .instruments import (
     looks_abbreviated_label,
     looks_low_quality_label,
 )
+from .runner import run_fullscore_homr
 from .staves import StaffLayoutResult, flatten_filter_and_extend_staves
 
 __all__ = [
@@ -64,6 +65,7 @@ __all__ = [
     "merge_fullscore_pages",
     "read_page_sidecar",
     "reconcile_pages_to_master",
+    "run_fullscore_homr",
     "sidecar_path_for",
     "verify_fullscore_invariants",
     "write_page_sidecar",

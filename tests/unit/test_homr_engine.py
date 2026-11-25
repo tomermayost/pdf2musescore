@@ -324,3 +324,52 @@ def test_run_pages_success_partial_failure_all_fail_and_cancel(tmp_path, caplog)
 
     with pytest.raises(CancelledError):
         run_pages([p1], cancel_mid)
+
+
+def test_homr_engine_full_score_routing_and_isolation(pdf, tmp_path):
+    seen_fs: list[dict] = []
+    seen_std: list[bool] = []
+
+    def fake_render(p, out_dir, dpi, pages_spec=None, is_cancelled=None):
+        img = out_dir / "page_001.png"
+        img.write_text("img")
+        return [img]
+
+    def fake_std_run(pages, cb, is_cancelled=None):
+        seen_std.append(True)
+        xml = pages[0].with_suffix(".musicxml")
+        xml.write_text("<score-partwise/>")
+        return [xml]
+
+    def fake_fs_run(pages, **kwargs):
+        seen_fs.append(kwargs)
+        xml = pages[0].with_suffix(".musicxml")
+        xml.write_text("<score-partwise/>")
+        return [xml]
+
+    # Standard mode never calls fullscore_runner
+    eng_std = HomrEngine(
+        dpi=300,
+        renderer=fake_render,
+        runner=fake_std_run,
+        full_score=False,
+        fullscore_runner=fake_fs_run,
+    )
+    eng_std.recognize(pdf, tmp_path / "std")
+    assert seen_std == [True] and seen_fs == []
+
+    # Full Score mode routes exclusively to fullscore_runner with target_width and staff_callback
+    staff_cb = lambda *a: None
+    eng_fs = HomrEngine(
+        dpi=500,
+        renderer=fake_render,
+        runner=fake_std_run,
+        full_score=True,
+        full_score_target_width=4096,
+        staff_callback=staff_cb,
+        fullscore_runner=fake_fs_run,
+    )
+    eng_fs.recognize(pdf, tmp_path / "fs")
+    assert len(seen_fs) == 1
+    assert seen_fs[0]["target_width"] == 4096
+    assert seen_fs[0]["staff_cb"] is staff_cb

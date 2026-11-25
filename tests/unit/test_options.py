@@ -26,6 +26,8 @@ def test_default_options():
     assert opts.clef_override == "auto"
     assert opts.instrument_name == "auto"
     assert opts.keep_line_breaks is False
+    assert opts.full_score is False
+    assert opts.full_score_target_width == 3840
 
 
 def test_options_normalization():
@@ -60,6 +62,8 @@ def test_options_normalization():
     (dict(transpose_semitones=-30), "Transpose semitones"),
     (dict(transpose_semitones=30), "Transpose semitones"),
     (dict(clef_override="baritone"), "Clef override"),
+    (dict(full_score_target_width=1000), "Full Score Width"),
+    (dict(full_score_target_width=6000), "Full Score Width"),
 ])
 def test_options_validation_errors(kwargs, match):
     with pytest.raises(OptionsError, match=match):
@@ -100,6 +104,13 @@ def test_scan_presets_and_detection():
 
     custom = ConversionOptions(render_dpi=420)
     assert detect_scan_preset(custom) is None
+
+    fs_clean = ConversionOptions(render_dpi=500, full_score=True)
+    assert detect_scan_preset(fs_clean) == "clean"
+    fs_faded = ConversionOptions(
+        render_dpi=500, preprocess_mode="faded", deskew=True, segnet_step_size=240, min_notehead_size=4, full_score=True
+    )
+    assert detect_scan_preset(fs_faded) == "faded"
 
     with pytest.raises(KeyError):
         get_scan_preset("unknown")

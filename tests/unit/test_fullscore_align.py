@@ -245,7 +245,7 @@ def test_merge_fullscore_files_metadata_channels_scaling_dedup_and_invariants(tm
     write_page_sidecar(PageSidecar(1, 29, [float(i) for i in range(29)], [i / 28.0 for i in range(29)], labels), f1)
     write_page_sidecar(PageSidecar(2, 29, [float(i) for i in range(29)], [i / 28.0 for i in range(29)], labels), f2)
 
-    out_xml = merge_fullscore_files([f1, f2], tmp_path / "full.musicxml", title="The Green Hill", options=ConversionOptions(keep_line_breaks=False))
+    out_xml = merge_fullscore_files([f1, f2], tmp_path / "full.musicxml", title="The Green Hill", options=ConversionOptions(full_score=True))
     merged = ET.parse(out_xml).getroot()
 
     assert merged.find("movement-title") is None

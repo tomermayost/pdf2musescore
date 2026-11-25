@@ -257,3 +257,11 @@ def test_check_low_memory_warning(monkeypatch, caplog) -> None:
     # Unavailable RAM info -> False, no warning
     monkeypatch.setattr(diagnostics, "get_memory_status", lambda: None)
     assert diagnostics.check_low_memory_warning(logger, render_dpi=300) is False
+
+    # Full Score Mode uses ~3.5 GB threshold
+    caplog.clear()
+    monkeypatch.setattr(diagnostics, "get_memory_status", lambda: (8 * gib, 3 * gib, 62))
+    with caplog.at_level("WARNING", logger="pdf2musescore.lowram_test"):
+        assert diagnostics.check_low_memory_warning(logger, render_dpi=500, full_score=False) is False
+        assert diagnostics.check_low_memory_warning(logger, render_dpi=500, full_score=True) is True
+    assert "Full Score Mode" in caplog.text

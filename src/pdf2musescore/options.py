@@ -8,6 +8,10 @@ from typing import Optional
 PREPROCESS_MODES = ("auto", "faded", "binarize", "none")
 CLEF_CHOICES = ("auto", "treble", "bass", "alto", "tenor")
 INSTRUMENT_PRESETS = ("auto", "Piano", "Trombone", "Violin", "Flute", "Trumpet", "Cello", "Clarinet", "Guitar")
+FULL_SCORE_DEFAULT_DPI = 500
+FULL_SCORE_DEFAULT_WIDTH = 3840
+FULL_SCORE_MIN_WIDTH = 1920
+FULL_SCORE_MAX_WIDTH = 4800
 
 
 @dataclass(frozen=True)
@@ -175,6 +179,29 @@ PARAMETER_DOCS: tuple[ParameterDoc, ...] = (
             "in the exact same places as the original PDF."
         ),
     ),
+    ParameterDoc(
+        key="full_score",
+        section="3. Score Post-Processing",
+        label="Full Score Mode (Conductor)",
+        default="False",
+        examples="Off (Single Part / small ensemble), On (Orchestral / Concert Band full score)",
+        description=(
+            "Optimized multi-staff mode for large conductor scores (band/orchestra). Renders at 500 DPI, "
+            "unifies all staves per page into one system, extracts instrument names & abbreviations from "
+            "the left margin, synchronizes time signatures & measure counts, and preserves original pitch."
+        ),
+    ),
+    ParameterDoc(
+        key="full_score_target_width",
+        section="2. PDF Rendering & AI Engine",
+        label="Full Score Width (px)",
+        default="3840",
+        examples="3840 (recommended for 20-35 staves), 2880 (faster, fewer staves), 4400 (very dense scores)",
+        description=(
+            "Target image width (1920-4800 px) fed to the AI engine in Full Score Mode. Higher values "
+            "keep dense multi-staff systems sharp; lower values use less RAM and convert faster."
+        ),
+    ),
 )
 
 
@@ -195,6 +222,8 @@ class ConversionOptions:
     clef_override: str = "auto"
     instrument_name: str = "auto"
     keep_line_breaks: bool = False
+    full_score: bool = False
+    full_score_target_width: int = FULL_SCORE_DEFAULT_WIDTH
 
     def __post_init__(self) -> None:
         if not (100 <= int(self.render_dpi) <= 600):
@@ -220,6 +249,14 @@ class ConversionOptions:
 
         inst = (self.instrument_name or "auto").strip()
         object.__setattr__(self, "instrument_name", inst if inst else "auto")
+
+        object.__setattr__(self, "full_score", bool(self.full_score))
+        if not (FULL_SCORE_MIN_WIDTH <= int(self.full_score_target_width) <= FULL_SCORE_MAX_WIDTH):
+            raise OptionsError(
+                f"Full Score Width must be between {FULL_SCORE_MIN_WIDTH} and {FULL_SCORE_MAX_WIDTH} px "
+                f"(got {self.full_score_target_width})"
+            )
+        object.__setattr__(self, "full_score_target_width", int(self.full_score_target_width))
 
 
 def get_parameter_tooltip(key: str) -> str:
@@ -263,8 +300,9 @@ def get_scan_preset(key: str) -> ScanPreset:
 def detect_scan_preset(options: ConversionOptions) -> Optional[str]:
     """Return matching preset key for ``options``'s engine fields, or ``None`` if customized."""
     for preset in SCAN_PRESETS:
+        expected_dpi = max(preset.render_dpi, FULL_SCORE_DEFAULT_DPI) if options.full_score else preset.render_dpi
         if (
-            options.render_dpi == preset.render_dpi
+            options.render_dpi == expected_dpi
             and options.preprocess_mode == preset.preprocess_mode
             and options.deskew == preset.deskew
             and options.segnet_step_size == preset.segnet_step_size

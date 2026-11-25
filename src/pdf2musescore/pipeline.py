@@ -17,6 +17,7 @@ from .diagnostics import check_low_memory_warning, memory_snapshot
 from .engines.base import OmrEngine, OmrError
 from .engines.homr_engine import CancelledError, HomrEngine, is_supported_input
 from .exporters.musescore import ExportError, MuseScoreExporter
+from .fullscore.align import merge_fullscore_files
 from .model_store import ModelDownloadError, ModelManager
 from .musicxml import MergeError, merge_files
 from .options import ConversionOptions, OptionsError
@@ -129,6 +130,7 @@ def _default_engine_factory(
     pages_spec: Optional[str] = None,
     is_cancelled: CancelFn = lambda: False,
     options: Optional[ConversionOptions] = None,
+    staff_cb: Optional[Callable[[int, int, int, int], None]] = None,
 ) -> OmrEngine:
     opts = options or ConversionOptions(render_dpi=dpi)
     return HomrEngine(
@@ -140,6 +142,9 @@ def _default_engine_factory(
         segnet_step_size=opts.segnet_step_size,
         min_notehead_size=opts.min_notehead_size,
         page_callback=cb,
+        full_score=opts.full_score,
+        full_score_target_width=opts.full_score_target_width,
+        staff_callback=staff_cb,
     )
 
 
@@ -194,7 +199,7 @@ class Pipeline:
             "Converting %s (size=%d bytes, sha256=%s, pages=%r, options=%s, %s) -> %s (work dir %s)",
             pdf, file_size, file_hash, pages_spec or "all", opts, memory_snapshot(), output, work,
         )
-        check_low_memory_warning(log, render_dpi=opts.render_dpi)
+        check_low_memory_warning(log, render_dpi=opts.render_dpi, full_score=opts.full_score)
         failed = False
         try:
             work.mkdir(parents=True, exist_ok=True)
@@ -227,10 +232,19 @@ class Pipeline:
                 15 + int(55 * (idx - 1) / max(total, 1)),
                 f"Reading page {idx} of {total} with AI...",
             )
+            staff_cb = lambda p_idx, p_tot, s_idx, s_tot: self._step(
+                15 + int(55 * ((p_idx - 1) + (s_idx - 1) / max(s_tot, 1)) / max(p_tot, 1)),
+                f"Reading page {p_idx} of {p_tot} (staff {s_idx}/{s_tot})...",
+            )
             if self.engine_factory is _default_engine_factory:
-                engine = self.engine_factory(
-                    opts.render_dpi, page_cb, pages_spec, self.is_cancelled, opts
-                )
+                if opts.full_score:
+                    engine = self.engine_factory(
+                        opts.render_dpi, page_cb, pages_spec, self.is_cancelled, opts, staff_cb=staff_cb
+                    )
+                else:
+                    engine = self.engine_factory(
+                        opts.render_dpi, page_cb, pages_spec, self.is_cancelled, opts
+                    )
             else:
                 engine = self.engine_factory(
                     opts.render_dpi, page_cb, pages_spec, self.is_cancelled
@@ -239,9 +253,13 @@ class Pipeline:
                 engine.models_dir = Path(self.config.models_dir)
             pages_xml = engine.recognize(staged_input, work / "omr")
 
-            self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
             staged_xml = work / "score.musicxml"
-            xml = merge_files(pages_xml, staged_xml, title=output.stem, options=opts)
+            if opts.full_score:
+                self._step(75, f"Aligning & combining {len(pages_xml)} full-score page(s)...")
+                xml = merge_fullscore_files(pages_xml, staged_xml, title=output.stem, options=opts)
+            else:
+                self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
+                xml = merge_files(pages_xml, staged_xml, title=output.stem, options=opts)
 
             if musescore is not None:
                 self._step(85, "Saving MuseScore file...")
