@@ -788,3 +788,92 @@ def test_dual_install_banner_actions_and_dismiss_persistence(root, calls, tmp_pa
         assert not app4.dual_install_banner.winfo_manager()
     finally:
         close_app(app4)
+
+
+def test_gui_full_score_mode_toggle_presets_busy_validation_and_persistence(root, calls, tmp_path):
+    FakePipeline.behaviour = "ok"
+    prefs_file = tmp_path / "fs_prefs.json"
+    app = make_app(root, calls, tmp_path, prefs_path=prefs_file)
+    try:
+        # Default: Single Part mode
+        assert app.full_score_var.get() is False
+        assert app.dpi_var.get() == "300"
+        assert str(app.instrument_combo["state"]) == "normal"
+        assert str(app.full_score_width_entry["state"]) == "disabled"
+        assert not app.score_mode_hint_lbl.winfo_manager()
+
+        # Switch to Full Score Mode -> bumps DPI to 500, disables single-part controls, enables width
+        app.set_score_mode(True)
+        assert app.full_score_var.get() is True
+        assert app.dpi_var.get() == "500"
+        assert str(app.instrument_combo["state"]) == "disabled"
+        assert str(app.clef_combo["state"]) == "disabled"
+        assert str(app.transpose_entry["state"]) == "disabled"
+        assert str(app.full_score_width_entry["state"]) == "normal"
+        assert app.score_mode_hint_lbl.winfo_manager()
+        assert app.single_part_btn.cget("style") == "Preset.TButton"
+        assert app.full_score_btn.cget("style") == "PresetActive.TButton"
+
+        # Step transpose is ignored in Full Score Mode
+        app.step_transpose(2)
+        assert app.transpose_var.get() == "0"
+
+        # Applying Faded Scan preset preserves 500 DPI in Full Score Mode
+        app.apply_preset("faded")
+        assert app.dpi_var.get() == "500"
+        assert app.preprocess_var.get() == "faded"
+        assert app.deskew_var.get() is True
+        assert app.preset_badge_var.get() == ""
+
+        # Busy -> idle preserves Full Score disabled state on single-part widgets
+        app._set_busy(True)
+        assert str(app.full_score_btn["state"]) == "disabled"
+        app._set_busy(False)
+        assert str(app.full_score_btn["state"]) == "normal"
+        assert str(app.instrument_combo["state"]) == "disabled"
+        assert str(app.full_score_width_entry["state"]) == "normal"
+
+        # Customize width and verify collect_options + convert
+        app.full_score_width_var.set("bad")
+        app.on_load()
+        app.on_convert()
+        assert calls["error"] and "Full Score Width" in calls["error"][-1]
+        calls["error"].clear()
+
+        app.full_score_width_var.set("4096")
+        opts = app.collect_options()
+        assert opts.full_score is True and opts.full_score_target_width == 4096 and opts.render_dpi == 500
+        app.on_convert()
+        pump(app, root, lambda: bool(app.result_banner.winfo_manager()))
+        assert FakePipeline.last_options.full_score is True
+        assert FakePipeline.last_options.full_score_target_width == 4096
+
+        # Switch back to Single Part restores 300 DPI and re-enables single-part widgets
+        app.set_score_mode(False)
+        assert app.dpi_var.get() == "300"
+        assert str(app.instrument_combo["state"]) == "normal"
+        assert str(app.clef_combo["state"]) == "readonly"
+        assert str(app.full_score_width_entry["state"]) == "disabled"
+
+        # Switch back ON and verify Reset restores everything to Single Part defaults
+        app.set_score_mode(True)
+        app.on_reset_options()
+        assert app.full_score_var.get() is False
+        assert app.dpi_var.get() == "300"
+        assert app.full_score_width_var.get() == "3840"
+
+        # Set Full Score again so persistence check sees it on next App startup
+        app.set_score_mode(True)
+        app.full_score_width_var.set("4096")
+        app.save_preferences()
+    finally:
+        close_app(app)
+
+    app2 = make_app(root, calls, tmp_path, prefs_path=prefs_file)
+    try:
+        assert app2.full_score_var.get() is True
+        assert app2.full_score_width_var.get() == "4096"
+        assert str(app2.instrument_combo["state"]) == "disabled"
+        assert str(app2.full_score_width_entry["state"]) == "normal"
+    finally:
+        close_app(app2)

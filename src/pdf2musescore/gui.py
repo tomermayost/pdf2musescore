@@ -36,6 +36,10 @@ from .install_detect import (
 )
 from .options import (
     CLEF_CHOICES,
+    FULL_SCORE_DEFAULT_DPI,
+    FULL_SCORE_DEFAULT_WIDTH,
+    FULL_SCORE_MAX_WIDTH,
+    FULL_SCORE_MIN_WIDTH,
     INSTRUMENT_PRESETS,
     PREPROCESS_MODES,
     SCAN_PRESETS,
@@ -232,6 +236,7 @@ class App(ttk.Frame):
         self._confirm_event = threading.Event()
         self.tooltips: dict[str, ToolTip] = {}
         self.preset_buttons: dict[str, ttk.Button] = {}
+        self.score_mode_buttons: dict[bool, ttk.Button] = {}
         self._cards: list[tk.Frame] = []
         self._trace_guard = False
         self._log_warning_count = 0
@@ -325,6 +330,7 @@ class App(ttk.Frame):
         self._build_footer()
 
         self._attach_traces()
+        self._sync_score_mode_ui()
         self._sync_preset_indicators()
         self._sync_transpose_hint()
         self._sync_pages_feedback()
@@ -348,6 +354,12 @@ class App(ttk.Frame):
         self.clef_var = tk.StringVar(self, value=self._prefs.clef_override)
         self.instrument_var = tk.StringVar(self, value=self._prefs.instrument_name)
         self.keep_breaks_var = tk.BooleanVar(self, value=self._prefs.keep_line_breaks)
+        self.full_score_var = tk.BooleanVar(self, value=self._prefs.full_score)
+        self.full_score_width_var = tk.StringVar(self, value=str(self._prefs.full_score_target_width))
+        self.score_mode_hint_var = tk.StringVar(self, value="")
+        self._standard_dpi_memory: int = (
+            self.config_.render_dpi if self._prefs.full_score else self._prefs.render_dpi
+        )
 
         self.status_var = tk.StringVar(self, value="Load or drop a sheet music PDF or photo to start.")
         self.pct_var = tk.StringVar(self, value="0%")
@@ -490,10 +502,36 @@ class App(ttk.Frame):
         card_outer, card = self._make_card(parent, padx=14, pady=9)
         card_outer.pack(fill="x", pady=(0, 8))
 
-        ttk.Label(card, text="2. SCORE SETUP", style="SectionHeader.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(card, text="2. SCORE SETUP", style="SectionHeader.TLabel").pack(anchor="w", pady=(0, 6))
+
+        mode_row = ttk.Frame(card, style="Card.TFrame")
+        mode_row.pack(fill="x", pady=(0, 4))
+        mode_lbl = ttk.Label(mode_row, text="Score Mode:", style="Card.TLabel")
+        mode_lbl.pack(side="left", padx=(0, 8))
+        self.single_part_btn = ttk.Button(
+            mode_row,
+            text="Single Part",
+            style="Preset.TButton",
+            command=lambda: self.set_score_mode(False),
+        )
+        self.single_part_btn.pack(side="left", padx=(0, 6))
+        self.full_score_btn = ttk.Button(
+            mode_row,
+            text="Full Score (Conductor)",
+            style="Preset.TButton",
+            command=lambda: self.set_score_mode(True),
+        )
+        self.full_score_btn.pack(side="left")
+        self.score_mode_buttons = {False: self.single_part_btn, True: self.full_score_btn}
+        self._attach_tip("full_score", self.full_score_btn, self.single_part_btn, mode_lbl)
+
+        self.score_mode_hint_lbl = ttk.Label(
+            card, textvariable=self.score_mode_hint_var, style="AccentHint.TLabel"
+        )
 
         grid = ttk.Frame(card, style="Card.TFrame")
-        grid.pack(fill="x")
+        grid.pack(fill="x", pady=(4, 0))
+        self._score_grid = grid
         grid.columnconfigure(0, weight=1)
         grid.columnconfigure(1, weight=1)
         grid.columnconfigure(2, weight=1)
@@ -636,6 +674,24 @@ class App(ttk.Frame):
         )
         self.reset_opts_btn.pack(side="right", padx=(8, 0))
 
+        # Row 3: Full Score Target Width (active when Full Score Mode is selected)
+        f_fsw = ttk.Frame(adv_grid, style="Card.TFrame")
+        f_fsw.grid(row=3, column=0, sticky="ew", padx=(0, 10), pady=(5, 0))
+        fsw_lbl = ttk.Label(f_fsw, text="Full Score Width (px):", style="Card.TLabel")
+        fsw_lbl.pack(side="left")
+        self.full_score_width_entry = ttk.Entry(
+            f_fsw, textvariable=self.full_score_width_var, width=6, style="Studio.TEntry"
+        )
+        self.full_score_width_entry.pack(side="right")
+        self._attach_tip("full_score_target_width", self.full_score_width_entry, fsw_lbl)
+
+        self._single_part_widgets = (
+            self.instrument_combo,
+            self.clef_combo,
+            self.transpose_entry,
+            self.tr_minus_btn,
+            self.tr_plus_btn,
+        )
         self._option_widgets = (
             self.dpi_entry,
             self.preprocess_combo,
@@ -643,6 +699,7 @@ class App(ttk.Frame):
             self.step_entry,
             self.notehead_entry,
             self.keep_breaks_check,
+            self.full_score_width_entry,
             self.transpose_entry,
             self.tr_minus_btn,
             self.tr_plus_btn,
@@ -814,6 +871,8 @@ class App(ttk.Frame):
             self.step_size_var,
             self.min_notehead_var,
             self.keep_breaks_var,
+            self.full_score_var,
+            self.full_score_width_var,
         ):
             var.trace_add("write", lambda *_a: self._sync_preset_indicators())
 
@@ -829,14 +888,16 @@ class App(ttk.Frame):
             opts = self.collect_options()
             matched = detect_scan_preset(opts)
             defaults = ConversionOptions()
+            expected_dpi = FULL_SCORE_DEFAULT_DPI if opts.full_score else defaults.render_dpi
             adv_customized = any(
                 (
-                    opts.render_dpi != defaults.render_dpi,
+                    opts.render_dpi != expected_dpi,
                     opts.preprocess_mode != defaults.preprocess_mode,
                     opts.deskew != defaults.deskew,
                     opts.segnet_step_size != defaults.segnet_step_size,
                     opts.min_notehead_size != defaults.min_notehead_size,
                     opts.keep_line_breaks != defaults.keep_line_breaks,
+                    opts.full_score_target_width != defaults.full_score_target_width,
                 )
             )
         except OptionsError:
@@ -937,6 +998,7 @@ class App(ttk.Frame):
             tip.set_palette(p)
 
         self.theme_btn.configure(text="☀ Light" if p.is_dark else "🌙 Dark")
+        self._sync_score_mode_ui()
         self._sync_preset_indicators()
 
     def toggle_theme(self) -> None:
@@ -977,6 +1039,13 @@ class App(ttk.Frame):
             clef_override=clef,
             instrument_name=inst,
             keep_line_breaks=bool(self.keep_breaks_var.get()),
+            full_score=bool(self.full_score_var.get()),
+            full_score_target_width=self._safe_int(
+                self.full_score_width_var.get(),
+                FULL_SCORE_MIN_WIDTH,
+                FULL_SCORE_MAX_WIDTH,
+                self._prefs.full_score_target_width,
+            ),
             last_dir=self._last_dir,
             dismissed_dual_install=self._dismissed_dual_install,
         )
@@ -1033,11 +1102,67 @@ class App(ttk.Frame):
         return "break"
 
     # ---------- Options, Presets & Steppers ----------
-    def apply_preset(self, preset_key: str) -> None:
-        preset = get_scan_preset(preset_key)
+    def _sync_score_mode_ui(self) -> None:
+        is_full = bool(self.full_score_var.get())
+        for mode_val, btn in self.score_mode_buttons.items():
+            btn.configure(style="PresetActive.TButton" if mode_val == is_full else "Preset.TButton")
+
+        if is_full:
+            self.score_mode_hint_var.set(
+                "Conductor mode · 500 DPI · Auto instrument names · Original pitch (no transpose)"
+            )
+            if not self.score_mode_hint_lbl.winfo_manager():
+                self.score_mode_hint_lbl.pack(anchor="w", pady=(0, 2), before=self._score_grid)
+        else:
+            self.score_mode_hint_var.set("")
+            if self.score_mode_hint_lbl.winfo_manager():
+                self.score_mode_hint_lbl.pack_forget()
+
+        if not self._busy:
+            for w in self._single_part_widgets:
+                if is_full:
+                    w.configure(state="disabled")
+                elif w is self.clef_combo:
+                    w.configure(state="readonly")
+                else:
+                    w.configure(state="normal")
+            self.full_score_width_entry.configure(state="normal" if is_full else "disabled")
+
+    def set_score_mode(self, full_score: bool) -> None:
+        """Switch between Single Part mode and Full Score (Conductor) mode with smart DPI sync."""
+        target = bool(full_score)
+        prev = bool(self.full_score_var.get())
+        if target == prev:
+            self._sync_score_mode_ui()
+            return
+
+        cur_dpi = self._safe_int(self.dpi_var.get(), 100, 600, self.config_.render_dpi)
         self._trace_guard = True
         try:
-            self.dpi_var.set(str(preset.render_dpi))
+            self.full_score_var.set(target)
+            if target:
+                self._standard_dpi_memory = cur_dpi
+                if cur_dpi < FULL_SCORE_DEFAULT_DPI:
+                    self.dpi_var.set(str(FULL_SCORE_DEFAULT_DPI))
+            elif cur_dpi == FULL_SCORE_DEFAULT_DPI and self._standard_dpi_memory < FULL_SCORE_DEFAULT_DPI:
+                self.dpi_var.set(str(self._standard_dpi_memory))
+        finally:
+            self._trace_guard = False
+
+        self._sync_score_mode_ui()
+        self._sync_preset_indicators()
+        self.save_preferences()
+
+    def apply_preset(self, preset_key: str) -> None:
+        preset = get_scan_preset(preset_key)
+        target_dpi = (
+            max(preset.render_dpi, FULL_SCORE_DEFAULT_DPI)
+            if self.full_score_var.get()
+            else preset.render_dpi
+        )
+        self._trace_guard = True
+        try:
+            self.dpi_var.set(str(target_dpi))
             self.preprocess_var.set(preset.preprocess_mode)
             self.deskew_var.set(preset.deskew)
             self.step_size_var.set(str(preset.segnet_step_size))
@@ -1048,7 +1173,7 @@ class App(ttk.Frame):
         self.save_preferences()
 
     def step_transpose(self, delta: int) -> None:
-        if self._busy:
+        if self._busy or self.full_score_var.get():
             return
         try:
             current = int(self.transpose_var.get().strip())
@@ -1061,17 +1186,21 @@ class App(ttk.Frame):
     def on_reset_options(self) -> None:
         self._trace_guard = True
         try:
+            self.full_score_var.set(False)
+            self._standard_dpi_memory = self.config_.render_dpi
             self.dpi_var.set(str(self.config_.render_dpi))
             self.preprocess_var.set("auto")
             self.deskew_var.set(False)
             self.step_size_var.set("320")
             self.min_notehead_var.set("4")
+            self.full_score_width_var.set(str(FULL_SCORE_DEFAULT_WIDTH))
             self.keep_breaks_var.set(False)
             self.transpose_var.set("0")
             self.clef_var.set("auto")
             self.instrument_var.set("auto")
         finally:
             self._trace_guard = False
+        self._sync_score_mode_ui()
         self._sync_preset_indicators()
         self._sync_transpose_hint()
         self.save_preferences()
@@ -1099,6 +1228,12 @@ class App(ttk.Frame):
             raise OptionsError(
                 f"Transpose semitones must be an integer (e.g. 0 or +2), got {self.transpose_var.get()!r}"
             ) from exc
+        try:
+            fs_width = int(self.full_score_width_var.get().strip())
+        except ValueError as exc:
+            raise OptionsError(
+                f"Full Score Width must be an integer (e.g. 3840), got {self.full_score_width_var.get()!r}"
+            ) from exc
 
         return ConversionOptions(
             render_dpi=dpi,
@@ -1110,6 +1245,8 @@ class App(ttk.Frame):
             clef_override=self.clef_var.get(),
             instrument_name=self.instrument_var.get(),
             keep_line_breaks=bool(self.keep_breaks_var.get()),
+            full_score=bool(self.full_score_var.get()),
+            full_score_target_width=fs_width,
         )
 
     def _set_busy(self, busy: bool) -> None:
@@ -1118,6 +1255,8 @@ class App(ttk.Frame):
         self.load_btn.configure(state=state)
         self.pages_entry.configure(state=state)
         for btn in self.preset_buttons.values():
+            btn.configure(state=state)
+        for btn in self.score_mode_buttons.values():
             btn.configure(state=state)
         for w in self._option_widgets:
             if w in (self.preprocess_combo, self.clef_combo):
@@ -1131,6 +1270,7 @@ class App(ttk.Frame):
             self.update_btn.configure(state=state)
         if not busy:
             self._converting = False
+            self._sync_score_mode_ui()
             if self._elapsed_after_id:
                 try:
                     self.after_cancel(self._elapsed_after_id)
