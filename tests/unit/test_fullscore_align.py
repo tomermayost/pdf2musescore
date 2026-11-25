@@ -669,3 +669,131 @@ def test_verify_fullscore_invariants_transpose_validation():
         bad.find(f".//transpose/{tag}").text = bad_val
         with pytest.raises(MergeError, match=pat):
             verify_fullscore_invariants(bad)
+
+
+def _add_rhythm_note(
+    measure: ET.Element,
+    dur: int,
+    note_type: str,
+    *,
+    dots: int = 0,
+    voice: str = "1",
+    chord: bool = False,
+    rest: bool = False,
+    beams: Sequence[str] = (),
+    step: str = "C",
+) -> ET.Element:
+    n = ET.SubElement(measure, "note")
+    if chord:
+        ET.SubElement(n, "chord")
+    if rest:
+        ET.SubElement(n, "rest")
+    else:
+        p = ET.SubElement(n, "pitch")
+        ET.SubElement(p, "step").text = step
+        ET.SubElement(p, "octave").text = "4"
+    ET.SubElement(n, "duration").text = str(dur)
+    ET.SubElement(n, "voice").text = voice
+    ET.SubElement(n, "type").text = note_type
+    for _ in range(dots):
+        ET.SubElement(n, "dot")
+    ET.SubElement(n, "staff").text = "1"
+    for b_idx, b_val in enumerate(beams, start=1):
+        b = ET.SubElement(n, "beam", number=str(b_idx))
+        b.text = b_val
+    return n
+
+
+def test_normalize_overfull_measure_tiers_and_backup_sync():
+    # Helper builds a 2-part score so align_page_score preserves time signatures properly
+    def _run_one(measures_setup):
+        p1 = _make_part("P1", [(False, ("4", "4"))], divisions=8)
+        p2 = _make_part("P2", [(True, ("4", "4"))], divisions=8)
+        m1 = p1[1].find("measure")
+        for n in list(m1.findall("note")):
+            m1.remove(n)
+        measures_setup(m1, p2[1].find("measure"))
+        aligned, _ = align_page_score(_build_score([p1, p2]), page_num=1)
+        return aligned.find("./part[@id='P1']/measure")
+
+    # Tier 1: Scotch snap (eighth + dotted-eighth) with chord + beamed run, PLUS standard (dotted-eighth + eighth)
+    def setup_tier1(m, _m2):
+        # 4 + 6 + 4 + 4 + 6 + 4 + 4 = 32? Make overfull 36 (2 extra eighth -> 16th in two dotted pairs)
+        _add_rhythm_note(m, 4, "eighth", beams=("begin",))
+        _add_rhythm_note(m, 4, "eighth", chord=True, step="E", beams=("begin",))
+        _add_rhythm_note(m, 6, "eighth", dots=1, beams=("end",))
+        _add_rhythm_note(m, 6, "eighth", dots=1)
+        _add_rhythm_note(m, 4, "eighth")
+        _add_rhythm_note(m, 8, "quarter")
+        _add_rhythm_note(m, 8, "quarter")  # total = 36 > 32 (div=8)
+
+    res1 = _run_one(setup_tier1)
+    durs1 = [int(n.findtext("duration")) for n in res1.findall("note") if n.find("chord") is None]
+    types1 = [n.findtext("type") for n in res1.findall("note") if n.find("chord") is None]
+    assert sum(durs1) == 32
+    assert durs1 == [2, 6, 6, 2, 8, 8]
+    assert types1[:4] == ["16th", "eighth", "eighth", "16th"]
+    # Chord member stayed in sync and beam run cleared cleanly (no dangling begin/end)
+    chord_n = [n for n in res1.findall("note") if n.find("chord") is not None][0]
+    assert chord_n.findtext("duration") == "2" and chord_n.findtext("type") == "16th"
+    assert res1.find(".//beam") is None
+
+    # Tier 1 second pass (excess=1 tick = 1/8q, while halving eighth saves 2 ticks) -> clears overflow (<= 32)
+    def setup_tier1_pass2(m, _m2):
+        _add_rhythm_note(m, 4, "eighth")
+        _add_rhythm_note(m, 6, "eighth", dots=1)
+        _add_rhythm_note(m, 1, "32nd")
+        _add_rhythm_note(m, 22, "half")  # 33 > 32, excess=1
+
+    res_p2 = _run_one(setup_tier1_pass2)
+    assert sum(int(n.findtext("duration")) for n in res_p2.findall("note")) == 31
+    assert res_p2.findall("note")[0].findtext("type") == "16th"
+
+    # Tier 2: Spurious dot (half.(24) + whole(32) = 56 > 48 in 6/4? test in 4/4 div=8: quarter.(12) + half(16) + quarter(8) = 36 -> dot_val=4 -> quarter(8))
+    def setup_tier2(m, _m2):
+        _add_rhythm_note(m, 12, "quarter", dots=1)
+        _add_rhythm_note(m, 16, "half")
+        _add_rhythm_note(m, 8, "quarter")  # total = 36 > 32
+
+    res2 = _run_one(setup_tier2)
+    n2 = res2.findall("note")
+    assert [int(n.findtext("duration")) for n in n2] == [8, 16, 8]
+    assert n2[0].find("dot") is None and n2[0].findtext("type") == "quarter"
+
+    # Tier 3a: Single-note step-down (two quarters where trailing quarter read instead of eighth -> 8*3 + 8 + 8 = 40 -> 36? make 36 > 32: 4*4 + 8 + 8 + 4? wait 4*3=12, +8+8+8=36)
+    def setup_tier3a(m, _m2):
+        for _ in range(3):
+            _add_rhythm_note(m, 4, "eighth")
+        for _ in range(3):
+            _add_rhythm_note(m, 8, "quarter")  # 12 + 24 = 36 > 32
+
+    res3a = _run_one(setup_tier3a)
+    n3a = res3a.findall("note")
+    assert [int(n.findtext("duration")) for n in n3a] == [4, 4, 4, 8, 8, 4]
+    assert n3a[-1].findtext("type") == "eighth"
+
+    # Tier 3b: Trailing clamp + drop + multi-voice <backup> duration sync
+    def setup_tier3b(m, _m2):
+        # voice 1: 12 + 12 + 12 = 36 -> wait 12 (dotted-quarter) has dot_val=4 matching excess! Use non-standard dur=11+11+14=36 so Tier 1-3a don't trigger, hitting Tier 3b!
+        _add_rhythm_note(m, 16, "half", voice="1")
+        _add_rhythm_note(m, 12, "quarter", dots=0, voice="1")  # weird 12 without dot
+        _add_rhythm_note(m, 8, "quarter", voice="1")  # onset 28, dur 8 -> clamped to 4 (eighth)
+        _add_rhythm_note(m, 8, "quarter", voice="1")  # onset 36 >= 32 -> dropped!
+        bk = ET.SubElement(m, "backup")
+        ET.SubElement(bk, "duration").text = "44"
+        _add_rhythm_note(m, 32, "whole", voice="2", rest=True)
+
+    res3b = _run_one(setup_tier3b)
+    v1_notes = [n for n in res3b.findall("note") if n.findtext("voice") == "1"]
+    assert sum(int(n.findtext("duration")) for n in v1_notes) == 32
+    assert len(v1_notes) == 3
+    assert v1_notes[-1].findtext("type") == "eighth"
+    assert res3b.findtext("./backup/duration") == "32"
+
+    # Exact (32) and underfull pickup (8) measures remain completely untouched
+    def setup_underfull(m, _m2):
+        _add_rhythm_note(m, 4, "eighth")
+        _add_rhythm_note(m, 6, "eighth", dots=1)  # 10 < 32
+
+    res_ok = _run_one(setup_underfull)
+    assert [int(n.findtext("duration")) for n in res_ok.findall("note")] == [4, 6]

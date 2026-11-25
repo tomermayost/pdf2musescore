@@ -105,7 +105,19 @@ def test_configure_ttk_style_on_root(root):
     style = ttk.Style(root)
     for name in ("light", "dark"):
         configure_ttk_style(style, get_theme(name), "Segoe UI")
-    assert style.lookup("Primary.TButton", "background")
+        assert style.lookup("Primary.TButton", "background")
+        # Selected PresetActive buttons must remain distinct from unselected Preset buttons in both idle and disabled states
+        active_bg = style.lookup("PresetActive.TButton", "background")
+        inactive_bg = style.lookup("Preset.TButton", "background")
+        assert active_bg and inactive_bg and active_bg != inactive_bg
+        assert style.lookup("PresetActive.TButton", "foreground") != style.lookup("Preset.TButton", "foreground")
+
+        active_dis_bg = style.lookup("PresetActive.TButton", "background", state=("disabled",))
+        inactive_dis_bg = style.lookup("Preset.TButton", "background", state=("disabled",))
+        active_dis_fg = style.lookup("PresetActive.TButton", "foreground", state=("disabled",))
+        inactive_dis_fg = style.lookup("Preset.TButton", "foreground", state=("disabled",))
+        assert active_dis_bg and inactive_dis_bg and active_dis_bg != inactive_dis_bg
+        assert active_dis_fg != inactive_dis_fg
 
 
 def test_windows_dpi_and_titlebar_helpers(monkeypatch):

@@ -171,6 +171,331 @@ def _fraction_to_time_sig(q: Fraction) -> Optional[tuple[str, str]]:
     return None
 
 
+_TYPE_TO_QUARTERS: dict[str, Fraction] = {
+    "breve": Fraction(8),
+    "whole": Fraction(4),
+    "half": Fraction(2),
+    "quarter": Fraction(1),
+    "eighth": Fraction(1, 2),
+    "16th": Fraction(1, 4),
+    "32nd": Fraction(1, 8),
+    "64th": Fraction(1, 16),
+}
+
+_STEP_DOWN_TYPE: dict[str, str] = {
+    "breve": "whole",
+    "whole": "half",
+    "half": "quarter",
+    "quarter": "eighth",
+    "eighth": "16th",
+    "16th": "32nd",
+    "32nd": "64th",
+}
+
+
+def _duration_to_type_and_dots(dur: int, div: int) -> Optional[tuple[str, int]]:
+    """Map an integer MusicXML duration at ``div`` divisions/quarter to ``(type, dots)`` if standard."""
+    if dur <= 0:
+        return None
+    q = Fraction(dur, max(1, div))
+    for note_type, base_q in _TYPE_TO_QUARTERS.items():
+        if q == base_q:
+            return (note_type, 0)
+        if q == base_q * Fraction(3, 2):
+            return (note_type, 1)
+        if q == base_q * Fraction(7, 4):
+            return (note_type, 2)
+    return None
+
+
+def _set_note_duration_and_type(
+    note: ET.Element,
+    new_dur: int,
+    new_type: Optional[str] = None,
+    new_dots: Optional[int] = None,
+    *,
+    clear_tuplet: bool = False,
+) -> None:
+    dur_el = note.find("duration")
+    if dur_el is None:
+        dur_el = ET.Element("duration")
+        ins_idx = 0
+        for idx, ch in enumerate(list(note)):
+            if ch.tag in ("pitch", "rest", "unpitched"):
+                ins_idx = idx + 1
+                break
+        note.insert(ins_idx, dur_el)
+    dur_el.text = str(max(1, int(new_dur)))
+
+    type_el = note.find("type")
+    if new_type is not None:
+        if type_el is None:
+            type_el = ET.Element("type")
+            anchor_idx = list(note).index(dur_el) + 1
+            voice_el = note.find("voice")
+            if voice_el is not None:
+                anchor_idx = list(note).index(voice_el) + 1
+            note.insert(anchor_idx, type_el)
+        type_el.text = new_type
+
+    if new_dots is not None:
+        for old_dot in list(note.findall("dot")):
+            note.remove(old_dot)
+        if new_dots > 0:
+            type_el = note.find("type")
+            if type_el is not None:
+                dot_idx = list(note).index(type_el) + 1
+            else:
+                voice_el = note.find("voice")
+                anchor = voice_el if voice_el is not None else dur_el
+                dot_idx = list(note).index(anchor) + 1
+            for offset in range(new_dots):
+                note.insert(dot_idx + offset, ET.Element("dot"))
+
+    if clear_tuplet:
+        for tm in list(note.findall("time-modification")):
+            note.remove(tm)
+
+
+def _primary_beam_text(notes: Sequence[ET.Element]) -> Optional[str]:
+    if not notes:
+        return None
+    beams = notes[0].findall("beam")
+    if not beams:
+        return None
+    for b in beams:
+        if b.get("number") in (None, "1"):
+            return (b.text or "").strip().lower()
+    return (beams[0].text or "").strip().lower()
+
+
+def _clear_beam_run(note_groups: Sequence[list[ET.Element]], target_idx: int) -> None:
+    """Clear ``<beam>`` elements across the contiguous beamed group containing ``target_idx``."""
+    cur_beam = _primary_beam_text(note_groups[target_idx])
+    if cur_beam is None:
+        return
+    lo = target_idx
+    if cur_beam != "begin":
+        while lo > 0:
+            prev_beam = _primary_beam_text(note_groups[lo - 1])
+            if prev_beam is None:
+                break
+            lo -= 1
+            if prev_beam == "begin":
+                break
+    hi = target_idx
+    if cur_beam != "end":
+        while hi + 1 < len(note_groups):
+            next_beam = _primary_beam_text(note_groups[hi + 1])
+            if next_beam is None:
+                break
+            hi += 1
+            if next_beam == "end":
+                break
+    for gi in range(lo, hi + 1):
+        for n in note_groups[gi]:
+            for b_el in list(n.findall("beam")):
+                n.remove(b_el)
+
+
+def _collect_voice_groups(measure: ET.Element) -> dict[str, list[list[object]]]:
+    """Return per-voice mutable note groups ``[onset, dur, [primary_note, *chord_notes]]``."""
+    pos = 0
+    voice_groups: dict[str, list[list[object]]] = {}
+    for child in measure:
+        if child.tag == "note":
+            if child.find("grace") is not None:
+                continue
+            voice = (child.findtext("voice") or "1").strip() or "1"
+            dur_txt = (child.findtext("duration") or "").strip()
+            dur = int(dur_txt) if dur_txt.isdigit() else 0
+            if child.find("chord") is not None:
+                groups = voice_groups.get(voice)
+                if groups:
+                    groups[-1][2].append(child)
+            else:
+                voice_groups.setdefault(voice, []).append([pos, dur, [child]])
+                pos += dur
+        elif child.tag == "backup":
+            dur_txt = (child.findtext("duration") or "").strip()
+            pos = max(0, pos - (int(dur_txt) if dur_txt.isdigit() else 0))
+        elif child.tag == "forward":
+            dur_txt = (child.findtext("duration") or "").strip()
+            pos += int(dur_txt) if dur_txt.isdigit() else 0
+    return voice_groups
+
+
+def _normalize_overfull_measure(measure: ET.Element, expected_dur: int, div: int) -> bool:
+    """Repair OMR over-duration glitches so a measure never overflows ``expected_dur`` ticks."""
+    if expected_dur <= 0 or _is_rest_only_measure(measure):
+        return False
+
+    voice_groups = _collect_voice_groups(measure)
+    any_modified = False
+    m_num = measure.get("number", "?")
+
+    for voice, groups in voice_groups.items():
+        if not groups:
+            continue
+        old_end = max(int(g[0]) + int(g[1]) for g in groups)
+        if old_end <= expected_dur:
+            continue
+        excess = old_end - expected_dur
+
+        def _apply_group(
+            gi: int,
+            new_dur: int,
+            new_type: Optional[str],
+            new_dots: Optional[int],
+            *,
+            clear_beam: bool,
+            clear_tuplet: bool = False,
+        ) -> None:
+            nonlocal excess
+            old_dur = int(groups[gi][1])
+            delta = old_dur - new_dur
+            groups[gi][1] = new_dur
+            for later in groups[gi + 1 :]:
+                later[0] = int(later[0]) - delta
+            for note in groups[gi][2]:
+                _set_note_duration_and_type(note, new_dur, new_type, new_dots, clear_tuplet=clear_tuplet)
+            if clear_beam:
+                _clear_beam_run([g[2] for g in groups], gi)
+            excess = max(int(g[0]) + int(g[1]) for g in groups) - expected_dur
+
+        # Tier 1: Recover missed beam on dotted pairs (e.g. eighth + dotted-eighth -> 16th + dotted-eighth)
+        for max_factor in (1, 2):
+            if excess <= 0:
+                break
+            for idx in range(len(groups) - 1):
+                if excess <= 0:
+                    break
+                a = groups[idx][2][0]
+                b = groups[idx + 1][2][0]
+                if (
+                    a.find("rest") is not None
+                    or b.find("rest") is not None
+                    or a.find("time-modification") is not None
+                    or b.find("time-modification") is not None
+                ):
+                    continue
+                a_type = (a.findtext("type") or "").strip()
+                b_type = (b.findtext("type") or "").strip()
+                a_dots = len(a.findall("dot"))
+                b_dots = len(b.findall("dot"))
+                a_dur = int(groups[idx][1])
+                b_dur = int(groups[idx + 1][1])
+
+                target_idx: Optional[int] = None
+                base_type = ""
+                undotted_dur = 0
+                if a_dots == 0 and b_dots == 1 and a_type == b_type and a_type in _STEP_DOWN_TYPE and a_dur % 2 == 0:
+                    target_idx, base_type, undotted_dur = idx, a_type, a_dur
+                elif a_dots == 1 and b_dots == 0 and a_type == b_type and b_type in _STEP_DOWN_TYPE and b_dur % 2 == 0:
+                    target_idx, base_type, undotted_dur = idx + 1, b_type, b_dur
+
+                if target_idx is not None:
+                    half = undotted_dur // 2
+                    if 0 < half <= max_factor * excess:
+                        _apply_group(
+                            target_idx,
+                            half,
+                            _STEP_DOWN_TYPE[base_type],
+                            0,
+                            clear_beam=True,
+                        )
+
+        # Tier 2: Remove spurious dot from a single-dotted note matching excess
+        for exact_only in (True, False):
+            if excess <= 0:
+                break
+            for idx, g in enumerate(groups):
+                if excess <= 0:
+                    break
+                n = g[2][0]
+                if n.find("rest") is not None or n.find("time-modification") is not None:
+                    continue
+                if len(n.findall("dot")) != 1:
+                    continue
+                dur = int(g[1])
+                if dur % 3 != 0:
+                    continue
+                dot_val = dur // 3
+                if (dot_val == excess) if exact_only else (0 < dot_val <= excess):
+                    cur_type = (n.findtext("type") or "").strip() or None
+                    _apply_group(idx, dur - dot_val, cur_type, 0, clear_beam=False)
+
+        # Tier 3a: Step down one undotted note whose halved value equals exact excess
+        if excess > 0:
+            for idx in range(len(groups) - 1, -1, -1):
+                n = groups[idx][2][0]
+                if n.find("rest") is not None or n.find("time-modification") is not None:
+                    continue
+                if len(n.findall("dot")) != 0:
+                    continue
+                cur_type = (n.findtext("type") or "").strip()
+                dur = int(groups[idx][1])
+                if cur_type in _STEP_DOWN_TYPE and dur % 2 == 0 and (dur // 2) == excess:
+                    _apply_group(
+                        idx,
+                        dur // 2,
+                        _STEP_DOWN_TYPE[cur_type],
+                        0,
+                        clear_beam=True,
+                    )
+                    break
+
+        # Tier 3b: Guaranteed barline clamp for any remaining trailing overflow
+        kept_groups: list[list[object]] = []
+        if excess > 0:
+            for idx, g in enumerate(groups):
+                onset = int(g[0])
+                dur = int(g[1])
+                notes = list(g[2])
+                if onset >= expected_dur:
+                    for note in notes:
+                        if note in list(measure):
+                            measure.remove(note)
+                    continue
+                if onset + dur > expected_dur:
+                    rem = max(1, expected_dur - onset)
+                    td = _duration_to_type_and_dots(rem, div)
+                    for note in notes:
+                        _set_note_duration_and_type(
+                            note,
+                            rem,
+                            td[0] if td is not None else None,
+                            td[1] if td is not None else None,
+                            clear_tuplet=True,
+                        )
+                    _clear_beam_run([gr[2] for gr in groups], idx)
+                    g[1] = rem
+                kept_groups.append(g)
+        else:
+            kept_groups = groups
+
+        new_end = max((int(g[0]) + int(g[1]) for g in kept_groups), default=0)
+        if new_end < old_end:
+            for bk in measure.findall("backup"):
+                d_txt = (bk.findtext("duration") or "").strip()
+                if d_txt.isdigit() and int(d_txt) == old_end:
+                    dur_el = bk.find("duration")
+                    if dur_el is not None:
+                        dur_el.text = str(max(1, new_end))
+        any_modified = True
+        log.debug(
+            "Normalized overfull measure %s voice %s (%d -> %d ticks, limit=%d, div=%d)",
+            m_num,
+            voice,
+            old_end,
+            new_end,
+            expected_dur,
+            div,
+        )
+
+    return any_modified
+
+
 def _measure_quarter_duration(measure: ET.Element, div: int) -> Optional[Fraction]:
     if _is_rest_only_measure(measure):
         return None
@@ -328,6 +653,7 @@ def align_page_score(
     log.info("Page %d global_ts timeline: %s", page_num, [f"{b}/{bt}" for b, bt in global_ts])
 
     updated_rest_measures = 0
+    normalized_overfull = 0
     padded_count = 0
     trimmed_count = 0
 
@@ -354,10 +680,12 @@ def align_page_score(
             else:
                 _remove_all_time_elements(m)
 
+            expected_dur = int(round(div * int(b) * 4 / max(1, int(bt))))
             if _is_rest_only_measure(m):
-                expected_dur = int(round(div * int(b) * 4 / max(1, int(bt))))
                 _replace_measure_notes_with_rest(m, expected_dur)
                 updated_rest_measures += 1
+            elif _normalize_overfull_measure(m, expected_dur, div):
+                normalized_overfull += 1
 
         while len(p.findall("measure")) < target_measures:
             mi = len(p.findall("measure"))
@@ -371,9 +699,10 @@ def align_page_score(
             padded_count += 1
 
     log.info(
-        "Page %d alignment complete: updated_rest_measures=%d, padded=%d, trimmed=%d",
+        "Page %d alignment complete: updated_rest_measures=%d, normalized_overfull=%d, padded=%d, trimmed=%d",
         page_num,
         updated_rest_measures,
+        normalized_overfull,
         padded_count,
         trimmed_count,
     )

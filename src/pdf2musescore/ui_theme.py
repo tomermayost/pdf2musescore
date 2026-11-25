@@ -387,11 +387,14 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         foreground=[("active", palette.accent)],
     )
 
+    disabled_preset_fg = "#64748B" if palette.is_dark else palette.text_subtle
     style.configure(
         "Preset.TButton",
         background=palette.card_alt,
         foreground=palette.text_muted,
         bordercolor=palette.border,
+        lightcolor=palette.card_alt,
+        darkcolor=palette.card_alt,
         borderwidth=1,
         focusthickness=0,
         padding=(10, 6),
@@ -400,14 +403,25 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
     style.map(
         "Preset.TButton",
         background=[("disabled", palette.card_alt), ("active", palette.accent_soft)],
-        foreground=[("disabled", palette.text_subtle), ("active", palette.accent)],
+        foreground=[("disabled", disabled_preset_fg), ("active", palette.accent)],
+        bordercolor=[("disabled", palette.border), ("active", palette.accent)],
+        lightcolor=[("disabled", palette.card_alt), ("active", palette.accent_soft)],
+        darkcolor=[("disabled", palette.card_alt), ("active", palette.accent_soft)],
     )
 
+    active_bg = "#2563EB"
+    active_hover_bg = "#3B82F6" if palette.is_dark else "#1D4ED8"
+    active_border = "#60A5FA" if palette.is_dark else "#1D4ED8"
+    active_disabled_bg = "#1E3A8A" if palette.is_dark else "#DBEAFE"
+    active_disabled_fg = "#DBEAFE" if palette.is_dark else "#1E40AF"
+    active_disabled_border = "#60A5FA" if palette.is_dark else "#3B82F6"
     style.configure(
         "PresetActive.TButton",
-        background=palette.accent_soft,
-        foreground=palette.accent,
-        bordercolor=palette.accent,
+        background=active_bg,
+        foreground="#FFFFFF",
+        bordercolor=active_border,
+        lightcolor=active_bg,
+        darkcolor=active_bg,
         borderwidth=1,
         focusthickness=0,
         padding=(10, 6),
@@ -415,8 +429,11 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
     )
     style.map(
         "PresetActive.TButton",
-        background=[("disabled", palette.card_alt), ("active", palette.accent_soft)],
-        foreground=[("disabled", palette.text_subtle), ("active", palette.accent)],
+        background=[("disabled", active_disabled_bg), ("active", active_hover_bg)],
+        foreground=[("disabled", active_disabled_fg), ("active", "#FFFFFF")],
+        bordercolor=[("disabled", active_disabled_border), ("active", active_border)],
+        lightcolor=[("disabled", active_disabled_bg), ("active", active_hover_bg)],
+        darkcolor=[("disabled", active_disabled_bg), ("active", active_hover_bg)],
     )
 
     style.configure(
