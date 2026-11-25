@@ -1109,7 +1109,7 @@ class App(ttk.Frame):
 
         if is_full:
             self.score_mode_hint_var.set(
-                "Conductor mode · 500 DPI · Auto instrument names · Original pitch (no transpose)"
+                "Conductor mode · 500 DPI · Auto instrument names & playback transpositions"
             )
             if not self.score_mode_hint_lbl.winfo_manager():
                 self.score_mode_hint_lbl.pack(anchor="w", pady=(0, 2), before=self._score_grid)

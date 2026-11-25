@@ -12,6 +12,8 @@ from pdf2musescore.fullscore.align import (
     align_page_score,
     apply_conductor_metadata,
     compute_conductor_scaling,
+    detect_score_transposition_mode,
+    harmonize_page_key_signatures,
     match_staves_monotonic_dp,
     merge_fullscore_files,
     merge_fullscore_pages,
@@ -443,3 +445,227 @@ def test_align_infers_midpage_meter_change_and_rejects_glitches():
     aligned_tie, _ = align_page_score(_build_score(tie_specs), page_num=1)
     m1_tie = aligned_tie.find("./part/measure[@number='1']/attributes/time")
     assert (m1_tie.findtext("beats"), m1_tie.findtext("beat-type")) == ("6", "4")
+
+
+def _add_note(
+    measure: ET.Element,
+    step: str,
+    octave: str = "4",
+    *,
+    alter: str | None = None,
+    accidental: str | None = None,
+    duration: str = "4",
+) -> ET.Element:
+    n = ET.SubElement(measure, "note")
+    p = ET.SubElement(n, "pitch")
+    ET.SubElement(p, "step").text = step
+    if alter is not None:
+        ET.SubElement(p, "alter").text = alter
+    ET.SubElement(p, "octave").text = octave
+    ET.SubElement(n, "duration").text = duration
+    ET.SubElement(n, "voice").text = "1"
+    ET.SubElement(n, "staff").text = "1"
+    if accidental is not None:
+        ET.SubElement(n, "accidental").text = accidental
+    return n
+
+
+def test_transposed_score_detection_harmonization_and_metadata_emission():
+    # Transposed Concert Band score in Concert Eb (fifths=-3):
+    # P1 Bassoon (-3), P2 Bb Clarinet 1 (-1), P3 Eb Alto Sax. 1 (MISREAD as +1 instead of 0!),
+    # P4 F Horn 1, 3 (-2), P5 String Bass (-3), P6 Percussion 1 (-1)
+    labels = [
+        InstrumentLabel("Bassoon", "Bsn."),
+        InstrumentLabel("Bb Clarinet 1", "Bb Cl. 1"),
+        InstrumentLabel("Eb Alto Sax. 1", "Eb A. Sax. 1"),
+        InstrumentLabel("F Horn 1, 3", "F Hn. 1, 3"),
+        InstrumentLabel("String Bass (optional)", "Str. Bass"),
+        InstrumentLabel("Percussion 1", "Perc. 1"),
+    ]
+    specs = [
+        _make_part("P1", [(False, ("4", "4"))], clef=("F", "4"), fifths="-3"),
+        _make_part("P2", [(False, ("4", "4"))], clef=("G", "2"), fifths="-1"),
+        _make_part("P3", [(False, ("4", "4"))], clef=("G", "2"), fifths="1"),  # OMR misread!
+        _make_part("P4", [(False, ("4", "4"))], clef=("G", "2"), fifths="-2"),
+        _make_part("P5", [(False, ("4", "4"))], clef=("F", "4"), fifths="-3"),
+        _make_part("P6", [(True, ("4", "4"))], clef=("C", "3"), fifths="-1"),
+    ]
+    # Put implied F# (from misread 1#) + explicit accidental F# (must stay!) on P3 page 1
+    p3_m1 = specs[2][1].find("measure")
+    _set_measure_dur(p3_m1, 8)
+    _add_note(p3_m1, "F", "4", alter="1", duration="4")  # no accidental -> must clear to natural F
+    _add_note(p3_m1, "F", "4", alter="1", accidental="sharp", duration="4")  # explicit -> must keep alter=1
+
+    # Add a <directive> child on P2 attributes to verify <transpose> inserts BEFORE <directive>
+    ET.SubElement(specs[1][1].find("./measure/attributes"), "directive").text = "dolce"
+    root_p1 = _build_score(specs)
+    sc1 = PageSidecar(1, 6, [float(i) for i in range(6)], [i / 5.0 for i in range(6)], labels)
+
+    # Page 2 has P3 correctly read as fifths=0 -> after harmonizing Page 1 to 0, Page 2 dedup must remove P3's <key>
+    specs_p2 = [
+        _make_part("P1", [(False, ("4", "4"))], clef=("F", "4"), fifths="-3"),
+        _make_part("P2", [(False, ("4", "4"))], clef=("G", "2"), fifths="-1"),
+        _make_part("P3", [(False, ("4", "4"))], clef=("G", "2"), fifths="0"),
+        _make_part("P4", [(False, ("4", "4"))], clef=("G", "2"), fifths="-2"),
+        _make_part("P5", [(False, ("4", "4"))], clef=("F", "4"), fifths="-3"),
+        _make_part("P6", [(True, ("4", "4"))], clef=("C", "3"), fifths="-1"),
+    ]
+    root_p2 = _build_score(specs_p2)
+    sc2 = PageSidecar(2, 6, [float(i) for i in range(6)], [i / 5.0 for i in range(6)], labels)
+
+    merged = merge_fullscore_pages([(1, root_p1, sc1), (2, root_p2, sc2)], title="Green Hill")
+    summary = verify_fullscore_invariants(merged)
+    assert summary["transposing_parts"] == 4  # Bb Cl, Eb Alto Sax, F Horn, String Bass
+
+    parts = merged.findall("part")
+    sps = merged.findall("./part-list/score-part")
+    assert [sp.findtext("./score-instrument/instrument-sound") for sp in sps] == [
+        "wind.reed.bassoon",
+        "wind.reed.clarinet.bflat",
+        "wind.reed.saxophone.alto",
+        "brass.french-horn",
+        "strings.contrabass",
+        "drum.group",
+    ]
+
+    # Written keys remain preserved (and P3 outlier repaired to 0 with no spurious M2 key change)
+    assert parts[0].findtext("./measure[@number='1']/attributes/key/fifths") == "-3"
+    assert parts[1].findtext("./measure[@number='1']/attributes/key/fifths") == "-1"
+    assert parts[2].findtext("./measure[@number='1']/attributes/key/fifths") == "0"
+    assert parts[2].find("./measure[@number='2']/attributes") is None
+    assert parts[3].findtext("./measure[@number='1']/attributes/key/fifths") == "-2"
+    assert parts[5].findtext("./measure[@number='1']/attributes/key/fifths") == "-1"  # unpitched percussion untouched
+
+    # Check P3 M1 notes: note[1] (F without accidental) cleared alter, note[2] (explicit sharp) kept alter=1
+    p3_notes = parts[2].findall("./measure[@number='1']/note")
+    assert p3_notes[1].find("./pitch/alter") is None
+    assert p3_notes[2].findtext("./pitch/alter") == "1"
+
+    # Check <transpose> placement before <directive> on P2 and exact values
+    p2_attrs = parts[1].find("./measure[@number='1']/attributes")
+    p2_tags = [el.tag for el in p2_attrs]
+    assert p2_tags.index("transpose") < p2_tags.index("directive")
+    assert (p2_attrs.findtext("transpose/diatonic"), p2_attrs.findtext("transpose/chromatic")) == ("-1", "-2")
+
+    p3_tr = parts[2].find("./measure[@number='1']/attributes/transpose")
+    assert (p3_tr.findtext("diatonic"), p3_tr.findtext("chromatic")) == ("-5", "-9")
+
+    p4_tr = parts[3].find("./measure[@number='1']/attributes/transpose")
+    assert (p4_tr.findtext("diatonic"), p4_tr.findtext("chromatic")) == ("-4", "-7")
+
+    p5_tr = parts[4].find("./measure[@number='1']/attributes/transpose")
+    assert (
+        p5_tr.findtext("diatonic"),
+        p5_tr.findtext("chromatic"),
+        p5_tr.findtext("octave-change"),
+    ) == ("0", "0", "-1")
+
+
+def test_concert_score_and_all_transposing_detection_and_key_reconciliation():
+    # Concert-pitch (C) score: all pitched instruments written in Concert Eb (-3), String Bass still gets octave=-1
+    labels_c = [
+        InstrumentLabel("Bassoon", "Bsn."),
+        InstrumentLabel("Bb Clarinet 1", "Bb Cl. 1"),
+        InstrumentLabel("F Horn", "Hn."),
+        InstrumentLabel("String Bass", "Str. Bass"),
+    ]
+    c_root = _build_score([_make_part(f"P{i + 1}", [(False, ("4", "4"))], fifths="-3") for i in range(4)])
+    apply_conductor_metadata(c_root, "Concert Score", labels_c)
+    is_tr, conc = detect_score_transposition_mode([c_root], labels_c)
+    assert is_tr is False and conc == -3
+    c_parts = c_root.findall("part")
+    assert c_parts[0].find(".//transpose") is None
+    assert c_parts[1].find(".//transpose") is None
+    assert c_parts[2].find(".//transpose") is None
+    assert c_parts[3].findtext("./measure/attributes/transpose/octave-change") == "-1"
+
+    # All-transposing ensemble (Saxophone Quartet: no C instruments, Concert Eb) -> still detected as Transposed!
+    labels_sax = [
+        InstrumentLabel("Eb Alto Sax. 1", "A. Sax. 1"),
+        InstrumentLabel("Eb Alto Sax. 2", "A. Sax. 2"),
+        InstrumentLabel("Bb Tenor Sax.", "T. Sax."),
+        InstrumentLabel("Eb Baritone Sax.", "Bar. Sax."),
+    ]
+    sax_root = _build_score([
+        _make_part("P1", [(False, ("4", "4"))], fifths="0"),
+        _make_part("P2", [(False, ("4", "4"))], fifths="0"),
+        _make_part("P3", [(False, ("4", "4"))], fifths="-1"),
+        _make_part("P4", [(False, ("4", "4"))], fifths="0"),
+    ])
+    is_sax_tr, sax_conc = detect_score_transposition_mode([sax_root], labels_sax)
+    assert is_sax_tr is True and sax_conc == -3
+
+    # Empty roots guard
+    assert detect_score_transposition_mode([], []) == (False, None)
+
+    # Harmonize adding sharp/flat alter on outlier (fifths=0 misread instead of -3 -> adds alter=-1 to B,E,A)
+    # plus stopping at later key change measure and preserving +6 == -6 enharmonic equivalence
+    labels_h = [
+        InstrumentLabel("Bassoon", "Bsn."),
+        InstrumentLabel("Flute", "Fl."),
+        InstrumentLabel("Oboe", "Ob."),
+        InstrumentLabel("Piano", "Pno."),
+    ]
+    h_specs = [
+        _make_part("P1", [(False, ("4", "4")), (False, None)], fifths="0"),  # outlier! target=-3
+        _make_part("P2", [(False, ("4", "4")), (False, None)], fifths="-3"),
+        _make_part("P3", [(False, ("4", "4")), (False, None)], fifths="-3"),
+        _make_part("P4", [(False, ("4", "4")), (False, None)], fifths="-3"),
+    ]
+    p1_ms = h_specs[0][1].findall("measure")
+    _add_note(p1_ms[0], "B", "3")  # no alter -> gets alter=-1
+    # m2 declares an explicit key change -> stops before m2 notes
+    m2_attr = ET.SubElement(p1_ms[1], "attributes")
+    ET.SubElement(ET.SubElement(m2_attr, "key"), "fifths").text = "1"
+    _add_note(p1_ms[1], "E", "4")
+    h_root = _build_score(h_specs)
+    assert harmonize_page_key_signatures(h_root, labels_h, is_transposed_score=False, page_num=1) == 1
+    assert p1_ms[0].findtext("./attributes/key/fifths") == "-3"
+    assert p1_ms[0].findall("note")[-1].findtext("./pitch/alter") == "-1"
+    assert p1_ms[1].findall("note")[-1].find("./pitch/alter") is None
+
+    # Enharmonic +6 vs -6 is NOT rewritten ( Concert +3 + Eb shift +3 = +6 ~ -6 )
+    enh_labels = [
+        InstrumentLabel("Flute", "Fl."),
+        InstrumentLabel("Oboe", "Ob."),
+        InstrumentLabel("Bassoon", "Bsn."),
+        InstrumentLabel("Eb Alto Sax.", "A. Sax."),
+    ]
+    enh_root = _build_score([
+        _make_part("P1", [(False, ("4", "4"))], fifths="3"),
+        _make_part("P2", [(False, ("4", "4"))], fifths="3"),
+        _make_part("P3", [(False, ("4", "4"))], fifths="3"),
+        _make_part("P4", [(False, ("4", "4"))], fifths="6"),
+    ])
+    assert harmonize_page_key_signatures(enh_root, enh_labels, is_transposed_score=True, page_num=1) == 0
+    assert enh_root.findall("part")[3].findtext("./measure/attributes/key/fifths") == "6"
+
+
+def test_verify_fullscore_invariants_transpose_validation():
+    base = _build_score([_make_part("P1", [(False, ("4", "4"))])])
+    attrs = base.find("./part/measure[@number='1']/attributes")
+    tr = ET.SubElement(attrs, "transpose")
+    ET.SubElement(tr, "diatonic").text = "-5"
+    ET.SubElement(tr, "chromatic").text = "-9"
+    ET.SubElement(tr, "octave-change").text = "-1"
+    assert verify_fullscore_invariants(base)["transposing_parts"] == 1
+
+    # Duplicate <transpose> in Measure 1
+    bad_dup = copy.deepcopy(base)
+    ET.SubElement(bad_dup.find("./part/measure[@number='1']/attributes"), "transpose")
+    with pytest.raises(MergeError, match="2 <transpose>"):
+        verify_fullscore_invariants(bad_dup)
+
+    # Non-integer chromatic / out of range chromatic / invalid diatonic / invalid octave-change
+    for tag, bad_val, pat in (
+        ("chromatic", "abc", "invalid/missing <chromatic>"),
+        ("chromatic", "99", "chromatic 99 out of range"),
+        ("diatonic", "bad", "invalid <diatonic>"),
+        ("diatonic", "-20", "diatonic -20 out of range"),
+        ("octave-change", "x", "invalid <octave-change>"),
+        ("octave-change", "5", "octave-change 5 out of range"),
+    ):
+        bad = copy.deepcopy(base)
+        bad.find(f".//transpose/{tag}").text = bad_val
+        with pytest.raises(MergeError, match=pat):
+            verify_fullscore_invariants(bad)

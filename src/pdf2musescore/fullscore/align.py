@@ -17,7 +17,9 @@ from ..musicxml import MergeError, read_score, strip_layout_breaks, write_musicx
 from ..options import ConversionOptions
 from .instruments import (
     InstrumentLabel,
+    InstrumentPlaybackProfile,
     consolidate_page_labels,
+    infer_instrument_profile,
     is_percussion_instrument,
     looks_low_quality_label,
 )
@@ -785,14 +787,290 @@ def compute_conductor_scaling(part_count: int) -> tuple[str, str, str]:
     return f"{mm:.1f}", str(round(297 * 40 / mm)), str(round(210 * 40 / mm))
 
 
+_SHARP_ORDER: tuple[str, ...] = ("F", "C", "G", "D", "A", "E", "B")
+_FLAT_ORDER: tuple[str, ...] = ("B", "E", "A", "D", "G", "C", "F")
+
+
+def _wrap_fifths(fifths: int) -> int:
+    """Wrap a circle-of-fifths key value into ``[-6, +5]``."""
+    return ((fifths + 6) % 12) - 6
+
+
+def _fifths_equivalent(a: int, b: int) -> bool:
+    """Return True if two key signatures represent enharmonic equivalents mod 12."""
+    return (a - b) % 12 == 0
+
+
+def _key_signature_alters(fifths: int) -> dict[str, int]:
+    """Return the diatonic step alterations (``-1``, ``0``, ``+1``) implied by ``fifths``."""
+    alters = {step: 0 for step in "CDEFGAB"}
+    wf = _wrap_fifths(fifths)
+    if wf > 0:
+        for step in _SHARP_ORDER[: min(7, wf)]:
+            alters[step] = 1
+    elif wf < 0:
+        for step in _FLAT_ORDER[: min(7, -wf)]:
+            alters[step] = -1
+    return alters
+
+
+def _extract_initial_fifths(part: ET.Element) -> Optional[int]:
+    for attr in part.findall("./measure/attributes"):
+        txt = attr.findtext("key/fifths")
+        if txt is not None and txt.strip():
+            try:
+                return int(txt.strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _extract_initial_clef(part: ET.Element) -> Optional[tuple[str, str]]:
+    for attr in part.findall("./measure/attributes"):
+        for c_el in attr.findall("clef"):
+            if c_el.get("number") in (None, "1"):
+                sign = (c_el.findtext("sign") or "").strip()
+                line = (c_el.findtext("line") or "").strip()
+                if sign and line:
+                    return (sign, line)
+    return None
+
+
+def detect_score_transposition_mode(
+    roots: Sequence[ET.Element],
+    labels: Sequence[InstrumentLabel],
+) -> tuple[bool, Optional[int]]:
+    """Detect whether a full score is written as a Transposed Score or Concert-Pitch (C) Score."""
+    if not roots:
+        return False, None
+
+    first_parts = roots[0].findall("part")
+    profiles: list[InstrumentPlaybackProfile] = []
+    for idx in range(max(len(first_parts), len(labels))):
+        lbl = labels[idx] if idx < len(labels) else InstrumentLabel(f"Part {idx + 1}", f"P{idx + 1}")
+        clef = _extract_initial_clef(first_parts[idx]) if idx < len(first_parts) else None
+        profiles.append(infer_instrument_profile(lbl.full_name, clef=clef))
+
+    concert_votes_all: list[int] = []
+    transposed_matches = 0
+    concert_matches = 0
+
+    for root in roots:
+        c_fifths: list[int] = []
+        tr_obs: list[tuple[int, int]] = []
+        for idx, part in enumerate(root.findall("part")):
+            lbl = labels[idx] if idx < len(labels) else InstrumentLabel(f"Part {idx + 1}", f"P{idx + 1}")
+            if is_percussion_instrument(lbl.full_name):
+                continue
+            obs = _extract_initial_fifths(part)
+            if obs is None:
+                continue
+            prof = (
+                profiles[idx]
+                if idx < len(profiles)
+                else infer_instrument_profile(lbl.full_name, clef=_extract_initial_clef(part))
+            )
+            if prof.fifths_shift == 0:
+                c_fifths.append(obs)
+            else:
+                tr_obs.append((obs, prof.fifths_shift))
+
+        if c_fifths and tr_obs:
+            c_freq = Counter(c_fifths)
+            page_concert = max(c_freq.keys(), key=lambda f: (c_freq[f], -abs(f)))
+            concert_votes_all.append(page_concert)
+            for obs, sh in tr_obs:
+                if _fifths_equivalent(obs, page_concert + sh):
+                    transposed_matches += 1
+                if _fifths_equivalent(obs, page_concert):
+                    concert_matches += 1
+        elif not c_fifths and len(tr_obs) >= 2 and len({sh for _, sh in tr_obs}) >= 2:
+            tr_implied = Counter(_wrap_fifths(obs - sh) for obs, sh in tr_obs)
+            c_implied = Counter(_wrap_fifths(obs) for obs, _ in tr_obs)
+            top_tr_val, top_tr_cnt = tr_implied.most_common(1)[0]
+            _top_c_val, top_c_cnt = c_implied.most_common(1)[0]
+            transposed_matches += top_tr_cnt
+            concert_matches += top_c_cnt
+            if top_tr_cnt > top_c_cnt:
+                concert_votes_all.append(top_tr_val)
+
+    is_transposed = transposed_matches > concert_matches and transposed_matches >= 1
+    concert_fifths = Counter(concert_votes_all).most_common(1)[0][0] if concert_votes_all else None
+    if is_transposed:
+        log.info(
+            "Detected Transposed Full Score (concert fifths=%s; %d transposing match(es) vs %d concert match(es))",
+            concert_fifths,
+            transposed_matches,
+            concert_matches,
+        )
+    else:
+        log.info(
+            "Detected Concert-Pitch (C) Full Score (concert fifths=%s; %d concert match(es) vs %d transposing match(es))",
+            concert_fifths,
+            concert_matches,
+            transposed_matches,
+        )
+    return is_transposed, concert_fifths
+
+
+def _reconcile_notes_for_key_change(part: ET.Element, old_fifths: int, new_fifths: int) -> int:
+    old_alters = _key_signature_alters(old_fifths)
+    new_alters = _key_signature_alters(new_fifths)
+    updated = 0
+    for mi, measure in enumerate(part.findall("measure")):
+        if mi > 0 and measure.find("./attributes/key") is not None:
+            break
+        for note in measure.findall("note"):
+            if note.find("rest") is not None or note.find("unpitched") is not None or note.find("accidental") is not None:
+                continue
+            pitch = note.find("pitch")
+            if pitch is None:
+                continue
+            step = (pitch.findtext("step") or "").strip().upper()
+            if step not in old_alters or old_alters[step] == new_alters[step]:
+                continue
+            alter_el = pitch.find("alter")
+            if alter_el is not None and (alter_el.text or "").strip():
+                try:
+                    cur_alter = int(alter_el.text.strip())
+                except ValueError:
+                    continue
+            else:
+                cur_alter = 0
+            if cur_alter != old_alters[step]:
+                continue
+
+            new_val = new_alters[step]
+            if new_val == 0:
+                if alter_el is not None:
+                    pitch.remove(alter_el)
+            else:
+                if alter_el is None:
+                    step_el = pitch.find("step")
+                    ins_idx = list(pitch).index(step_el) + 1 if step_el is not None else 1
+                    alter_el = ET.Element("alter")
+                    pitch.insert(ins_idx, alter_el)
+                alter_el.text = str(new_val)
+            updated += 1
+    return updated
+
+
+def harmonize_page_key_signatures(
+    root: ET.Element,
+    labels: Sequence[InstrumentLabel],
+    *,
+    is_transposed_score: bool,
+    page_num: int,
+) -> int:
+    """Repair isolated single-staff OMR key-signature misreads using ensemble consensus."""
+    parts = root.findall("part")
+    entries: list[tuple[ET.Element, InstrumentLabel, int, int, int, ET.Element]] = []
+
+    for idx, part in enumerate(parts):
+        lbl = labels[idx] if idx < len(labels) else InstrumentLabel(f"Part {idx + 1}", f"P{idx + 1}")
+        if is_percussion_instrument(lbl.full_name):
+            continue
+        m1 = part.find("measure")
+        if m1 is None:
+            continue
+        fifths_el = m1.find("./attributes/key/fifths")
+        if fifths_el is None or not (fifths_el.text or "").strip():
+            continue
+        try:
+            obs = int(fifths_el.text.strip())
+        except ValueError:
+            continue
+        prof = infer_instrument_profile(lbl.full_name, clef=_extract_initial_clef(part))
+        shift = prof.fifths_shift if is_transposed_score else 0
+        implied_concert = _wrap_fifths(obs - shift)
+        entries.append((part, lbl, obs, shift, implied_concert, fifths_el))
+
+    if len(entries) < 3:
+        return 0
+
+    concert_counts = Counter(e[4] for e in entries)
+    top_concert, top_count = concert_counts.most_common(1)[0]
+    if top_count < 3 or top_count < 0.70 * len(entries):
+        return 0
+
+    repaired = 0
+    for part, lbl, obs, shift, _implied, fifths_el in entries:
+        if _fifths_equivalent(obs, top_concert + shift):
+            continue
+        target_fifths = _wrap_fifths(top_concert + shift)
+        fifths_el.text = str(target_fifths)
+        notes_updated = _reconcile_notes_for_key_change(part, obs, target_fifths)
+        repaired += 1
+        log.info(
+            "Page %d %s (%s): harmonized OMR key-signature outlier fifths %d -> %d (updated %d implied note alteration(s))",
+            page_num,
+            part.get("id", "?"),
+            lbl.full_name,
+            obs,
+            target_fifths,
+            notes_updated,
+        )
+    return repaired
+
+
+def _insert_transpose_element(attrs: ET.Element, profile: InstrumentPlaybackProfile) -> None:
+    """Insert a valid MusicXML 4.0 ``<transpose>`` element inside ``<attributes>``."""
+    for old_tr in list(attrs.findall("transpose")):
+        attrs.remove(old_tr)
+
+    tr_el = ET.Element("transpose")
+    ET.SubElement(tr_el, "diatonic").text = str(profile.diatonic)
+    ET.SubElement(tr_el, "chromatic").text = str(profile.chromatic)
+    if profile.octave_change != 0:
+        ET.SubElement(tr_el, "octave-change").text = str(profile.octave_change)
+
+    insert_idx = len(attrs)
+    for idx, child in enumerate(list(attrs)):
+        if child.tag in ("directive", "measure-style"):
+            insert_idx = idx
+            break
+    attrs.insert(insert_idx, tr_el)
+
+
+def _validate_transpose_element(tr: ET.Element, part_id: str) -> None:
+    chrom_txt = (tr.findtext("chromatic") or "").strip()
+    try:
+        chrom_val = int(chrom_txt)
+    except ValueError as exc:
+        raise MergeError(f"Part {part_id} <transpose> has invalid/missing <chromatic>: {chrom_txt!r}") from exc
+    if not (-24 <= chrom_val <= 24):
+        raise MergeError(f"Part {part_id} <transpose> chromatic {chrom_val} out of range [-24, 24]")
+
+    diat_el = tr.find("diatonic")
+    if diat_el is not None:
+        diat_txt = (diat_el.text or "").strip()
+        try:
+            diat_val = int(diat_txt)
+        except ValueError as exc:
+            raise MergeError(f"Part {part_id} <transpose> has invalid <diatonic>: {diat_txt!r}") from exc
+        if not (-14 <= diat_val <= 14):
+            raise MergeError(f"Part {part_id} <transpose> diatonic {diat_val} out of range [-14, 14]")
+
+    oct_el = tr.find("octave-change")
+    if oct_el is not None:
+        oct_txt = (oct_el.text or "").strip()
+        try:
+            oct_val = int(oct_txt)
+        except ValueError as exc:
+            raise MergeError(f"Part {part_id} <transpose> has invalid <octave-change>: {oct_txt!r}") from exc
+        if not (-3 <= oct_val <= 3):
+            raise MergeError(f"Part {part_id} <transpose> octave-change {oct_val} out of range [-3, 3]")
+
+
 def apply_conductor_metadata(
     root: ET.Element,
     title: str,
     labels: Sequence[InstrumentLabel],
     *,
     keep_line_breaks: bool = False,
+    is_transposed_score: Optional[bool] = None,
 ) -> ET.Element:
-    """Apply conductor score title, adaptive scaling, instrument names/abbreviations, and valid MIDI channels."""
+    """Apply conductor score title, adaptive scaling, instrument names/sounds/transpositions, and MIDI channels."""
     for xp in ("movement-title",):
         el = root.find(xp)
         if el is not None:
@@ -831,22 +1109,35 @@ def apply_conductor_metadata(
     if not keep_line_breaks:
         strip_layout_breaks(root)
 
-    # Full Score Mode must NEVER emit <transpose> (would corrupt concert vs transposed playback)
+    # Clear any stray raw <transpose> elements before emitting canonical Measure-1 transpositions
     removed_transpose = 0
     for parent in root.iter():
         for tr in list(parent.findall("transpose")):
             parent.remove(tr)
             removed_transpose += 1
     if removed_transpose:
-        log.info("Removed %d unexpected <transpose> element(s) from full score", removed_transpose)
+        log.debug("Cleared %d raw <transpose> element(s) prior to canonical emission", removed_transpose)
 
+    if is_transposed_score is None:
+        is_transposed_score, _ = detect_score_transposition_mode([root], labels)
+
+    parts_by_id = {p.get("id", ""): p for p in root.findall("part")}
+    all_parts = root.findall("part")
     pitched_i = 0
+    transposing_parts = 0
+
     for idx, sp in enumerate(root.findall("./part-list/score-part")):
         part_id = sp.get("id", f"P{idx + 1}")
+        part_el = parts_by_id.get(part_id)
+        if part_el is None and idx < len(all_parts):
+            part_el = all_parts[idx]
         if idx < len(labels):
             inst_name, inst_abbr = labels[idx].full_name, labels[idx].abbreviation
         else:
             inst_name, inst_abbr = f"Part {idx + 1}", f"P{idx + 1}"
+
+        initial_clef = _extract_initial_clef(part_el) if part_el is not None else None
+        profile = infer_instrument_profile(inst_name, clef=initial_clef)
 
         pn = sp.find("part-name")
         if pn is None:
@@ -870,7 +1161,7 @@ def apply_conductor_metadata(
         isound = si.find("instrument-sound")
         if isound is None:
             isound = ET.SubElement(si, "instrument-sound")
-        isound.text = "voice"
+        isound.text = profile.sound_id
 
         mi_el = sp.find("midi-instrument")
         if mi_el is None:
@@ -884,12 +1175,36 @@ def apply_conductor_metadata(
             ch.text = str(_PITCHED_MIDI_CHANNELS[pitched_i % len(_PITCHED_MIDI_CHANNELS)])
             pitched_i += 1
 
+        should_transpose = (is_transposed_score and profile.is_transposing) or (
+            not is_transposed_score and profile.fifths_shift == 0 and profile.octave_change != 0
+        )
+        if should_transpose and part_el is not None:
+            m1 = part_el.find("measure")
+            if m1 is not None:
+                attrs = m1.find("attributes")
+                if attrs is None:
+                    attrs = ET.Element("attributes")
+                    m1.insert(0, attrs)
+                _insert_transpose_element(attrs, profile)
+                transposing_parts += 1
+                log.debug(
+                    "Set playback transpose for %s (%s): diatonic=%d chromatic=%d octave=%d sound=%s",
+                    part_id,
+                    inst_name,
+                    profile.diatonic,
+                    profile.chromatic,
+                    profile.octave_change,
+                    profile.sound_id,
+                )
+
     log.info(
-        "Applied conductor metadata (%d parts, scaling=%smm, page=%sx%s)",
+        "Applied conductor metadata (%d parts, scaling=%smm, page=%sx%s, transposed_score=%s, transposing_parts=%d)",
         part_count,
         mm,
         page_w,
         page_h,
+        is_transposed_score,
+        transposing_parts,
     )
     return root
 
@@ -935,8 +1250,22 @@ def verify_fullscore_invariants(root: ET.Element) -> dict[str, int]:
         if len(set(declared)) > 1:
             raise MergeError(f"Measure {mi + 1}: conflicting time signatures: {Counter(declared)}")
 
-    if root.findall(".//transpose"):
-        raise MergeError("Unexpected <transpose> element in full score")
+    allowed_transpose_ids: set[int] = set()
+    transposing_parts = 0
+    for p in parts:
+        m1_transposes: list[ET.Element] = []
+        for m1 in p.findall("./measure[@number='1']"):
+            m1_transposes.extend(m1.findall("./attributes/transpose"))
+        if len(m1_transposes) > 1:
+            raise MergeError(f"Part {p.get('id')} has {len(m1_transposes)} <transpose> elements in Measure 1")
+        for tr in m1_transposes:
+            allowed_transpose_ids.add(id(tr))
+            transposing_parts += 1
+            _validate_transpose_element(tr, p.get("id") or "?")
+
+    for tr in root.findall(".//transpose"):
+        if id(tr) not in allowed_transpose_ids:
+            raise MergeError("Unexpected <transpose> element outside Measure 1 attributes")
 
     for ch_el in root.findall(".//midi-channel"):
         txt = (ch_el.text or "").strip()
@@ -953,13 +1282,15 @@ def verify_fullscore_invariants(root: ET.Element) -> dict[str, int]:
         "measures": total_m,
         "non_empty_parts": sum(1 for c in note_counts if c > 0),
         "total_notes": sum(note_counts),
+        "transposing_parts": transposing_parts,
     }
     log.info(
-        "Verified all 6 full-score XML invariants (%d parts x %d measures, %d notes across %d non-empty parts)",
+        "Verified all 6 full-score XML invariants (%d parts x %d measures, %d notes across %d non-empty parts, %d transposing)",
         summary["parts"],
         summary["measures"],
         summary["total_notes"],
         summary["non_empty_parts"],
+        summary["transposing_parts"],
     )
     return summary
 
@@ -982,6 +1313,19 @@ def merge_fullscore_pages(
         aligned_pages.append((pno, aligned_root, sidecar))
 
     reconciled_roots, labels = reconcile_pages_to_master(aligned_pages)
+    is_transposed_score, _ = detect_score_transposition_mode(reconciled_roots, labels)
+
+    page_nums = [pno for pno, _root, _sc in aligned_pages]
+    harmonized_parts = 0
+    for pno, rec_root in zip(page_nums, reconciled_roots):
+        harmonized_parts += harmonize_page_key_signatures(
+            rec_root,
+            labels,
+            is_transposed_score=is_transposed_score,
+            page_num=pno,
+        )
+    if harmonized_parts:
+        log.info("Harmonized %d OMR key-signature outlier part(s) across full score", harmonized_parts)
 
     merged = copy.deepcopy(reconciled_roots[0])
     base_parts = merged.findall("part")
@@ -1010,7 +1354,13 @@ def merge_fullscore_pages(
                 base_parts[pi].append(mc)
 
     log.info("Deduplicated %d redundant page-boundary attributes (divisions/key/time/clef)", dedup_removed)
-    apply_conductor_metadata(merged, title, labels, keep_line_breaks=keep_line_breaks)
+    apply_conductor_metadata(
+        merged,
+        title,
+        labels,
+        keep_line_breaks=keep_line_breaks,
+        is_transposed_score=is_transposed_score,
+    )
     verify_fullscore_invariants(merged)
     return merged
 

@@ -15,6 +15,52 @@ log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class InstrumentPlaybackProfile:
+    """Playback sound ID and written-to-sounding transposition parameters."""
+
+    sound_id: str
+    diatonic: int = 0
+    chromatic: int = 0
+    octave_change: int = 0
+    fifths_shift: int = 0
+
+    @property
+    def is_transposing(self) -> bool:
+        """Return True if this instrument sounds at a different pitch than written."""
+        return self.diatonic != 0 or self.chromatic != 0 or self.octave_change != 0
+
+
+_UNPITCHED_SOUND_RULES: tuple[tuple[str, str], ...] = (
+    (r"\bsnare\b|\bs\.d\.", "drum.snare-drum"),
+    (r"\bbass\s+drum\b|\bb\.d\.", "drum.bass-drum"),
+    (r"\bcymbal|\bcym\b", "metal.cymbal.crash"),
+    (r"\btriangle\b|\btri\b", "metal.triangle"),
+    (r"\btambourine\b|\btamb\b", "drum.tambourine"),
+    (r"\bdrum\s*set\b|\bdr\.\s*set\b", "drum.group.set"),
+)
+
+_PITCHED_PERCUSSION_RULES: tuple[tuple[str, str], ...] = (
+    (r"\btimpani\b|\btimp\b", "drum.timpani"),
+    (r"\bglockenspiel\b|\bglock\b", "pitched-percussion.glockenspiel"),
+    (r"\bxylophone\b|\bxyl\b", "pitched-percussion.xylophone"),
+    (r"\bvibraphone\b|\bvib\b", "pitched-percussion.vibraphone"),
+    (r"\bmarimba\b|\bmallet|\bmall\b", "pitched-percussion.marimba"),
+    (r"\bcelesta\b|\bcel\b", "keyboard.celesta"),
+    (r"\btubular\s+bells\b|\bchimes\b|\bbells\b|\bcrotales\b", "pitched-percussion.tubular-bells"),
+)
+
+_OTHER_INST_RULES: tuple[tuple[str, InstrumentPlaybackProfile], ...] = (
+    (r"\bviolin\b|\bvln\b", InstrumentPlaybackProfile("strings.violin")),
+    (r"\bviola\b|\bvla\b", InstrumentPlaybackProfile("strings.viola")),
+    (r"\bvioloncello\b|\bcello\b|\bvc\b", InstrumentPlaybackProfile("strings.cello")),
+    (r"\bpiano\b|\bpno\b", InstrumentPlaybackProfile("keyboard.piano")),
+    (r"\borgan\b|\borg\b", InstrumentPlaybackProfile("keyboard.organ")),
+    (r"\bharp\b|\bhp\b", InstrumentPlaybackProfile("pluck.harp")),
+    (r"\bguitar\b|\bgtr\b", InstrumentPlaybackProfile("pluck.guitar", 0, 0, -1, 0)),
+)
+
+
+@dataclass(frozen=True)
 class InstrumentLabel:
     """Normalized instrument name and score-part abbreviation for a staff."""
 
@@ -264,6 +310,136 @@ def is_percussion_instrument(name: str) -> bool:
     if _PITCHED_PERCUSSION_RE.search(name):
         return False
     return bool(_UNPITCHED_PERCUSSION_RE.search(name))
+
+
+def _infer_woodwind_profile(txt: str, clef: Optional[tuple[str, str]]) -> Optional[InstrumentPlaybackProfile]:
+    has_flute = bool(re.search(r"\bflute|\bfl\b", txt))
+    has_picc = bool(re.search(r"\bpiccolo\b|\bpicc\b", txt))
+    if has_flute and has_picc:
+        return InstrumentPlaybackProfile("wind.flutes.flute")
+    if has_picc:
+        return InstrumentPlaybackProfile("wind.flutes.flute.piccolo", 0, 0, 1, 0)
+    if re.search(r"\balto\s+(?:flute\b|fl\b)", txt):
+        return InstrumentPlaybackProfile("wind.flutes.flute.alto", -3, -5, 0, -1)
+    if has_flute:
+        return InstrumentPlaybackProfile("wind.flutes.flute")
+    if re.search(r"\benglish\s+horn\b|\bcor\s+anglais\b|\be\.\s*hn\b", txt):
+        return InstrumentPlaybackProfile("wind.reed.english-horn", -4, -7, 0, 1)
+    if re.search(r"\boboe\b|\bob\b", txt):
+        return InstrumentPlaybackProfile("wind.reed.oboe")
+    if re.search(r"\bcontrabassoon\b|\bcbsn\b", txt):
+        return InstrumentPlaybackProfile("wind.reed.contrabassoon", 0, 0, -1, 0)
+    if re.search(r"\bbassoon\b|\bbsn\b", txt):
+        return InstrumentPlaybackProfile("wind.reed.bassoon")
+
+    if re.search(r"\bclarinet|\bcl\b", txt):
+        if re.search(r"\bcontrabass\b", txt):
+            if re.search(r"\beb\b|\bin\s+eb\b", txt):
+                return InstrumentPlaybackProfile("wind.reed.clarinet.contrabass", -5, -9, -1, 3)
+            return InstrumentPlaybackProfile("wind.reed.clarinet.contrabass", -1, -2, -2, 2)
+        if re.search(r"\bbass\b|\bb\.\s*cl\b", txt):
+            oct_chg = 0 if clef == ("F", "4") else -1
+            return InstrumentPlaybackProfile("wind.reed.clarinet.bass", -1, -2, oct_chg, 2)
+        if re.search(r"\balto\b|\ba\.\s*cl\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.clarinet.alto", -5, -9, 0, 3)
+        if re.search(r"\beb\s+(?:clarinet|cl)\b|\b(?:clarinet|cl)\s+in\s+eb\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.clarinet.eflat", 2, 3, 0, 3)
+        if re.search(r"\ba\s+(?:clarinet|cl)\b|\b(?:clarinet|cl)\s+in\s+a\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.clarinet.a", -2, -3, 0, -3)
+        if re.search(r"\bc\s+(?:clarinet|cl)\b|\b(?:clarinet|cl)\s+in\s+c\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.clarinet")
+        return InstrumentPlaybackProfile("wind.reed.clarinet.bflat", -1, -2, 0, 2)
+
+    if re.search(r"\bsax(?:ophone)?\b", txt):
+        if re.search(r"\bsoprano\b|\bs\.\s*sax\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.saxophone.soprano", -1, -2, 0, 2)
+        if re.search(r"\balto\b|\ba\.\s*sax\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.saxophone.alto", -5, -9, 0, 3)
+        if re.search(r"\btenor\b|\bt\.\s*sax\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.saxophone.tenor", -1, -2, -1, 2)
+        if re.search(r"\bbaritone\b|\bbar\.\s*sax\b", txt):
+            return InstrumentPlaybackProfile("wind.reed.saxophone.baritone", -5, -9, -1, 3)
+    return None
+
+
+def _infer_brass_profile(txt: str, clef: Optional[tuple[str, str]]) -> Optional[InstrumentPlaybackProfile]:
+    if re.search(r"\b(?:trumpet|tpt|cornet|cnt|flugelhorn|flgh)\b", txt):
+        if re.search(r"\bd\s+(?:trumpet|tpt)\b|\b(?:trumpet|tpt)\s+in\s+d\b", txt):
+            return InstrumentPlaybackProfile("brass.trumpet.d", 1, 2, 0, -2)
+        if re.search(r"\bc\s+(?:trumpet|tpt)\b|\b(?:trumpet|tpt)\s+in\s+c\b", txt):
+            return InstrumentPlaybackProfile("brass.trumpet.c")
+        if re.search(r"\beb\s+(?:trumpet|tpt|cornet|cnt)\b|\b(?:trumpet|tpt|cornet|cnt)\s+in\s+eb\b", txt):
+            return InstrumentPlaybackProfile("brass.trumpet", 2, 3, 0, 3)
+        if re.search(r"\ba\s+(?:trumpet|tpt)\b|\b(?:trumpet|tpt)\s+in\s+a\b", txt):
+            return InstrumentPlaybackProfile("brass.trumpet", -2, -3, 0, -3)
+        if re.search(r"\bflugelhorn\b|\bflgh\b", txt):
+            sound_id = "brass.flugelhorn"
+        elif re.search(r"\bcornet\b|\bcnt\b", txt) and not re.search(r"\btrumpet\b|\btpt\b", txt):
+            sound_id = "brass.cornet"
+        else:
+            sound_id = "brass.trumpet.bflat"
+        return InstrumentPlaybackProfile(sound_id, -1, -2, 0, 2)
+
+    if re.search(r"\b(?:eb\s+horn|alto\s+horn|tenor\s+horn)\b", txt):
+        return InstrumentPlaybackProfile("brass.alto-horn", -5, -9, 0, 3)
+    if re.search(r"\b(?:french\s+horn|f\s+horn|horn|hn)\b", txt):
+        return InstrumentPlaybackProfile("brass.french-horn", -4, -7, 0, 1)
+    if re.search(r"\bbass\s+trombone\b|\bb\.?\s*tbn\b", txt):
+        return InstrumentPlaybackProfile("brass.trombone.bass")
+
+    explicit_bb_treble = bool(re.search(r"\bbb\b|\bin\s+bb\b", txt)) and clef == ("G", "2")
+    if re.search(r"\btrombone\b|\btbn\b", txt):
+        if explicit_bb_treble:
+            return InstrumentPlaybackProfile("brass.trombone", -1, -2, -1, 2)
+        return InstrumentPlaybackProfile("brass.trombone")
+    if re.search(r"\b(?:baritone|euphonium|bar|euph)\b", txt):
+        if explicit_bb_treble:
+            return InstrumentPlaybackProfile("brass.euphonium", -1, -2, -1, 2)
+        return InstrumentPlaybackProfile("brass.euphonium")
+    if re.search(r"\b(?:tuba|tba|basses)\b", txt):
+        return InstrumentPlaybackProfile("brass.tuba")
+    return None
+
+
+def infer_instrument_profile(
+    name: str,
+    clef: Optional[tuple[str, str]] = None,
+) -> InstrumentPlaybackProfile:
+    """Infer MusicXML ``<instrument-sound>`` and transposition intervals from a part name."""
+    txt = (name or "").replace("♭", "b").replace("♯", "#")
+    txt = re.sub(r"\s+", " ", txt).strip().lower()
+    if not txt:
+        return InstrumentPlaybackProfile("voice")
+
+    if is_percussion_instrument(name):
+        for pat, sid in _UNPITCHED_SOUND_RULES:
+            if re.search(pat, txt):
+                return InstrumentPlaybackProfile(sid)
+        return InstrumentPlaybackProfile("drum.group")
+
+    for pat, sid in _PITCHED_PERCUSSION_RULES:
+        if re.search(pat, txt):
+            return InstrumentPlaybackProfile(sid)
+
+    ww = _infer_woodwind_profile(txt, clef)
+    if ww is not None:
+        return ww
+
+    # String/Double/Electric Bass must be checked BEFORE Tuba / "Basses"
+    if re.search(r"\b(?:string|double)\s+bass\b|\bcontrabass\b|\b(?:str|db)\.?\s*bass\b|\bcb\b", txt):
+        return InstrumentPlaybackProfile("strings.contrabass", 0, 0, -1, 0)
+    if re.search(r"\belectric\s+bass\b|\be\.\s*bass\b", txt):
+        return InstrumentPlaybackProfile("pluck.bass.electric", 0, 0, -1, 0)
+
+    br = _infer_brass_profile(txt, clef)
+    if br is not None:
+        return br
+
+    for pat, prof in _OTHER_INST_RULES:
+        if re.search(pat, txt):
+            return prof
+
+    return InstrumentPlaybackProfile("voice")
 
 
 def _label_from_cleaned_text(cleaned: str, raw_joined: str) -> InstrumentLabel:
