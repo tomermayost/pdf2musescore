@@ -797,3 +797,68 @@ def test_normalize_overfull_measure_tiers_and_backup_sync():
 
     res_ok = _run_one(setup_underfull)
     assert [int(n.findtext("duration")) for n in res_ok.findall("note")] == [4, 6]
+
+
+def test_normalize_interleaved_multivoice_deinterleaves_and_preserves_offsets():
+    # Exact reproduction of Green Hill P18 M46 (F Horn 1, 3): interleaved v1 + v2 with v1 overfull (17/16)
+    p1 = _make_part("P1", [(False, ("4", "4"))], divisions=4)
+    p2 = _make_part("P2", [(True, ("4", "4"))], divisions=4)
+    m = p1[1].find("measure")
+    for n in list(m.findall("note")):
+        m.remove(n)
+
+    # v1 D5(2) -> backup(2) -> v2 Eb4(12) -> backup(10) -> v1 C5(3), C5(8) -> backup(1), forward(1) -> v2 Eb4(4) -> backup(4) -> v1 C5(4)
+    g_n = ET.SubElement(m, "note")
+    ET.SubElement(g_n, "grace")
+    gp = ET.SubElement(g_n, "pitch")
+    ET.SubElement(gp, "step").text = "E"
+    ET.SubElement(gp, "octave").text = "5"
+    ET.SubElement(g_n, "voice").text = "1"
+    ET.SubElement(g_n, "type").text = "16th"
+
+    _add_rhythm_note(m, 2, "eighth", voice="1", step="D")
+    ET.SubElement(ET.SubElement(m, "backup"), "duration").text = "2"
+    _add_rhythm_note(m, 12, "half", dots=1, voice="2", step="E")
+    ET.SubElement(ET.SubElement(m, "backup"), "duration").text = "10"
+    _add_rhythm_note(m, 3, "eighth", dots=1, voice="1", step="C")
+    _add_rhythm_note(m, 8, "half", voice="1", step="C")
+    ET.SubElement(ET.SubElement(m, "backup"), "duration").text = "1"
+    ET.SubElement(ET.SubElement(m, "forward"), "duration").text = "1"
+    _add_rhythm_note(m, 4, "quarter", voice="2", step="E")
+    ET.SubElement(ET.SubElement(m, "backup"), "duration").text = "4"
+    _add_rhythm_note(m, 4, "quarter", voice="1", step="C")
+    ET.SubElement(m, "barline", location="right")
+
+    aligned, _ = align_page_score(_build_score([p1, p2]), page_num=13)
+    res_m = aligned.find("./part[@id='P1']/measure")
+
+    # Canonical output: grace+v1 [1,3,8,4] -> backup(16) -> v2 [12,4] -> barline, zero overlaps
+    assert [n.findtext("duration") for n in res_m.findall("note") if n.find("grace") is None] == [
+        "1", "3", "8", "4", "12", "4"
+    ]
+    assert [n.findtext("voice") for n in res_m.findall("note") if n.find("grace") is None] == [
+        "1", "1", "1", "1", "2", "2"
+    ]
+    assert res_m.find("note").find("grace") is not None and res_m.find("note").findtext("voice") == "1"
+    assert [b.findtext("duration") for b in res_m.findall("backup")] == ["16"]
+    assert res_m[-1].tag == "barline"
+
+    # Voice 2 entering on beat 3 (<forward>8) is preserved when Voice 1 is repaired
+    p_fw1 = _make_part("P1", [(False, ("4", "4"))], divisions=4)
+    p_fw2 = _make_part("P2", [(True, ("4", "4"))], divisions=4)
+    mf = p_fw1[1].find("measure")
+    for n in list(mf.findall("note")):
+        mf.remove(n)
+    _add_rhythm_note(mf, 2, "eighth", voice="1")
+    _add_rhythm_note(mf, 3, "eighth", dots=1, voice="1")
+    _add_rhythm_note(mf, 12, "half", dots=1, voice="1")  # sum=17 > 16
+    ET.SubElement(ET.SubElement(mf, "backup"), "duration").text = "17"
+    ET.SubElement(ET.SubElement(mf, "forward"), "duration").text = "8"
+    _add_rhythm_note(mf, 8, "half", voice="2")
+
+    aligned_fw, _ = align_page_score(_build_score([p_fw1, p_fw2]), page_num=1)
+    res_fw = aligned_fw.find("./part[@id='P1']/measure")
+    assert [b.findtext("duration") for b in res_fw.findall("backup")] == ["16"]
+    assert [f.findtext("duration") for f in res_fw.findall("forward")] == ["8"]
+    v2_durs = [n.findtext("duration") for n in res_fw.findall("note") if n.findtext("voice") == "2"]
+    assert v2_durs == ["8"]
