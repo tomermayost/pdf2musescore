@@ -67,7 +67,7 @@ def _make_part(
             p = ET.SubElement(note, "pitch")
             ET.SubElement(p, "step").text = "C"
             ET.SubElement(p, "octave").text = "4"
-        ET.SubElement(note, "duration").text = "8"
+        ET.SubElement(note, "duration").text = str(4 * divisions)
         ET.SubElement(note, "voice").text = "1"
         ET.SubElement(note, "staff").text = "1"
     return sp, part
@@ -336,3 +336,110 @@ def test_compute_conductor_scaling_tiers_and_invariant_errors(tmp_path):
     bad_ch_str.find(".//midi-channel").text = "abc"
     with pytest.raises(MergeError, match="non-integer MIDI channel"):
         verify_fullscore_invariants(bad_ch_str)
+
+
+def _set_measure_dur(measure: ET.Element, duration: int, *, voice: str = "1", rest: bool = False) -> None:
+    for ch in list(measure.findall("note")):
+        measure.remove(ch)
+    n = ET.SubElement(measure, "note")
+    if rest:
+        ET.SubElement(n, "rest")
+    else:
+        p = ET.SubElement(n, "pitch")
+        ET.SubElement(p, "step").text = "C"
+        ET.SubElement(p, "octave").text = "4"
+    ET.SubElement(n, "duration").text = str(duration)
+    ET.SubElement(n, "voice").text = voice
+    ET.SubElement(n, "staff").text = "1"
+
+
+def test_align_infers_midpage_meter_change_and_rejects_glitches():
+    # 5 parts (4/4 -> 2/4 -> 4/4) with NO explicit <time> on M2/M3:
+    # 3 playing parts have 16, 8, 16 (at div=4 -> 4, 2, 4 quarter beats); 2 rest parts have whole-bar rests.
+    parts_specs = []
+    for i in range(5):
+        sp, part = _make_part(
+            f"P{i + 1}",
+            [(i >= 3, ("4", "4")), (i >= 3, None), (i >= 3, None)],
+            divisions=4,
+        )
+        ms = part.findall("measure")
+        if i < 3:
+            _set_measure_dur(ms[0], 16)
+            _set_measure_dur(ms[1], 8)
+            _set_measure_dur(ms[2], 16)
+        parts_specs.append((sp, part))
+
+    root = _build_score(parts_specs)
+    aligned, end_ts = align_page_score(root, page_num=4)
+    assert end_ts == ("4", "4")
+    for p in aligned.findall("part"):
+        ms = p.findall("measure")
+        assert (ms[0].findtext("./attributes/time/beats"), ms[0].findtext("./attributes/time/beat-type")) == ("4", "4")
+        assert (ms[1].findtext("./attributes/time/beats"), ms[1].findtext("./attributes/time/beat-type")) == ("2", "4")
+        assert (ms[2].findtext("./attributes/time/beats"), ms[2].findtext("./attributes/time/beat-type")) == ("4", "4")
+    # Rest-only part on M2 got 2/4 full-measure rest duration (2 * div = 8)
+    assert aligned.findall("part")[4].findall("measure")[1].findtext("./note/duration") == "8"
+
+    # /8 meter inference (4/4 -> 7/8 -> 4/4) with div=2 (7/8 = 3.5 quarters = 7 units)
+    eight_specs = []
+    for i in range(4):
+        sp, part = _make_part(f"P{i + 1}", [(i == 3, ("4", "4")), (i == 3, None), (i == 3, None)], divisions=2)
+        ms = part.findall("measure")
+        if i < 3:
+            _set_measure_dur(ms[0], 8)
+            _set_measure_dur(ms[1], 7)
+            _set_measure_dur(ms[2], 8)
+        eight_specs.append((sp, part))
+    aligned_8, _ = align_page_score(_build_score(eight_specs), page_num=1)
+    m2_t = aligned_8.find("./part/measure[@number='2']/attributes/time")
+    assert (m2_t.findtext("beats"), m2_t.findtext("beat-type")) == ("7", "8")
+
+    # OMR glitch durations (17/4 = 17 units at div=4) are rejected
+    glitch_specs = []
+    for i in range(4):
+        sp, part = _make_part(f"P{i + 1}", [(i == 3, ("4", "4")), (i == 3, None)], divisions=4)
+        ms = part.findall("measure")
+        if i < 3:
+            _set_measure_dur(ms[0], 16)
+            _set_measure_dur(ms[1], 17)
+        glitch_specs.append((sp, part))
+    aligned_g, _ = align_page_score(_build_score(glitch_specs), page_num=1)
+    assert aligned_g.find("./part/measure[@number='2']/attributes/time") is None
+
+    # Preserves 6/8 without falsely switching to 3/4 when q = 3 quarters
+    compound_specs = []
+    for i in range(4):
+        sp, part = _make_part(f"P{i + 1}", [(i == 3, ("6", "8")), (i == 3, None)], divisions=2)
+        ms = part.findall("measure")
+        if i < 3:
+            _set_measure_dur(ms[0], 6)
+            _set_measure_dur(ms[1], 6)
+        compound_specs.append((sp, part))
+    aligned_c, _ = align_page_score(_build_score(compound_specs), page_num=1)
+    assert aligned_c.find("./part/measure[@number='2']/attributes/time") is None
+
+    # Genuine 4/4 pickup bar on M1 (1 quarter note) is NOT overridden when explicit 4/4 is present
+    pickup_specs = []
+    for i in range(4):
+        sp, part = _make_part(f"P{i + 1}", [(i == 3, ("4", "4")), (i == 3, None)], divisions=4)
+        ms = part.findall("measure")
+        if i < 3:
+            _set_measure_dur(ms[0], 4)
+            _set_measure_dur(ms[1], 16)
+        pickup_specs.append((sp, part))
+    aligned_pk, _ = align_page_score(_build_score(pickup_specs), page_num=1)
+    m1_t = aligned_pk.find("./part/measure[@number='1']/attributes/time")
+    assert (m1_t.findtext("beats"), m1_t.findtext("beat-type")) == ("4", "4")
+    assert aligned_pk.find("./part/measure[@number='2']/attributes/time") is None
+
+    # Tie-breaker on M1: 2 parts say 5/4, 2 parts say 6/4, playing duration is 6 quarters -> picks 6/4
+    tie_specs = []
+    for i in range(4):
+        ts = ("5", "4") if i < 2 else ("6", "4")
+        sp, part = _make_part(f"P{i + 1}", [(False, ts)], divisions=4)
+        _set_measure_dur(part.find("measure"), 24)
+        tie_specs.append((sp, part))
+    aligned_tie, _ = align_page_score(_build_score(tie_specs), page_num=1)
+    m1_tie = aligned_tie.find("./part/measure[@number='1']/attributes/time")
+    assert (m1_tie.findtext("beats"), m1_tie.findtext("beat-type")) == ("6", "4")

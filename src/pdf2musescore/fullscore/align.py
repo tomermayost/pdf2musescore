@@ -9,6 +9,7 @@ import re
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import asdict, dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -149,6 +150,46 @@ def _replace_measure_notes_with_rest(measure: ET.Element, expected_dur: int) -> 
         measure.append(note)
 
 
+def _time_sig_quarters(ts: tuple[str, str]) -> Optional[Fraction]:
+    try:
+        b = int(ts[0])
+        bt = int(ts[1])
+    except (TypeError, ValueError):
+        return None
+    if b <= 0 or bt <= 0:
+        return None
+    return Fraction(b * 4, bt)
+
+
+def _fraction_to_time_sig(q: Fraction) -> Optional[tuple[str, str]]:
+    if q.denominator == 1 and 2 <= q.numerator <= 7:
+        return (str(q.numerator), "4")
+    if q.denominator == 2 and q.numerator in (3, 5, 7, 9, 11):
+        return (str(q.numerator), "8")
+    return None
+
+
+def _measure_quarter_duration(measure: ET.Element, div: int) -> Optional[Fraction]:
+    if _is_rest_only_measure(measure):
+        return None
+    voice_totals: dict[str, int] = {}
+    for note in measure.findall("note"):
+        if note.find("chord") is not None or note.find("grace") is not None:
+            continue
+        dur_txt = (note.findtext("duration") or "").strip()
+        if not dur_txt.isdigit():
+            continue
+        dur = int(dur_txt)
+        voice = (note.findtext("voice") or "1").strip() or "1"
+        voice_totals[voice] = voice_totals.get(voice, 0) + dur
+    if not voice_totals:
+        return None
+    chosen = voice_totals["1"] if "1" in voice_totals else max(voice_totals.values())
+    if chosen <= 0:
+        return None
+    return Fraction(chosen, max(1, div))
+
+
 def align_page_score(
     root: ET.Element,
     page_num: int,
@@ -161,11 +202,12 @@ def align_page_score(
     if not parts:
         return root, fallback_ts
 
-    counts = [len(p.findall("measure")) for p in parts]
+    part_measures_list = [p.findall("measure") for p in parts]
+    counts = [len(ms) for ms in part_measures_list]
     count_freq = Counter(counts)
     pitched_by_count: Counter[int] = Counter()
-    for p, cnt in zip(parts, counts):
-        if any(not _is_rest_only_measure(m) for m in p.findall("measure")):
+    for ms, cnt in zip(part_measures_list, counts):
+        if any(not _is_rest_only_measure(m) for m in ms):
             pitched_by_count[cnt] += 1
 
     target_measures = max(
@@ -176,16 +218,32 @@ def align_page_score(
     if target_measures == 0:
         return root, fallback_ts
 
+    part_divs: list[list[int]] = []
+    for ms in part_measures_list:
+        divs_for_part: list[int] = []
+        cur_div = 4
+        for m in ms:
+            for a in m.findall("attributes"):
+                d_txt = a.findtext("divisions")
+                if d_txt and d_txt.strip().isdigit():
+                    cur_div = max(1, int(d_txt.strip()))
+            divs_for_part.append(cur_div)
+        part_divs.append(divs_for_part)
+
     global_ts: list[tuple[str, str]] = []
     active_global_ts: tuple[str, str] = fallback_ts
+    min_playing = 2 if len(parts) <= 4 else 3
     for mi in range(target_measures):
         pitched_votes: Counter[tuple[str, str]] = Counter()
         all_votes: Counter[tuple[str, str]] = Counter()
-        for p in parts:
-            ms = p.findall("measure")
+        pitched_q_votes: Counter[Fraction] = Counter()
+        for ms, divs in zip(part_measures_list, part_divs):
             if mi >= len(ms):
                 continue
             m = ms[mi]
+            q_dur = _measure_quarter_duration(m, divs[mi])
+            if q_dur is not None:
+                pitched_q_votes[q_dur] += 1
             ts = _extract_last_time(m)
             if ts is None:
                 continue
@@ -196,34 +254,73 @@ def align_page_score(
 
         if mi == 0:
             votes = pitched_votes if pitched_votes else all_votes
-            active_global_ts = votes.most_common(1)[0][0] if votes else fallback_ts
-        elif all_votes:
-            top_ts, top_all = all_votes.most_common(1)[0]
-            pitched_total = sum(pitched_votes.values())
-            top_pitched = pitched_votes.get(top_ts, 0)
-            quorum = top_all >= max(2, int(0.25 * len(parts))) or (
-                pitched_total >= 3 and top_pitched >= 0.4 * pitched_total
-            )
-            if quorum:
-                active_global_ts = top_ts
-                log.info(
-                    "Page %d measure %d: accepted global time-sig change -> %s/%s (all=%s, pitched=%s)",
-                    page_num,
-                    mi + 1,
-                    top_ts[0],
-                    top_ts[1],
-                    dict(all_votes),
-                    dict(pitched_votes),
+            if votes:
+                active_global_ts = max(
+                    votes.keys(),
+                    key=lambda ts: (
+                        votes[ts],
+                        pitched_q_votes.get(_time_sig_quarters(ts), 0)
+                        if _time_sig_quarters(ts) is not None
+                        else 0,
+                    ),
                 )
             else:
-                log.debug(
-                    "Page %d measure %d: ignored minority time-sig noise %s (kept %s/%s)",
-                    page_num,
-                    mi + 1,
-                    dict(all_votes),
-                    active_global_ts[0],
-                    active_global_ts[1],
+                active_global_ts = fallback_ts
+        else:
+            explicit_accepted = False
+            if all_votes:
+                top_ts, top_all = all_votes.most_common(1)[0]
+                pitched_total_ts = sum(pitched_votes.values())
+                top_pitched = pitched_votes.get(top_ts, 0)
+                quorum = top_all >= max(2, int(0.25 * len(parts))) or (
+                    pitched_total_ts >= 3 and top_pitched >= 0.4 * pitched_total_ts
                 )
+                if quorum:
+                    active_global_ts = top_ts
+                    explicit_accepted = True
+                    log.info(
+                        "Page %d measure %d: accepted global time-sig change -> %s/%s (all=%s, pitched=%s)",
+                        page_num,
+                        mi + 1,
+                        top_ts[0],
+                        top_ts[1],
+                        dict(all_votes),
+                        dict(pitched_votes),
+                    )
+                else:
+                    log.debug(
+                        "Page %d measure %d: ignored minority time-sig noise %s (kept %s/%s)",
+                        page_num,
+                        mi + 1,
+                        dict(all_votes),
+                        active_global_ts[0],
+                        active_global_ts[1],
+                    )
+            if not explicit_accepted and pitched_q_votes:
+                pitched_total_q = sum(pitched_q_votes.values())
+                top_q, top_q_cnt = pitched_q_votes.most_common(1)[0]
+                active_q = _time_sig_quarters(active_global_ts)
+                cand_ts = _fraction_to_time_sig(top_q)
+                if (
+                    pitched_total_q >= min_playing
+                    and cand_ts is not None
+                    and active_q is not None
+                    and top_q != active_q
+                    and top_q_cnt >= min_playing
+                    and top_q_cnt >= 0.65 * pitched_total_q
+                    and pitched_q_votes.get(active_q, 0) <= 0.25 * pitched_total_q
+                ):
+                    active_global_ts = cand_ts
+                    log.info(
+                        "Page %d measure %d: inferred global time-sig change -> %s/%s from playing-part duration consensus (%d/%d parts = %s quarters)",
+                        page_num,
+                        mi + 1,
+                        cand_ts[0],
+                        cand_ts[1],
+                        top_q_cnt,
+                        pitched_total_q,
+                        top_q,
+                    )
         global_ts.append(active_global_ts)
 
     log.info("Page %d global_ts timeline: %s", page_num, [f"{b}/{bt}" for b, bt in global_ts])

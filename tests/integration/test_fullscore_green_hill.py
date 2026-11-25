@@ -78,6 +78,12 @@ def test_fullscore_green_hill_opening_pages():
     assert summary["total_notes"] > 400
     assert root.findtext("defaults/scaling/millimeters") == "3.4"
 
+    # Page 4 opening bars must capture the 4/4 -> 2/4 -> 4/4 meter change uniformly across all 29 parts
+    p1_ms = root.findall("./part[@id='P1']/measure")
+    assert (p1_ms[0].findtext("./attributes/time/beats"), p1_ms[0].findtext("./attributes/time/beat-type")) == ("4", "4")
+    assert (p1_ms[1].findtext("./attributes/time/beats"), p1_ms[1].findtext("./attributes/time/beat-type")) == ("2", "4")
+    assert (p1_ms[2].findtext("./attributes/time/beats"), p1_ms[2].findtext("./attributes/time/beat-type")) == ("4", "4")
+
     sps = root.findall("./part-list/score-part")
     names = [sp.findtext("part-name") or "" for sp in sps]
     abbrs = [sp.findtext("part-abbreviation") or "" for sp in sps]
