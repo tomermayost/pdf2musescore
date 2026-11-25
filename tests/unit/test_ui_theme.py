@@ -12,6 +12,7 @@ from pdf2musescore.ui_theme import (
     apply_windows_titlebar_theme,
     configure_ttk_style,
     enable_high_dpi,
+    flash_windows_taskbar,
     format_elapsed,
     format_page_ranges,
     format_transpose_label,
@@ -174,3 +175,48 @@ def test_windows_dpi_and_titlebar_helpers(monkeypatch):
     )
     assert apply_windows_titlebar_theme(fake_win, True) is True
     assert dwm_attrs == [20, 19]
+
+
+def test_flash_windows_taskbar(monkeypatch):
+    monkeypatch.setattr(ui_theme.sys, "platform", "linux")
+    assert flash_windows_taskbar(SimpleNamespace()) is False
+
+    monkeypatch.setattr(ui_theme.sys, "platform", "win32")
+    flash_calls = []
+    beeps = []
+
+    fake_win = SimpleNamespace(update_idletasks=lambda: None, winfo_id=lambda: 5678)
+    monkeypatch.setattr(
+        ui_theme.ctypes,
+        "windll",
+        SimpleNamespace(
+            user32=SimpleNamespace(
+                GetParent=lambda hwnd: hwnd,
+                FlashWindowEx=lambda ptr: flash_calls.append(ptr) or 1,
+            ),
+        ),
+        raising=False,
+    )
+    import winsound
+
+    monkeypatch.setattr(winsound, "MessageBeep", lambda kind: beeps.append(kind))
+
+    assert flash_windows_taskbar(fake_win, play_sound=True) is True
+    assert len(flash_calls) == 1 and len(beeps) == 1
+
+    assert flash_windows_taskbar(fake_win, play_sound=False) is True
+    assert len(flash_calls) == 2 and len(beeps) == 1
+
+    # Exception resilience
+    monkeypatch.setattr(
+        ui_theme.ctypes,
+        "windll",
+        SimpleNamespace(
+            user32=SimpleNamespace(
+                GetParent=lambda hwnd: (_ for _ in ()).throw(OSError("boom")),
+                FlashWindowEx=lambda ptr: 1,
+            ),
+        ),
+        raising=False,
+    )
+    assert flash_windows_taskbar(fake_win, play_sound=False) is False

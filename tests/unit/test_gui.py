@@ -69,6 +69,7 @@ def calls():
         "launch": [],
         "url": [],
         "exit": [],
+        "flash": [],
     }
 
 
@@ -114,6 +115,7 @@ def make_app(
         on_exit=lambda: calls["exit"].append(True),
         theme=theme,
         prefs_path=prefs_path or (tmp_path / "preferences.json"),
+        flash_taskbar=lambda w: calls["flash"].append(w),
         **kwargs,
     )
 
@@ -919,5 +921,59 @@ def test_gui_activity_log_sticky_bottom_autoscroll(root, calls, tmp_path):
         assert app._log_warning_count == 0 and app._log_error_count == 0
         assert not app.log_section.badge_lbl.winfo_manager()
         pump(app, root, lambda: bool(app.result_banner.winfo_manager()))
+    finally:
+        close_app(app)
+
+
+def test_gui_completion_popup_and_taskbar_flash(root, calls, tmp_path):
+    app = make_app(root, calls, tmp_path)
+    try:
+        FakePipeline.behaviour = "ok"
+        app.on_load()
+        app.on_convert()
+        pump(app, root, lambda: bool(app.result_banner.winfo_manager()))
+
+        assert len(calls["flash"]) == 1
+        assert calls["flash"][0] is root
+        popup = app._completion_popup
+        assert popup is not None and popup.winfo_exists()
+        assert "song.mscz" in " ".join(
+            str(w.cget("text"))
+            for f in popup.winfo_children()
+            for sub in f.winfo_children()
+            for w in ([sub] + list(sub.winfo_children()))
+            if hasattr(w, "cget") and "text" in w.keys()
+        )
+
+        # Theme toggle updates open completion popup cleanly
+        app.toggle_theme()
+        assert popup.cget("bg") == app.palette.card
+
+        # Open button triggers open_file and closes popup
+        popup.open_btn.invoke()
+        assert calls["open_file"] == [str(Path("C:/x/song.mscz"))]
+        assert app._completion_popup is None
+
+        # Run again -> Reveal button triggers reveal_file and closes popup
+        app.on_convert()
+        pump(app, root, lambda: app._completion_popup is not None)
+        app._completion_popup.reveal_btn.invoke()
+        assert calls["reveal"] == [Path("C:/x/song.mscz")]
+        assert app._completion_popup is None
+
+        # Run again -> Close button closes popup; background error flashes taskbar
+        app.on_convert()
+        pump(app, root, lambda: app._completion_popup is not None)
+        app._completion_popup.close_btn.invoke()
+        assert app._completion_popup is None
+
+        # Starting a new conversion closes an existing open popup automatically
+        app.on_convert()
+        pump(app, root, lambda: app._completion_popup is not None)
+        FakePipeline.behaviour = "error"
+        app.on_convert()
+        assert app._completion_popup is None
+        pump(app, root, lambda: bool(calls["error"]))
+        assert len(calls["flash"]) == 5
     finally:
         close_app(app)

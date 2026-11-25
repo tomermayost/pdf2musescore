@@ -232,6 +232,48 @@ def apply_windows_titlebar_theme(window: tk.Misc, dark: bool) -> bool:
         return False
 
 
+class _FLASHWINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("hwnd", wintypes.HWND),
+        ("dwFlags", wintypes.DWORD),
+        ("uCount", wintypes.UINT),
+        ("dwTimeout", wintypes.DWORD),
+    ]
+
+
+def flash_windows_taskbar(window: tk.Misc, *, play_sound: bool = True) -> bool:
+    """Flash the Windows taskbar button and optionally play a subtle notification chime."""
+    if sys.platform != "win32":
+        return False
+    flashed = False
+    try:
+        windll = getattr(ctypes, "windll", None)
+        if windll is not None and hasattr(windll, "user32") and hasattr(windll.user32, "FlashWindowEx"):
+            window.update_idletasks()
+            hwnd = windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+            info = _FLASHWINFO(
+                cbSize=ctypes.sizeof(_FLASHWINFO),
+                hwnd=wintypes.HWND(hwnd),
+                dwFlags=0x00000003 | 0x0000000C,  # FLASHW_ALL | FLASHW_TIMERNOFG
+                uCount=0,
+                dwTimeout=0,
+            )
+            windll.user32.FlashWindowEx(ctypes.byref(info))
+            flashed = True
+    except Exception as exc:
+        log.debug("Windows taskbar flash skipped: %s", exc)
+
+    if play_sound:
+        try:
+            import winsound
+
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except Exception as exc:
+            log.debug("Notification beep skipped: %s", exc)
+    return flashed
+
+
 def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -> None:
     """Configure crisp ``clam``-based ttk styles matching ``palette``."""
     try:

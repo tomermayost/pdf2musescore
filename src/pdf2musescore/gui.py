@@ -63,6 +63,7 @@ from .ui_theme import (
     apply_windows_titlebar_theme,
     configure_ttk_style,
     enable_high_dpi,
+    flash_windows_taskbar,
     format_elapsed,
     format_transpose_label,
     get_assets_dir,
@@ -170,6 +171,7 @@ class App(ttk.Frame):
         model_manager: Optional[ModelManager] = None,
         prefetch_models: bool = True,
         dual_install_checker: Optional[Callable[[], Optional[DualInstallNotice]]] = None,
+        flash_taskbar: Optional[Callable[[tk.Misc], Any]] = None,
     ) -> None:
         self.config_ = config
         self._store_mode = is_msix_package() if store_mode is None else bool(store_mode)
@@ -205,6 +207,11 @@ class App(ttk.Frame):
         self.launch_installer = launch_installer
         self.open_url = open_url
         self._on_exit = on_exit or self._default_exit
+        self._flash_taskbar: Callable[[tk.Misc], Any] = (
+            flash_windows_taskbar if flash_taskbar is None else flash_taskbar
+        )
+        self._completion_popup: Optional[tk.Toplevel] = None
+        self._completion_accent: Optional[tk.Frame] = None
 
         chosen_theme = theme if theme is not None else self._prefs.theme
         self.theme_name = "dark" if (chosen_theme or "").strip().lower() == "dark" else "light"
@@ -1001,6 +1008,16 @@ class App(ttk.Frame):
         self._sync_score_mode_ui()
         self._sync_preset_indicators()
 
+        if self._completion_popup is not None and self._completion_popup.winfo_exists():
+            try:
+                self._completion_popup.configure(bg=p.card)
+                if self._completion_accent is not None and self._completion_accent.winfo_exists():
+                    self._completion_accent.configure(bg=p.success_border)
+                if self._master_window_state() != "withdrawn":
+                    apply_windows_titlebar_theme(self._completion_popup, p.is_dark)
+            except Exception:
+                pass
+
     def toggle_theme(self) -> None:
         self.apply_theme("light" if self.theme_name == "dark" else "dark")
         self.save_preferences()
@@ -1321,6 +1338,137 @@ class App(ttk.Frame):
             self.result_banner.pack(fill="x", pady=(8, 0))
             self._fit_window_to_content()
 
+    def _master_window_state(self) -> str:
+        try:
+            return str(self.master.state()).lower()
+        except Exception:
+            return "normal"
+
+    def _notify_taskbar(self) -> None:
+        try:
+            self._flash_taskbar(self.master)
+        except Exception as exc:
+            log.debug("Taskbar flash callback failed: %s", exc)
+
+    def _close_completion_popup(self) -> None:
+        popup = self._completion_popup
+        self._completion_popup = None
+        self._completion_accent = None
+        if popup is not None:
+            try:
+                if popup.winfo_exists():
+                    popup.destroy()
+            except Exception:
+                pass
+
+    def _show_completion_popup(self, out_path: Path, elapsed_text: str = "") -> tk.Toplevel:
+        """Show a themed on-top completion popup with quick Open/Reveal actions."""
+        self._close_completion_popup()
+        master_state = self._master_window_state()
+
+        popup = tk.Toplevel(self.master)
+        popup.withdraw()
+        popup.title("Conversion Complete — PDF to MuseScore")
+        popup.resizable(False, False)
+        popup.configure(bg=self.palette.card)
+
+        try:
+            ico_path = get_assets_dir() / "icon.ico"
+            if ico_path.is_file():
+                popup.iconbitmap(default=str(ico_path))
+        except Exception:
+            pass
+
+        accent_bar = tk.Frame(popup, bg=self.palette.success_border, height=4)
+        accent_bar.pack(fill="x")
+        self._completion_accent = accent_bar
+
+        body = ttk.Frame(popup, style="Card.TFrame", padding=(20, 14, 20, 16))
+        body.pack(fill="both", expand=True)
+
+        hdr = ttk.Frame(body, style="Card.TFrame")
+        hdr.pack(fill="x")
+        ttk.Label(hdr, text="✓  Conversion complete", style="CardTitle.TLabel").pack(side="left")
+        if elapsed_text:
+            ttk.Label(hdr, text=f"Completed in {elapsed_text}", style="Hint.TLabel").pack(
+                side="right", padx=(16, 0)
+            )
+
+        ttk.Label(body, text=out_path.name, style="CardTitle.TLabel").pack(anchor="w", pady=(10, 2))
+        ttk.Label(
+            body,
+            text=str(out_path.parent),
+            style="Hint.TLabel",
+            wraplength=380,
+        ).pack(anchor="w", pady=(0, 14))
+
+        is_mscz = out_path.suffix.lower() == ".mscz"
+        open_label = "Open in MuseScore" if (is_mscz or self.musescore_available()) else "Open Score"
+
+        def _open_and_close() -> None:
+            self._close_completion_popup()
+            self.on_open_result()
+
+        def _reveal_and_close() -> None:
+            self._close_completion_popup()
+            self.on_reveal_result()
+
+        btn_row = ttk.Frame(body, style="Card.TFrame")
+        btn_row.pack(fill="x")
+        open_btn = ttk.Button(
+            btn_row,
+            text=open_label,
+            style="Primary.TButton",
+            command=_open_and_close,
+        )
+        open_btn.pack(side="left", padx=(0, 8))
+        reveal_btn = ttk.Button(
+            btn_row,
+            text="Show in Folder",
+            style="Secondary.TButton",
+            command=_reveal_and_close,
+        )
+        reveal_btn.pack(side="left", padx=(0, 8))
+        close_btn = ttk.Button(
+            btn_row,
+            text="Close",
+            style="Secondary.TButton",
+            command=self._close_completion_popup,
+        )
+        close_btn.pack(side="right")
+
+        popup.open_btn = open_btn  # type: ignore[attr-defined]
+        popup.reveal_btn = reveal_btn  # type: ignore[attr-defined]
+        popup.close_btn = close_btn  # type: ignore[attr-defined]
+
+        popup.protocol("WM_DELETE_WINDOW", self._close_completion_popup)
+        popup.bind("<Escape>", lambda _e: self._close_completion_popup())
+        popup.bind("<Return>", lambda _e: _open_and_close())
+
+        popup.update_idletasks()
+        w = max(360, popup.winfo_reqwidth())
+        h = popup.winfo_reqheight()
+        sw = max(w, popup.winfo_screenwidth())
+        sh = max(h, popup.winfo_screenheight())
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 3)
+        popup.geometry(f"{w}x{h}+{x}+{y}")
+
+        try:
+            popup.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        if master_state != "withdrawn":
+            apply_windows_titlebar_theme(popup, self.palette.is_dark)
+            popup.deiconify()
+            popup.lift()
+            popup.focus_force()
+
+        self._completion_popup = popup
+        log.info("Displayed completion popup for %s", out_path.name)
+        return popup
+
     # ---------- Actions & Updates ----------
     def _start_update_check(self) -> None:
         def check() -> None:
@@ -1550,6 +1698,7 @@ class App(ttk.Frame):
         options: Optional[ConversionOptions] = None,
     ) -> None:
         self._cancel_event.clear()
+        self._close_completion_popup()
         self._hide_result_banner()
         self._log_warning_count = 0
         self._log_error_count = 0
@@ -1722,11 +1871,18 @@ class App(ttk.Frame):
                 self._confirm_event.set()
             elif kind == "done":
                 out_path = Path(payload)
+                elapsed_text = (
+                    format_elapsed(time.monotonic() - self._started_at)
+                    if self._started_at > 0
+                    else ""
+                )
                 self._set_busy(False)
                 self.progress["value"] = 100
                 self.pct_var.set("100%")
                 self.status_var.set(f"Done! Saved {out_path.name}")
                 self._show_result_banner(out_path)
+                self._notify_taskbar()
+                self._show_completion_popup(out_path, elapsed_text)
             elif kind == "aborted":
                 self._set_busy(False)
                 self.progress["value"] = 0
@@ -1738,6 +1894,7 @@ class App(ttk.Frame):
                 self.pct_var.set("0%")
                 self.status_var.set("Conversion failed. See Activity Log for details.")
                 self.log_section.set_expanded(True)
+                self._notify_taskbar()
                 self.show_error("Conversion failed", payload)
             elif kind == "update_available":
                 self._available_update = payload
@@ -1804,6 +1961,7 @@ class App(ttk.Frame):
         self._after_id = self.after(self.POLL_MS, self._poll)
 
     def destroy(self) -> None:
+        self._close_completion_popup()
         try:
             self.save_preferences()
         except Exception:
