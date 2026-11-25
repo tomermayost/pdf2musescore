@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset
+  xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+  xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://tomermayost.github.io/pdf2musescore/</loc>
+    <lastmod>2026-11-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://tomermayost.github.io/pdf2musescore/assets/before-after-bach.png</image:loc>
+      <image:title>Before and After Bach Cello Suite No. 2 PDF to MuseScore 4 conversion</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://tomermayost.github.io/pdf2musescore/assets/social-preview.png</image:loc>
+      <image:title>PDF to MuseScore free offline Windows desktop sheet music converter</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://tomermayost.github.io/pdf2musescore/assets/ui-dark.png</image:loc>
+      <image:title>PDF to MuseScore Dark Studio interface with Advanced AI Settings</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://tomermayost.github.io/pdf2musescore/assets/ui-light.png</image:loc>
+      <image:title>PDF to MuseScore Light Studio interface with live preview</image:title>
+    </image:image>
+  </url>
+</urlset>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
+SITE_URL = "https://tomermayost.github.io/pdf2musescore/"
 
 
 class _LandingPageParser(HTMLParser):
@@ -19,7 +21,8 @@ class _LandingPageParser(HTMLParser):
         self.title_chunks: list[str] = []
         self._in_title = False
         self._in_jsonld = False
-        self.jsonld_chunks: list[str] = []
+        self._current_jsonld: list[str] = []
+        self.jsonld_blocks: list[str] = []
         self.meta_tags: list[dict[str, str]] = []
         self.links: list[dict[str, str]] = []
         self.anchors: list[str] = []
@@ -47,6 +50,7 @@ class _LandingPageParser(HTMLParser):
         elif t == "script":
             if attr_map.get("type") == "application/ld+json":
                 self._in_jsonld = True
+                self._current_jsonld = []
             if "src" in attr_map:
                 self.scripts.append(attr_map["src"])
 
@@ -54,19 +58,21 @@ class _LandingPageParser(HTMLParser):
         t = tag.lower()
         if t == "title":
             self._in_title = False
-        elif t == "script":
+        elif t == "script" and self._in_jsonld:
+            self.jsonld_blocks.append("".join(self._current_jsonld))
+            self._current_jsonld = []
             self._in_jsonld = False
 
     def handle_data(self, data: str) -> None:
         if self._in_title:
             self.title_chunks.append(data)
         if self._in_jsonld:
-            self.jsonld_chunks.append(data)
+            self._current_jsonld.append(data)
 
 
 def test_landing_page_files_exist() -> None:
     assert (DOCS / ".nojekyll").is_file()
-    for rel in ("index.html", "styles.css", "app.js", "assets/favicon.png"):
+    for rel in ("index.html", "styles.css", "app.js", "robots.txt", "sitemap.xml", "assets/favicon.png"):
         path = DOCS / rel
         assert path.is_file(), f"Missing landing page file: docs/{rel}"
         assert path.stat().st_size > 0, f"Empty landing page file: docs/{rel}"
@@ -93,16 +99,36 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     by_prop = {m.get("property"): m.get("content", "") for m in parser.meta_tags if "property" in m}
 
     assert len(by_name.get("description", "")) >= 50
+    assert "index" in by_name.get("robots", "") and "follow" in by_name.get("robots", "")
+    assert by_name.get("author") == "Tomer Mayost"
+    assert by_name.get("theme-color") == "#0f172a"
     assert by_name.get("twitter:card") == "summary_large_image"
+    assert len(by_name.get("twitter:image:alt", "")) >= 20
+    assert by_prop.get("og:site_name") == "PDF to MuseScore"
     assert by_prop.get("og:image", "").endswith("assets/social-preview.png")
-    assert by_prop.get("og:url") == "https://tomermayost.github.io/pdf2musescore/"
+    assert len(by_prop.get("og:image:alt", "")) >= 20
+    assert by_prop.get("og:url") == SITE_URL
 
-    # Valid JSON-LD SoftwareApplication metadata
-    ld = json.loads("".join(parser.jsonld_chunks))
-    assert ld["@type"] == "SoftwareApplication"
+    # Valid JSON-LD SoftwareApplication and FAQPage metadata
+    jsonld_by_type = {doc.get("@type"): doc for doc in (json.loads(b) for b in parser.jsonld_blocks)}
+    assert {"SoftwareApplication", "FAQPage"}.issubset(set(jsonld_by_type))
+
+    ld = jsonld_by_type["SoftwareApplication"]
+    assert "PDF2MuseScore" in ld["alternateName"]
+    assert "https://github.com/tomermayost/pdf2musescore" in ld["sameAs"]
+    assert "https://apps.microsoft.com/detail/9N6NCBWM3BHT" in ld["sameAs"]
+    assert len(ld["screenshot"]) >= 2
+    assert len(ld["featureList"]) >= 4
     assert ld["offers"]["price"] == "0"
     assert ld["installUrl"] == "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
     assert ld["downloadUrl"] == "https://github.com/tomermayost/pdf2musescore/releases/latest"
+
+    faq = jsonld_by_type["FAQPage"]
+    assert len(faq["mainEntity"]) == 6
+    for q in faq["mainEntity"]:
+        assert q["@type"] == "Question"
+        assert len(q["name"]) > 10
+        assert len(q["acceptedAnswer"]["text"]) > 20
 
     # Primary Store install link and standalone .exe fallback link exist
     assert "https://apps.microsoft.com/detail/9N6NCBWM3BHT" in parser.anchors
@@ -143,3 +169,29 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert "preparing a Microsoft-signed" not in html_text
     assert "submitted for Store review" not in html_text
     assert "drag and drop" in html_text.lower()
+
+
+def test_robots_txt_and_sitemap_xml() -> None:
+    robots = (DOCS / "robots.txt").read_text(encoding="utf-8")
+    assert "User-agent: *" in robots
+    assert "Allow: /" in robots
+    assert f"Sitemap: {SITE_URL}sitemap.xml" in robots
+
+    tree = ET.parse(DOCS / "sitemap.xml")
+    root = tree.getroot()
+    ns = {
+        "sm": "http://www.sitemaps.org/schemas/sitemap/0.9",
+        "image": "http://www.google.com/schemas/sitemap-image/1.1",
+    }
+    locs = [el.text for el in root.findall("sm:url/sm:loc", ns)]
+    assert locs == [SITE_URL]
+
+    img_locs = [el.text for el in root.findall("sm:url/image:image/image:loc", ns) if el.text]
+    assert len(img_locs) >= 4
+    for img_url in img_locs:
+        assert img_url.startswith(SITE_URL)
+        rel = img_url.removeprefix(SITE_URL)
+        asset_path = DOCS / rel
+        assert asset_path.is_file(), f"Sitemap image missing: docs/{rel}"
+        with Image.open(asset_path) as im:
+            assert im.width > 0 and im.height > 0

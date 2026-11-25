@@ -4,37 +4,61 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PDF to MuseScore — Free, Offline AI Sheet Music Converter for Windows</title>
-  <meta name="description" content="Convert sheet music PDFs into editable MuseScore 4 (.mscz) and MusicXML files for free. 100% local offline AI powered by homr — no account, no page limits, no Python or Java setup.">
+  <meta name="description" content="Free, offline Windows app converting sheet music PDFs & photos to MuseScore (.mscz) and MusicXML via local homr AI. On Microsoft Store — no limits.">
   <meta name="keywords" content="convert pdf to musescore, pdf to musicxml, sheet music omr, free optical music recognition, homr gui, musescore 4 pdf converter">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta name="author" content="Tomer Mayost">
+  <meta name="theme-color" content="#0f172a">
   <link rel="canonical" href="https://tomermayost.github.io/pdf2musescore/">
   <link rel="icon" type="image/png" href="assets/favicon.png">
 
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PDF to MuseScore">
   <meta property="og:url" content="https://tomermayost.github.io/pdf2musescore/">
   <meta property="og:title" content="PDF to MuseScore — Free, Offline AI Sheet Music Converter">
   <meta property="og:description" content="Turn printed scores, faded scans, and phone photos into editable MuseScore 4 (.mscz) and MusicXML scores locally on your Windows PC. Free, open source, no limits.">
   <meta property="og:image" content="https://tomermayost.github.io/pdf2musescore/assets/social-preview.png">
   <meta property="og:image:width" content="1280">
   <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="PDF to MuseScore Dark Studio UI converting sheet music PDFs and photos into MuseScore 4 scores">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="PDF to MuseScore — Free, Offline AI Sheet Music Converter">
   <meta name="twitter:description" content="Convert sheet music PDFs to editable MuseScore 4 (.mscz) and MusicXML locally on Windows. Free, open source, no account or page limits.">
   <meta name="twitter:image" content="https://tomermayost.github.io/pdf2musescore/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="PDF to MuseScore Dark Studio UI converting sheet music PDFs and photos into MuseScore 4 scores">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "PDF to MuseScore",
+    "alternateName": ["PDF2MuseScore", "pdf2musescore"],
     "operatingSystem": "Windows 10, Windows 11",
     "applicationCategory": "MultimediaApplication",
-    "description": "Free, offline Windows desktop application converting sheet music PDFs into editable MuseScore 4 (.mscz) and MusicXML scores using local homr AI.",
+    "applicationSubCategory": "Optical Music Recognition",
+    "description": "Free, offline Windows desktop application converting sheet music PDFs and photos into editable MuseScore 4 (.mscz) and MusicXML scores using local homr AI.",
     "softwareVersion": "0.4.7",
+    "softwareRequirements": "Windows 10 or Windows 11 (64-bit), x86-64 CPU with AVX2 & SSE4.2, 4 GB RAM minimum (8 GB recommended)",
     "license": "https://www.gnu.org/licenses/agpl-3.0.en.html",
     "url": "https://tomermayost.github.io/pdf2musescore/",
     "installUrl": "https://apps.microsoft.com/detail/9N6NCBWM3BHT",
     "downloadUrl": "https://github.com/tomermayost/pdf2musescore/releases/latest",
+    "image": "https://tomermayost.github.io/pdf2musescore/assets/social-preview.png",
+    "screenshot": [
+      "https://tomermayost.github.io/pdf2musescore/assets/ui-dark.png",
+      "https://tomermayost.github.io/pdf2musescore/assets/before-after-bach.png"
+    ],
+    "featureList": [
+      "100% local offline AI music recognition powered by homr ONNX models",
+      "Converts PDFs and sheet music photos (.png, .jpg, .webp, .bmp, .tif) with drag and drop",
+      "Direct .mscz and MusicXML (.musicxml) export with MuseScore 4 sanitization",
+      "Built-in interactive page picker, scan presets, clef override, and semitone transposition"
+    ],
+    "sameAs": [
+      "https://github.com/tomermayost/pdf2musescore",
+      "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
+    ],
     "author": {
       "@type": "Person",
       "name": "Tomer Mayost"
@@ -44,6 +68,63 @@
       "price": "0",
       "priceCurrency": "USD"
     }
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Does PDF to MuseScore upload my sheet music anywhere?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. All PDF rendering and AI music recognition runs 100% locally on your CPU. The only optional network requests are downloading the open-source homr and RapidOCR ONNX model weights once during installation (or automatically on startup if missing), and a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via check_updates = false)."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Why does Windows SmartScreen warn about the standalone .exe installer?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "For zero SmartScreen warnings and automatic updates, install the Microsoft-signed Microsoft Store edition. The standalone GitHub .exe installer is not signed with a commercial EV certificate yet, so SmartScreen may appear — click More info then Run anyway, or verify every public CI build using SHA256SUMS.txt and GitHub Build Provenance Attestations."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Do I need MuseScore, Python, or Java installed?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No Python or Java setup is needed — everything is bundled in the Windows Setup Wizard. If MuseScore 4 is installed, the app automatically saves directly as .mscz (and offers to install it or export pure .musicxml if MuseScore is not detected)."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How are the ~180 MB AI models downloaded?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "To keep the Windows installer compact, the open-source homr and RapidOCR neural network weights (~180 MB) are downloaded once during installation (or automatically in the background when the app starts if missing, such as in offline installs or Microsoft Store builds) and cached locally for offline use afterward."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What are the minimum system requirements?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "64-bit Windows 10 or Windows 11, an x86-64 CPU with AVX2 & SSE4.2 (Intel 4th-gen Core 2013+ or AMD 2015+), 8 GB RAM recommended (4 GB minimum — on low-RAM laptops, close other apps or lower Scan Quality DPI to 200), and ~500 MB of free disk space."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Where can I report a bug, share sample scores, or request features?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Join GitHub Discussions to ask questions or share tips, or open a ticket in GitHub Issues (clicking Open log folder in the bottom-right of the app attaches helpful diagnostic logs)."
+        }
+      }
+    ]
   }
   </script>
 
