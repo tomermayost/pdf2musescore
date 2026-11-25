@@ -1660,6 +1660,13 @@ class App(ttk.Frame):
         self.reveal_file(self._last_output)
 
     # ---------- Queue Processing (GUI Thread) ----------
+    def _is_log_at_bottom(self) -> bool:
+        """Return True when the Activity Log viewport is scrolled to the tail (or empty/unmapped)."""
+        if self.log_text.index("end-1c") == "1.0":
+            return True
+        first, last = self.log_text.yview()
+        return last >= 0.999 or (first == 0.0 and last == 0.0)
+
     def _append_log(self, payload: object) -> None:
         if isinstance(payload, tuple) and len(payload) == 2:
             levelno, text = int(payload[0]), str(payload[1])
@@ -1677,9 +1684,11 @@ class App(ttk.Frame):
         else:
             tag = "INFO"
 
+        follow = self._is_log_at_bottom()
         self.log_text.configure(state="normal")
         self.log_text.insert("end", text + "\n", (tag,))
-        self.log_text.see("end")
+        if follow:
+            self.log_text.yview_moveto(1.0)
         self.log_text.configure(state="disabled")
 
         if self._log_error_count > 0:

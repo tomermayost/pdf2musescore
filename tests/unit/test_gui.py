@@ -877,3 +877,37 @@ def test_gui_full_score_mode_toggle_presets_busy_validation_and_persistence(root
         assert str(app2.full_score_width_entry["state"]) == "normal"
     finally:
         close_app(app2)
+
+
+def test_gui_activity_log_sticky_bottom_autoscroll(root, calls, tmp_path):
+    app = make_app(root, calls, tmp_path)
+    try:
+        app.log_section.set_expanded(True)
+        root.update_idletasks()
+        root.update()
+
+        # Populate enough lines to exceed the 4-line text widget viewport -> stays at bottom
+        for i in range(30):
+            app._append_log((logging.INFO, f"line {i}"))
+        root.update_idletasks()
+        assert app._is_log_at_bottom() is True
+        assert app.log_text.yview()[1] >= 0.999
+
+        # User scrolls up to top -> new log lines must NOT jump back to bottom
+        app.log_text.yview_moveto(0.0)
+        root.update_idletasks()
+        assert app._is_log_at_bottom() is False
+        app._append_log((logging.INFO, "new line while reading history"))
+        root.update_idletasks()
+        assert app.log_text.yview()[0] == 0.0
+        assert app._is_log_at_bottom() is False
+
+        # User scrolls back to bottom -> auto-scroll resumes for subsequent lines
+        app.log_text.yview_moveto(1.0)
+        root.update_idletasks()
+        assert app._is_log_at_bottom() is True
+        app._append_log((logging.INFO, "tail resumed"))
+        root.update_idletasks()
+        assert app.log_text.yview()[1] >= 0.999
+    finally:
+        close_app(app)
