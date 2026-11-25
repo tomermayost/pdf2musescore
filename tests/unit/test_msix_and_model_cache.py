@@ -153,6 +153,104 @@ def test_configure_model_cache_redirects_and_triggers_redownload_on_upgrade(tmp_
     assert not ocr_v1.exists()
 
 
+def test_configure_model_cache_patches_fresh_filepaths_instances(tmp_path: Path) -> None:
+    class FakeFilePaths:
+        def __init__(self) -> None:
+            self.encoder_path = "C:/readonly/homr/transformer/encoder.onnx"
+            self.decoder_path = "C:/readonly/homr/transformer/decoder.onnx"
+            self.encoder_path_fp16 = "C:/readonly/homr/transformer/encoder_fp16.onnx"
+            self.decoder_path_fp16 = "C:/readonly/homr/transformer/decoder_fp16.onnx"
+            self.rhythmtokenizer = "C:/readonly/homr/transformer/tokenizer_rhythm.json"
+
+    fake_seg_cfg = SimpleNamespace(
+        segnet_path_onnx="C:/readonly/homr/segmentation/segnet.onnx",
+        segnet_path_onnx_fp16="C:/readonly/homr/segmentation/segnet_fp16.onnx",
+    )
+    fake_main = SimpleNamespace(
+        segnet_path_onnx=fake_seg_cfg.segnet_path_onnx,
+        segnet_path_onnx_fp16=fake_seg_cfg.segnet_path_onnx_fp16,
+    )
+    fake_inf = SimpleNamespace(
+        segnet_path_onnx=fake_seg_cfg.segnet_path_onnx,
+        segnet_path_onnx_fp16=fake_seg_cfg.segnet_path_onnx_fp16,
+    )
+    fake_tr_cfg = SimpleNamespace(
+        FilePaths=FakeFilePaths,
+        default_config=SimpleNamespace(filepaths=FakeFilePaths()),
+    )
+
+    dir1 = tmp_path / "m1"
+    dir2 = tmp_path / "m2"
+    configure_model_cache(
+        dir1,
+        homr_version="0.7.1",
+        rapidocr_version="3.10.0",
+        homr_main=fake_main,
+        homr_seg_cfg=fake_seg_cfg,
+        homr_seg_inf=fake_inf,
+        homr_tr_cfg=fake_tr_cfg,
+    )
+    first_wrapped = FakeFilePaths.__init__
+    fp1 = FakeFilePaths()
+    assert Path(fp1.encoder_path) == dir1 / "homr" / "0.7.1" / "transformer" / "encoder.onnx"
+    assert fp1.rhythmtokenizer == "C:/readonly/homr/transformer/tokenizer_rhythm.json"
+
+    # Second call updates class target dir idempotently without re-wrapping __init__
+    configure_model_cache(
+        dir2,
+        homr_version="0.7.2",
+        rapidocr_version="3.10.0",
+        homr_main=fake_main,
+        homr_seg_cfg=fake_seg_cfg,
+        homr_seg_inf=fake_inf,
+        homr_tr_cfg=fake_tr_cfg,
+    )
+    assert FakeFilePaths.__init__ is first_wrapped
+    fp2 = FakeFilePaths()
+    assert Path(fp2.decoder_path_fp16) == dir2 / "homr" / "0.7.2" / "transformer" / "decoder_fp16.onnx"
+
+    # Real homr.transformer.configs.Config() created later also honors redirected model cache
+    import homr.main as real_main
+    import homr.segmentation.config as real_seg_cfg
+    import homr.segmentation.inference_segnet as real_seg_inf
+    import homr.transformer.configs as real_tr_cfg
+
+    orig_seg = (
+        real_seg_cfg.segnet_path_onnx,
+        real_seg_cfg.segnet_path_onnx_fp16,
+        real_main.segnet_path_onnx,
+        real_main.segnet_path_onnx_fp16,
+        real_seg_inf.segnet_path_onnx,
+        real_seg_inf.segnet_path_onnx_fp16,
+    )
+    real_default_fp = real_tr_cfg.default_config.filepaths
+    orig_tr_attrs = {
+        a: getattr(real_default_fp, a)
+        for a in ("encoder_path", "decoder_path", "encoder_path_fp16", "decoder_path_fp16")
+    }
+    orig_cls_tr_dir = getattr(real_tr_cfg.FilePaths, "_pdf2musescore_tr_dir", None)
+    try:
+        real_models = tmp_path / "real_models"
+        hdir, _ = configure_model_cache(real_models)
+        fresh_cfg = real_tr_cfg.Config()
+        for attr in ("encoder_path", "decoder_path", "encoder_path_fp16", "decoder_path_fp16"):
+            assert Path(getattr(fresh_cfg.filepaths, attr)).parent == hdir / "transformer"
+        for tok_attr in ("rhythmtokenizer", "lifttokenizer", "pitchtokenizer", "notetokenizer"):
+            assert Path(getattr(fresh_cfg.filepaths, tok_attr)).is_file()
+    finally:
+        (
+            real_seg_cfg.segnet_path_onnx,
+            real_seg_cfg.segnet_path_onnx_fp16,
+            real_main.segnet_path_onnx,
+            real_main.segnet_path_onnx_fp16,
+            real_seg_inf.segnet_path_onnx,
+            real_seg_inf.segnet_path_onnx_fp16,
+        ) = orig_seg
+        for attr, val in orig_tr_attrs.items():
+            setattr(real_default_fp, attr, val)
+        real_tr_cfg.FilePaths._pdf2musescore_tr_dir = orig_cls_tr_dir
+
+
 def test_prune_stale_version_dirs_handles_missing_and_error(tmp_path: Path, monkeypatch) -> None:
     assert prune_stale_version_dirs(tmp_path / "missing", "0.7.1") == []
 

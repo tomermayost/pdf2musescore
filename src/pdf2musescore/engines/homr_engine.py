@@ -91,6 +91,21 @@ def sanitize_version(raw: str) -> str:
     return re.sub(r"[^0-9A-Za-z._-]", "_", cleaned)
 
 
+_TRANSFORMER_WEIGHT_ATTRS: tuple[str, ...] = (
+    "encoder_path",
+    "decoder_path",
+    "encoder_path_fp16",
+    "decoder_path_fp16",
+)
+
+
+def _redirect_transformer_filepaths(filepaths: Any, tr_dir: Path) -> None:
+    """Redirect downloadable transformer ONNX weight attributes into ``tr_dir``."""
+    for attr in _TRANSFORMER_WEIGHT_ATTRS:
+        if hasattr(filepaths, attr):
+            setattr(filepaths, attr, str(tr_dir / Path(getattr(filepaths, attr)).name))
+
+
 def _apply_homr_model_paths(
     seg_dir: Path,
     tr_dir: Path,
@@ -121,10 +136,23 @@ def _apply_homr_model_paths(
         if hasattr(mod, "segnet_path_onnx_fp16"):
             mod.segnet_path_onnx_fp16 = new_seg_fp16
 
-    filepaths = homr_tr_cfg.default_config.filepaths
-    for attr in ("encoder_path", "decoder_path", "encoder_path_fp16", "decoder_path_fp16"):
-        if hasattr(filepaths, attr):
-            setattr(filepaths, attr, str(tr_dir / Path(getattr(filepaths, attr)).name))
+    _redirect_transformer_filepaths(homr_tr_cfg.default_config.filepaths, tr_dir)
+    fp_cls = getattr(homr_tr_cfg, "FilePaths", None)
+    if isinstance(fp_cls, type):
+        # homr.main.process_image constructs a fresh Config() -> FilePaths() on every page;
+        # wrap __init__ idempotently so newly constructed instances use the writable tr_dir too.
+        fp_cls._pdf2musescore_tr_dir = tr_dir
+        if not hasattr(fp_cls, "_pdf2musescore_orig_init"):
+            orig_init = fp_cls.__init__
+
+            def _patched_filepaths_init(self: Any, *args: Any, **kwargs: Any) -> None:
+                orig_init(self, *args, **kwargs)
+                active_tr_dir = getattr(type(self), "_pdf2musescore_tr_dir", None)
+                if active_tr_dir is not None:
+                    _redirect_transformer_filepaths(self, Path(active_tr_dir))
+
+            fp_cls._pdf2musescore_orig_init = orig_init
+            fp_cls.__init__ = _patched_filepaths_init
 
 
 def configure_model_cache(

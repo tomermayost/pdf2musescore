@@ -55,13 +55,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"pdf2musescore {__version__} (homr {get_engine_version()}) ({AUTHOR_CREDIT})")
         return 0
     if "--self-test" in args:
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
         import cv2  # noqa: F401
         import homr.main  # noqa: F401
+        import homr.segmentation.config as homr_seg_cfg
+        import homr.segmentation.inference_segnet as homr_seg_inf
+        import homr.transformer.configs as homr_tr_cfg
         import onnxruntime as ort  # noqa: F401
         import pypdfium2  # noqa: F401
         import rapidocr  # noqa: F401
         from PIL import ImageTk  # noqa: F401
 
+        from pdf2musescore.engines.homr_engine import configure_model_cache
         from pdf2musescore.ui_theme import get_assets_dir
 
         assets = get_assets_dir()
@@ -70,6 +77,41 @@ def main(argv: list[str] | None = None) -> int:
         assert get_engine_version() != "unknown"
         assert get_rapidocr_version() != "unknown"
         assert ort.get_available_providers()
+
+        orig_seg_paths = (
+            homr_seg_cfg.segnet_path_onnx,
+            homr_seg_cfg.segnet_path_onnx_fp16,
+            homr.main.segnet_path_onnx,
+            homr.main.segnet_path_onnx_fp16,
+            homr_seg_inf.segnet_path_onnx,
+            homr_seg_inf.segnet_path_onnx_fp16,
+        )
+        fp_default = homr_tr_cfg.default_config.filepaths
+        orig_tr_attrs = {
+            a: getattr(fp_default, a)
+            for a in ("encoder_path", "decoder_path", "encoder_path_fp16", "decoder_path_fp16")
+        }
+        orig_cls_tr_dir = getattr(homr_tr_cfg.FilePaths, "_pdf2musescore_tr_dir", None)
+        try:
+            with TemporaryDirectory() as td:
+                hdir, _ = configure_model_cache(Path(td))
+                fresh_fp = homr_tr_cfg.Config().filepaths
+                for attr in ("encoder_path", "decoder_path", "encoder_path_fp16", "decoder_path_fp16"):
+                    assert Path(getattr(fresh_fp, attr)).parent == hdir / "transformer"
+                assert Path(homr_seg_inf.segnet_path_onnx).parent == hdir / "segmentation"
+                assert Path(fresh_fp.rhythmtokenizer).is_file()
+        finally:
+            (
+                homr_seg_cfg.segnet_path_onnx,
+                homr_seg_cfg.segnet_path_onnx_fp16,
+                homr.main.segnet_path_onnx,
+                homr.main.segnet_path_onnx_fp16,
+                homr_seg_inf.segnet_path_onnx,
+                homr_seg_inf.segnet_path_onnx_fp16,
+            ) = orig_seg_paths
+            for attr, val in orig_tr_attrs.items():
+                setattr(fp_default, attr, val)
+            homr_tr_cfg.FilePaths._pdf2musescore_tr_dir = orig_cls_tr_dir
         return 0
     try:
         config = load_config()
