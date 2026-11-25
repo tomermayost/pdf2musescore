@@ -72,10 +72,22 @@ class _LandingPageParser(HTMLParser):
 
 def test_landing_page_files_exist() -> None:
     assert (DOCS / ".nojekyll").is_file()
-    for rel in ("index.html", "styles.css", "app.js", "robots.txt", "sitemap.xml", "assets/favicon.png"):
+    for rel in (
+        "index.html",
+        "styles.css",
+        "app.js",
+        "robots.txt",
+        "sitemap.xml",
+        "google602c6e31d4004624.html",
+        "assets/favicon.png",
+    ):
         path = DOCS / rel
         assert path.is_file(), f"Missing landing page file: docs/{rel}"
         assert path.stat().st_size > 0, f"Empty landing page file: docs/{rel}"
+    assert (
+        (DOCS / "google602c6e31d4004624.html").read_text(encoding="utf-8")
+        == "google-site-verification: google602c6e31d4004624.html"
+    )
 
 
 def test_landing_page_html_seo_assets_and_constraints() -> None:
