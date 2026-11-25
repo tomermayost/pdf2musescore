@@ -108,7 +108,7 @@ def test_percussion_and_quality_helpers():
     assert looks_low_quality_label("Fl. 1") is False
 
 
-def test_extract_instrument_labels_full_and_abbreviated(tmp_path):
+def test_extract_instrument_labels_full_and_abbreviated(tmp_path, caplog):
     assert extract_instrument_labels(tmp_path / "missing.png", [], 200, 120.0, 0.0, 500.0) == []
 
     missing_img = extract_instrument_labels(tmp_path / "missing.png", [100.0, 250.0], 200, 150.0, 0.0, 400.0)
@@ -134,15 +134,18 @@ def test_extract_instrument_labels_full_and_abbreviated(tmp_path):
         txts[0] = "Header"
         return boxes, txts
 
-    labels = extract_instrument_labels(
-        png,
-        staff_cys=[210.0, 370.0, 520.0],
-        crop_x=250,
-        median_gap=150.0,
-        y_lo=100.0,
-        y_hi=700.0,
-        ocr_runner=fake_ocr,
-    )
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="pdf2musescore.fullscore.instruments"):
+        labels = extract_instrument_labels(
+            png,
+            staff_cys=[210.0, 370.0, 520.0],
+            crop_x=250,
+            median_gap=150.0,
+            y_lo=100.0,
+            y_hi=700.0,
+            ocr_runner=fake_ocr,
+        )
+    assert caplog.records == []
     assert len(labels) == 3
     assert labels[0].full_name == "Flute 1, 2 / Piccolo"
     assert labels[0].abbreviation == "Fl. 1, 2 / Picc."

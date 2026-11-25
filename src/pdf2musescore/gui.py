@@ -1551,6 +1551,9 @@ class App(ttk.Frame):
     ) -> None:
         self._cancel_event.clear()
         self._hide_result_banner()
+        self._log_warning_count = 0
+        self._log_error_count = 0
+        self.log_section.set_badge("")
         self._converting = True
         self._started_at = time.monotonic()
         self._set_busy(True)

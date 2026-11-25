@@ -362,7 +362,7 @@ def extract_instrument_labels(
             missing += 1
             lbl = fallbacks[idx]
             labels.append(lbl)
-            log.warning("  staff[%02d] (cy=%.1f): <NONE> -> fallback %r / %r", idx, staff_cys[idx], lbl.full_name, lbl.abbreviation)
+            log.debug("  staff[%02d] (cy=%.1f): <NONE> -> fallback %r / %r", idx, staff_cys[idx], lbl.full_name, lbl.abbreviation)
             continue
         items_sorted = sorted(items, key=lambda x: x[0])
         parts_txt = [clean_instrument_label(t) for _, t in items_sorted]
@@ -375,7 +375,7 @@ def extract_instrument_labels(
         raw_joined = " | ".join(t for _, t in items_sorted)
         lbl = _label_from_cleaned_text(combined, raw_joined)
         labels.append(lbl)
-        log.info(
+        log.debug(
             "  staff[%02d] (cy=%.1f): raw=%r -> full=%r | abbr=%r%s",
             idx,
             staff_cys[idx],

@@ -909,5 +909,15 @@ def test_gui_activity_log_sticky_bottom_autoscroll(root, calls, tmp_path):
         app._append_log((logging.INFO, "tail resumed"))
         root.update_idletasks()
         assert app.log_text.yview()[1] >= 0.999
+
+        # Prior warnings/errors badge is cleared when starting a new conversion
+        app._append_log((logging.WARNING, "old warning"))
+        assert app.log_section.badge_lbl.winfo_manager()
+        assert "1 warning" in app.log_section.badge_lbl.cget("text")
+        FakePipeline.behaviour = "ok"
+        app.start_conversion(tmp_path / "in.pdf", tmp_path / "out.mscz")
+        assert app._log_warning_count == 0 and app._log_error_count == 0
+        assert not app.log_section.badge_lbl.winfo_manager()
+        pump(app, root, lambda: bool(app.result_banner.winfo_manager()))
     finally:
         close_app(app)

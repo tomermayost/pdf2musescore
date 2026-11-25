@@ -133,7 +133,7 @@ def flatten_filter_and_extend_staves(
             if abs(cy - prev_cy) <= tol:
                 prev_w = float(prev.max_x - prev.min_x)
                 deduped_overlap += 1
-                log.warning(
+                log.debug(
                     "Overlapping staff at cy=%.0f (prev_cy=%.0f, tol=%.1f): keeping wider (w=%.0f vs %.0f)",
                     cy,
                     prev_cy,

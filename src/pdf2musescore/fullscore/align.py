@@ -530,7 +530,7 @@ def reconcile_pages_to_master(
                         crop_x=sc.crop_x,
                     )
                 cleaned_pages[pidx] = (pno, new_root, new_sc)
-                log.warning(
+                log.info(
                     "Page %d: dropped %d empty/unlabeled stray staff detection(s) %s to match %d-part score",
                     pno,
                     len(extra_indices),
@@ -741,7 +741,7 @@ def apply_conductor_metadata(
             parent.remove(tr)
             removed_transpose += 1
     if removed_transpose:
-        log.warning("Removed %d unexpected <transpose> element(s) from full score", removed_transpose)
+        log.info("Removed %d unexpected <transpose> element(s) from full score", removed_transpose)
 
     pitched_i = 0
     for idx, sp in enumerate(root.findall("./part-list/score-part")):

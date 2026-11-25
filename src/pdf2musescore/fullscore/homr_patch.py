@@ -94,7 +94,7 @@ def fullscore_homr_context(
                 fb_y_max = int(staff.max_y + 3 * u)
                 if fb_y_max <= fb_y_min:
                     fb_y_max = fb_y_min + max(10, int(6 * u))
-                log.warning(
+                log.info(
                     "Degenerate staff region y=[%d,%d] (unit=%.1f); fallback y=[%d,%d]",
                     y_min,
                     y_max,
@@ -107,7 +107,7 @@ def fullscore_homr_context(
             if x_max <= x_min:
                 fb_x_min = int(staff.min_x - 2 * u)
                 fb_x_max = max(int(staff.max_x + 2 * u), fb_x_min + max(20, int(4 * u)))
-                log.warning(
+                log.info(
                     "Degenerate staff region x=[%d,%d] (unit=%.1f); fallback x=[%d,%d]",
                     x_min,
                     x_max,

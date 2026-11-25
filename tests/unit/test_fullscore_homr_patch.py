@@ -60,7 +60,7 @@ def test_fullscore_homr_context_patches_and_restores_on_exit(caplog):
     resize_mod, staff_mod, main_mod, orig = _fake_homr_modules()
     seen_staff_indices: list[int] = []
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("INFO"):
         with fullscore_homr_context(
             target_width=4000,
             segnet_step_size=240,
@@ -89,6 +89,7 @@ def test_fullscore_homr_context_patches_and_restores_on_exit(caplog):
             assert seen_staff_indices == [2]
 
     assert "Degenerate staff region y=" in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= 30]
     # All originals strictly restored
     assert resize_mod.calc_target_image_size is orig["calc_size"]
     assert staff_mod._calculate_region is orig["calc_region"]
