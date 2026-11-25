@@ -2,6 +2,22 @@
 
 from __future__ import annotations
 
+from .align import (
+    PageSidecar,
+    StaffMatchSpec,
+    align_page_score,
+    apply_conductor_metadata,
+    compute_conductor_scaling,
+    dedup_boundary_attributes,
+    match_staves_monotonic_dp,
+    merge_fullscore_files,
+    merge_fullscore_pages,
+    read_page_sidecar,
+    reconcile_pages_to_master,
+    sidecar_path_for,
+    verify_fullscore_invariants,
+    write_page_sidecar,
+)
 from .homr_patch import (
     DEFAULT_TARGET_WIDTH,
     MAX_TARGET_HEIGHT,
@@ -25,11 +41,17 @@ __all__ = [
     "DEFAULT_TARGET_WIDTH",
     "MAX_TARGET_HEIGHT",
     "InstrumentLabel",
+    "PageSidecar",
     "StaffLayoutResult",
+    "StaffMatchSpec",
     "abbreviate_instrument_name",
+    "align_page_score",
+    "apply_conductor_metadata",
     "calc_fullscore_image_size",
     "clean_instrument_label",
+    "compute_conductor_scaling",
     "consolidate_page_labels",
+    "dedup_boundary_attributes",
     "expand_abbreviated_name",
     "extract_instrument_labels",
     "flatten_filter_and_extend_staves",
@@ -37,4 +59,12 @@ __all__ = [
     "is_percussion_instrument",
     "looks_abbreviated_label",
     "looks_low_quality_label",
+    "match_staves_monotonic_dp",
+    "merge_fullscore_files",
+    "merge_fullscore_pages",
+    "read_page_sidecar",
+    "reconcile_pages_to_master",
+    "sidecar_path_for",
+    "verify_fullscore_invariants",
+    "write_page_sidecar",
 ]
