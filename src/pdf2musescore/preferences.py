@@ -51,6 +51,7 @@ class UserPreferences:
     full_score_target_width: int = FULL_SCORE_DEFAULT_WIDTH
     last_dir: str = ""
     dismissed_dual_install: str = ""
+    dismissed_crash: str = ""
 
 
 def _clamp_default_dpi(default_dpi: int) -> int:
@@ -140,6 +141,7 @@ def _sanitize_preferences(raw: Mapping[str, Any], default_dpi: int = 300) -> Use
         ),
         last_dir=_coerce_str(raw, "last_dir"),
         dismissed_dual_install=_coerce_str(raw, "dismissed_dual_install"),
+        dismissed_crash=_coerce_str(raw, "dismissed_crash"),
     )
 
 

@@ -12,6 +12,7 @@ import ctypes
 import logging
 import os
 import sys
+import urllib.parse
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 ENV_PREFIX = "PDF2MSCZ_"
 STORE_MODE_ENV = "PDF2MSCZ_STORE_MODE"
 VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+DEFAULT_BUG_REPORT_URL = ""
 
 
 class ConfigError(ValueError):
@@ -99,6 +101,7 @@ class AppConfig:
     musescore_path: Optional[Path] = None
     render_dpi: int = 300
     check_updates: bool = True
+    bug_report_url: str = DEFAULT_BUG_REPORT_URL
 
     def __post_init__(self) -> None:
         level = str(self.log_level).upper()
@@ -113,6 +116,12 @@ class AppConfig:
         object.__setattr__(self, "third_party_log_level", tp_level)
         if int(self.render_dpi) < 72:
             raise ConfigError("render_dpi must be >= 72")
+        url = str(self.bug_report_url or "").strip()
+        if url:
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ConfigError(f"Invalid bug_report_url {self.bug_report_url!r}; expected http(s) URL")
+        object.__setattr__(self, "bug_report_url", url)
 
 
 _PATH_FIELDS = {"log_dir", "work_dir", "models_dir", "musescore_path"}

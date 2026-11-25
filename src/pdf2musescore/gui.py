@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
+import traceback
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Callable, Optional, Sequence
@@ -18,6 +21,16 @@ import webbrowser
 from PIL import Image, ImageTk
 
 from . import APP_NAME, AUTHOR_CREDIT, __version__
+from .bug_report import (
+    BugReport,
+    BugReportResult,
+    CrashInfo,
+    build_github_issue_url,
+    collect_bug_report,
+    create_diagnostic_zip,
+    detect_previous_crash,
+    submit_bug_report,
+)
 from .config import AppConfig, is_msix_package
 from .deps import MUSESCORE, find_tool
 from .engines.homr_engine import (
@@ -139,6 +152,20 @@ class QueueLogHandler(logging.Handler):
         self.q.put(("log", (record.levelno, self.format(record))))
 
 
+@dataclass(frozen=True)
+class _ConversionFailure:
+    error_type: str
+    user_message: str
+    detail: str
+    stage: str
+    mode: str
+    musescore_error: str = ""
+    traceback_text: str = ""
+    staged_musicxml: Optional[Path] = None
+    source_path: Optional[Path] = None
+    output_path: Optional[Path] = None
+
+
 class App(ttk.Frame):
     POLL_MS = 100
 
@@ -172,6 +199,7 @@ class App(ttk.Frame):
         prefetch_models: bool = True,
         dual_install_checker: Optional[Callable[[], Optional[DualInstallNotice]]] = None,
         flash_taskbar: Optional[Callable[[tk.Misc], Any]] = None,
+        report_submitter: Optional[Callable[[BugReport, str], BugReportResult]] = None,
     ) -> None:
         self.config_ = config
         self._store_mode = is_msix_package() if store_mode is None else bool(store_mode)
@@ -212,6 +240,20 @@ class App(ttk.Frame):
         )
         self._completion_popup: Optional[tk.Toplevel] = None
         self._completion_accent: Optional[tk.Frame] = None
+        self._error_popup: Optional[tk.Toplevel] = None
+        self._error_accent: Optional[tk.Frame] = None
+        self._error_widgets: dict[str, Any] = {}
+        self._active_error_report: Optional[BugReport] = None
+        self._active_error_is_crash: bool = False
+        self._crash_notice: Optional[CrashInfo] = None
+        self._dismissed_crash: str = self._prefs.dismissed_crash
+        self._report_submitter: Callable[[BugReport, str], BugReportResult] = (
+            submit_bug_report if report_submitter is None else report_submitter
+        )
+        self._report_thread: Optional[threading.Thread] = None
+        self._last_source_for_report: Optional[Path] = None
+        self._last_output_for_report: Optional[Path] = None
+        self._last_options_for_report: Optional[ConversionOptions] = None
 
         chosen_theme = theme if theme is not None else self._prefs.theme
         self.theme_name = "dark" if (chosen_theme or "").strip().lower() == "dark" else "light"
@@ -272,6 +314,7 @@ class App(ttk.Frame):
         if prefetch_models and not self.model_manager.status().ready:
             self._start_model_prefetch()
         self._check_and_show_dual_install()
+        self._check_previous_crash()
 
     def _default_exit(self) -> None:  # pragma: no cover - terminates interactive Tk root
         try:
@@ -310,6 +353,7 @@ class App(ttk.Frame):
         self._build_variables()
         self._build_header()
         self._build_dual_install_banner()
+        self._build_crash_banner()
 
         # Two-column workspace body (left preview, right cards)
         workspace = ttk.Frame(self, style="App.TFrame")
@@ -458,6 +502,51 @@ class App(ttk.Frame):
             justify="left",
         )
         self.dual_install_lbl.pack(side="left", fill="x", expand=True)
+
+    def _build_crash_banner(self) -> None:
+        self.crash_banner = tk.Frame(
+            self,
+            background=self.palette.warn_bg,
+            highlightbackground=self.palette.warn_border,
+            highlightthickness=1,
+            padx=10,
+            pady=6,
+        )
+        self.crash_dismiss_btn = ttk.Button(
+            self.crash_banner,
+            text="×",
+            width=2,
+            style="Secondary.TButton",
+            command=self.on_dismiss_crash_banner,
+        )
+        self.crash_dismiss_btn.pack(side="right", padx=(6, 0))
+        self._attach_tip(
+            "crash_dismiss",
+            self.crash_dismiss_btn,
+            custom_text="Dismiss this previous crash notice",
+        )
+
+        self.crash_report_btn = ttk.Button(
+            self.crash_banner,
+            text="Report Previous Crash",
+            style="Secondary.TButton",
+            command=self.on_report_previous_crash,
+        )
+        self.crash_report_btn.pack(side="right", padx=(6, 0))
+        self._attach_tip(
+            "crash_report",
+            self.crash_report_btn,
+            custom_text="Inspect the sanitized crash log and send or save a bug report",
+        )
+
+        self.crash_banner_lbl = ttk.Label(
+            self.crash_banner,
+            text="",
+            style="WarnBannerText.TLabel",
+            wraplength=560,
+            justify="left",
+        )
+        self.crash_banner_lbl.pack(side="left", fill="x", expand=True)
 
     def _build_source_card(self, parent: ttk.Frame) -> None:
         card_outer, card = self._make_card(parent, padx=14, pady=9)
@@ -987,6 +1076,7 @@ class App(ttk.Frame):
         self.advanced_section.apply_theme(p)
         self.log_section.apply_theme(p)
         self.dual_install_banner.configure(background=p.warn_bg, highlightbackground=p.warn_border)
+        self.crash_banner.configure(background=p.warn_bg, highlightbackground=p.warn_border)
         self.result_banner.configure(background=p.success_bg, highlightbackground=p.success_border)
         self.log_frame.configure(background=p.log_bg, highlightbackground=p.border_strong)
 
@@ -1015,6 +1105,39 @@ class App(ttk.Frame):
                     self._completion_accent.configure(bg=p.success_border)
                 if self._master_window_state() != "withdrawn":
                     apply_windows_titlebar_theme(self._completion_popup, p.is_dark)
+            except Exception:
+                pass
+
+        if self._error_popup is not None and self._error_popup.winfo_exists():
+            try:
+                self._error_popup.configure(bg=p.card)
+                if self._error_accent is not None and self._error_accent.winfo_exists():
+                    self._error_accent.configure(bg=p.danger)
+                note_w = self._error_widgets.get("note_text")
+                if note_w is not None and note_w.winfo_exists():
+                    note_w.configure(
+                        background=p.input_bg,
+                        foreground=p.text,
+                        insertbackground=p.text,
+                        highlightbackground=p.input_border,
+                        highlightcolor=p.accent,
+                    )
+                prev_frame = self._error_widgets.get("preview_frame")
+                if prev_frame is not None and prev_frame.winfo_exists():
+                    prev_frame.configure(background=p.log_bg, highlightbackground=p.border_strong)
+                prev_w = self._error_widgets.get("preview_text")
+                if prev_w is not None and prev_w.winfo_exists():
+                    prev_w.configure(background=p.log_bg, foreground=p.log_fg, insertbackground=p.log_fg)
+                link_w = self._error_widgets.get("issue_link")
+                if link_w is not None and link_w.winfo_exists():
+                    link_w.configure(
+                        background=p.card,
+                        foreground=p.accent,
+                        activebackground=p.card,
+                        activeforeground=p.accent_hover,
+                    )
+                if self._master_window_state() != "withdrawn":
+                    apply_windows_titlebar_theme(self._error_popup, p.is_dark)
             except Exception:
                 pass
 
@@ -1065,6 +1188,7 @@ class App(ttk.Frame):
             ),
             last_dir=self._last_dir,
             dismissed_dual_install=self._dismissed_dual_install,
+            dismissed_crash=self._dismissed_crash,
         )
 
     def save_preferences(self) -> bool:
@@ -1469,6 +1593,404 @@ class App(ttk.Frame):
         log.info("Displayed completion popup for %s", out_path.name)
         return popup
 
+    def _close_error_popup(self) -> None:
+        popup = self._error_popup
+        self._error_popup = None
+        self._error_accent = None
+        self._error_widgets.clear()
+        self._active_error_report = None
+        self._active_error_is_crash = False
+        if popup is not None:
+            try:
+                if popup.winfo_exists():
+                    popup.destroy()
+            except Exception:
+                pass
+
+    def _build_report_from_failure(self, failure: _ConversionFailure) -> BugReport:
+        return collect_bug_report(
+            user_message=failure.user_message,
+            error_detail=failure.detail,
+            error_type=failure.error_type,
+            stage=failure.stage,
+            mode=failure.mode,
+            musescore_error=failure.musescore_error,
+            traceback_text=failure.traceback_text,
+            log_dir=Path(self.config_.log_dir),
+            source_path=failure.source_path,
+            output_path=failure.output_path,
+            staged_musicxml=failure.staged_musicxml,
+        )
+
+    def _acknowledge_crash(self) -> None:
+        if self.crash_banner.winfo_manager():
+            self.crash_banner.pack_forget()
+            self._fit_window_to_content()
+        if self._crash_notice is not None:
+            self._dismissed_crash = self._crash_notice.signature
+            self._crash_notice = None
+            self.save_preferences()
+
+    def _show_error_dialog(self, report: BugReport, *, is_crash: bool = False) -> tk.Toplevel:
+        """Show a themed diagnostic & bug-report dialog for a conversion failure or prior crash."""
+        self._close_error_popup()
+        master_state = self._master_window_state()
+        p = self.palette
+        self._active_error_report = report
+        self._active_error_is_crash = is_crash
+
+        popup = tk.Toplevel(self.master)
+        popup.withdraw()
+        popup.title(
+            "Previous Session Crash — PDF to MuseScore" if is_crash else "Conversion Failed — PDF to MuseScore"
+        )
+        popup.resizable(False, False)
+        popup.configure(bg=p.card)
+
+        try:
+            ico_path = get_assets_dir() / "icon.ico"
+            if ico_path.is_file():
+                popup.iconbitmap(default=str(ico_path))
+        except Exception:
+            pass
+
+        accent_bar = tk.Frame(popup, bg=p.danger, height=4)
+        accent_bar.pack(fill="x")
+        self._error_accent = accent_bar
+
+        body = ttk.Frame(popup, style="Card.TFrame", padding=(20, 14, 20, 16))
+        body.pack(fill="both", expand=True)
+
+        hdr = ttk.Frame(body, style="Card.TFrame")
+        hdr.pack(fill="x")
+        heading_text = "⚠  Previous session closed unexpectedly" if is_crash else "✕  Conversion failed"
+        ttk.Label(hdr, text=heading_text, style="CardTitle.TLabel").pack(side="left")
+        meta_text = f"{report.mode}  ·  {report.stage or 'Conversion'}"
+        ttk.Label(hdr, text=meta_text, style="Hint.TLabel").pack(side="right", padx=(16, 0))
+
+        ttk.Label(
+            body,
+            text=report.user_message or "Something went wrong.",
+            style="Card.TLabel",
+            wraplength=600,
+            justify="left",
+        ).pack(anchor="w", pady=(8, 2))
+
+        if report.musescore_error:
+            ttk.Label(
+                body,
+                text=f"MuseScore 4 error: {report.musescore_error}",
+                style="ErrorHint.TLabel",
+                wraplength=600,
+                justify="left",
+            ).pack(anchor="w", pady=(2, 2))
+
+        ttk.Label(
+            body,
+            text="Privacy: personal paths and PDF filenames are automatically redacted; your PDF is never attached.",
+            style="Hint.TLabel",
+            wraplength=600,
+        ).pack(anchor="w", pady=(2, 8))
+
+        ttk.Label(
+            body,
+            text="Optional note (what were you converting or trying to do?):",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(0, 3))
+
+        note_text = tk.Text(
+            body,
+            height=3,
+            width=72,
+            wrap="word",
+            font=(self._ui_font, 9),
+            background=p.input_bg,
+            foreground=p.text,
+            insertbackground=p.text,
+            relief="flat",
+            borderwidth=0,
+            highlightbackground=p.input_border,
+            highlightcolor=p.accent,
+            highlightthickness=1,
+            padx=6,
+            pady=4,
+        )
+        if report.user_note:
+            note_text.insert("1.0", report.user_note)
+        note_text.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(body, text="Sanitized report preview:", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
+        preview_frame = tk.Frame(
+            body,
+            background=p.log_bg,
+            highlightbackground=p.border_strong,
+            highlightthickness=1,
+        )
+        preview_frame.pack(fill="both", expand=True)
+
+        preview_scroll = ttk.Scrollbar(preview_frame, orient="vertical", style="Studio.Vertical.TScrollbar")
+        preview_scroll.pack(side="right", fill="y")
+
+        preview_text = tk.Text(
+            preview_frame,
+            height=11,
+            width=72,
+            wrap="word",
+            font=(self._mono_font, 8),
+            background=p.log_bg,
+            foreground=p.log_fg,
+            insertbackground=p.log_fg,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            padx=8,
+            pady=6,
+            yscrollcommand=preview_scroll.set,
+        )
+        preview_text.pack(side="left", fill="both", expand=True)
+        preview_scroll.configure(command=preview_text.yview)
+
+        extra_paths = [
+            path
+            for path in (self._last_source_for_report, self._last_output_for_report)
+            if path is not None
+        ]
+
+        def _current_report() -> BugReport:
+            base = self._active_error_report or report
+            updated = base.with_user_note(note_text.get("1.0", "end-1c"), extra_paths=extra_paths)
+            self._active_error_report = updated
+            return updated
+
+        def _refresh_preview(_event: Optional[tk.Event] = None) -> None:
+            current = _current_report()
+            preview_text.configure(state="normal")
+            preview_text.delete("1.0", "end")
+            preview_text.insert("1.0", current.to_markdown())
+            preview_text.configure(state="disabled")
+
+        _refresh_preview()
+        note_text.bind("<KeyRelease>", _refresh_preview, add="+")
+
+        has_staged_xml = report.staged_musicxml is not None and report.staged_musicxml.is_file()
+        include_xml_var = tk.BooleanVar(popup, value=False)
+        if has_staged_xml:
+            ttk.Checkbutton(
+                body,
+                text="Include generated score.musicxml when saving Diagnostic ZIP",
+                variable=include_xml_var,
+                style="Studio.TCheckbutton",
+            ).pack(anchor="w", pady=(6, 0))
+
+        status_var = tk.StringVar(popup, value="")
+        status_row = ttk.Frame(body, style="Card.TFrame")
+        status_row.pack(fill="x", pady=(8, 6))
+        status_lbl = ttk.Label(status_row, textvariable=status_var, style="Muted.TLabel", wraplength=440)
+        status_lbl.pack(side="left")
+
+        issue_link_btn = tk.Button(
+            status_row,
+            text="",
+            background=p.card,
+            foreground=p.accent,
+            activebackground=p.card,
+            activeforeground=p.accent_hover,
+            font=(self._ui_font, 8, "underline"),
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            cursor="hand2",
+            padx=0,
+            pady=0,
+        )
+
+        def _open_github_fallback() -> None:
+            final_rep = _current_report()
+            gh_url = build_github_issue_url(final_rep)
+            self.open_url(gh_url)
+            status_var.set("Opened pre-filled GitHub Issue in your browser.")
+            if self._active_error_is_crash:
+                self._acknowledge_crash()
+
+        fallback_gh_btn = ttk.Button(
+            status_row,
+            text="Open on GitHub",
+            style="Secondary.TButton",
+            command=_open_github_fallback,
+        )
+
+        def _on_send() -> None:
+            final_rep = _current_report()
+            worker_url = (self.config_.bug_report_url or "").strip()
+            if not worker_url:
+                _open_github_fallback()
+                return
+            send_btn.configure(state="disabled")
+            if fallback_gh_btn.winfo_manager():
+                fallback_gh_btn.pack_forget()
+            status_var.set("Sending bug report...")
+
+            def _submit_work() -> None:
+                try:
+                    res = self._report_submitter(final_rep, worker_url)
+                    self.q.put(("bug_report_sent", res))
+                except Exception as exc:
+                    log.error("Failed to submit bug report: %s", exc)
+                    self.q.put(("bug_report_error", str(exc)))
+
+            self._report_thread = threading.Thread(target=_submit_work, daemon=True, name="bug-report")
+            self._report_thread.start()
+
+        def _on_save_xml() -> None:
+            xml_src = report.staged_musicxml
+            if xml_src is None or not xml_src.is_file():
+                return
+            stem = (
+                self._last_output_for_report.stem
+                if self._last_output_for_report is not None
+                else (self._last_source_for_report.stem if self._last_source_for_report is not None else "score")
+            )
+            dst = self.ask_save(
+                title="Save MusicXML",
+                initialfile=f"{stem}.musicxml",
+                defaultextension=".musicxml",
+                filetypes=[XML_TYPE],
+            )
+            if not dst:
+                return
+            dst_path = Path(dst)
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(xml_src, dst_path)
+            self._last_output = dst_path
+            status_var.set(f"✓ Saved {dst_path.name}")
+            log.info("Saved staged MusicXML after export failure: %s", dst_path)
+
+        def _on_save_zip() -> None:
+            final_rep = _current_report()
+            dst = self.ask_save(
+                title="Save Diagnostic ZIP",
+                initialfile=f"pdf2musescore-diagnostics-{final_rep.fingerprint[:8]}.zip",
+                defaultextension=".zip",
+                filetypes=[("ZIP archive", "*.zip")],
+            )
+            if not dst:
+                return
+            try:
+                out_zip = create_diagnostic_zip(
+                    Path(dst),
+                    final_rep,
+                    log_dir=Path(self.config_.log_dir),
+                    include_musicxml=bool(include_xml_var.get()),
+                    extra_paths=extra_paths,
+                )
+                status_var.set(f"✓ Saved {out_zip.name}")
+            except Exception as exc:
+                status_var.set(f"Could not save ZIP: {exc}")
+
+        def _on_copy() -> None:
+            final_rep = _current_report()
+            md = final_rep.to_markdown()
+            try:
+                popup.clipboard_clear()
+                popup.clipboard_append(md)
+                popup.update_idletasks()
+            except Exception as exc:
+                log.debug("Clipboard copy failed: %s", exc)
+            status_var.set("✓ Copied report to clipboard")
+
+        btn_row = ttk.Frame(body, style="Card.TFrame")
+        btn_row.pack(fill="x")
+        send_btn = ttk.Button(
+            btn_row,
+            text="Send Bug Report",
+            style="Primary.TButton",
+            command=_on_send,
+        )
+        send_btn.pack(side="left", padx=(0, 8))
+
+        save_xml_btn: Optional[ttk.Button] = None
+        if has_staged_xml:
+            save_xml_btn = ttk.Button(
+                btn_row,
+                text="Save MusicXML anyway",
+                style="Success.TButton",
+                command=_on_save_xml,
+            )
+            save_xml_btn.pack(side="left", padx=(0, 8))
+
+        save_zip_btn = ttk.Button(
+            btn_row,
+            text="Save Diagnostic ZIP",
+            style="Secondary.TButton",
+            command=_on_save_zip,
+        )
+        save_zip_btn.pack(side="left", padx=(0, 8))
+
+        copy_btn = ttk.Button(
+            btn_row,
+            text="Copy Report",
+            style="Secondary.TButton",
+            command=_on_copy,
+        )
+        copy_btn.pack(side="left", padx=(0, 8))
+
+        close_btn = ttk.Button(
+            btn_row,
+            text="Close",
+            style="Secondary.TButton",
+            command=self._close_error_popup,
+        )
+        close_btn.pack(side="right")
+
+        popup.note_text = note_text  # type: ignore[attr-defined]
+        popup.preview_text = preview_text  # type: ignore[attr-defined]
+        popup.send_btn = send_btn  # type: ignore[attr-defined]
+        popup.save_xml_btn = save_xml_btn  # type: ignore[attr-defined]
+        popup.save_zip_btn = save_zip_btn  # type: ignore[attr-defined]
+        popup.copy_btn = copy_btn  # type: ignore[attr-defined]
+        popup.close_btn = close_btn  # type: ignore[attr-defined]
+        popup.fallback_gh_btn = fallback_gh_btn  # type: ignore[attr-defined]
+        popup.issue_link_btn = issue_link_btn  # type: ignore[attr-defined]
+        popup.status_var = status_var  # type: ignore[attr-defined]
+        popup.include_xml_var = include_xml_var  # type: ignore[attr-defined]
+        popup.refresh_preview = _refresh_preview  # type: ignore[attr-defined]
+
+        self._error_widgets = {
+            "note_text": note_text,
+            "preview_frame": preview_frame,
+            "preview_text": preview_text,
+            "send_btn": send_btn,
+            "save_xml_btn": save_xml_btn,
+            "save_zip_btn": save_zip_btn,
+            "copy_btn": copy_btn,
+            "close_btn": close_btn,
+            "fallback_gh_btn": fallback_gh_btn,
+            "issue_link": issue_link_btn,
+            "status_var": status_var,
+        }
+
+        popup.protocol("WM_DELETE_WINDOW", self._close_error_popup)
+        popup.bind("<Escape>", lambda _e: self._close_error_popup())
+
+        popup.update_idletasks()
+        w = max(560, popup.winfo_reqwidth())
+        h = popup.winfo_reqheight()
+        sw = max(w, popup.winfo_screenwidth())
+        sh = max(h, popup.winfo_screenheight())
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 3)
+        popup.geometry(f"{w}x{h}+{x}+{y}")
+
+        if master_state != "withdrawn":
+            apply_windows_titlebar_theme(popup, p.is_dark)
+            popup.deiconify()
+            popup.lift()
+            popup.focus_force()
+
+        self._error_popup = popup
+        log.info("Displayed diagnostic error dialog (fp=%s, is_crash=%s)", report.fingerprint, is_crash)
+        return popup
+
     # ---------- Actions & Updates ----------
     def _start_update_check(self) -> None:
         def check() -> None:
@@ -1699,7 +2221,11 @@ class App(ttk.Frame):
     ) -> None:
         self._cancel_event.clear()
         self._close_completion_popup()
+        self._close_error_popup()
         self._hide_result_banner()
+        self._last_source_for_report = Path(pdf)
+        self._last_output_for_report = Path(out)
+        self._last_options_for_report = options
         self._log_warning_count = 0
         self._log_error_count = 0
         self.log_section.set_badge("")
@@ -1718,6 +2244,8 @@ class App(ttk.Frame):
             is_cancelled=self._cancel_event.is_set,
             model_manager=self.model_manager,
         )
+        is_full = options.full_score if options is not None else bool(self.full_score_var.get())
+        mode_label = "Full Score" if is_full else "Single Part"
 
         def work() -> None:
             try:
@@ -1726,10 +2254,33 @@ class App(ttk.Frame):
                 self.q.put(("aborted", None))
             except ConversionError as exc:
                 log.error("Conversion failed [stage=%s]: %s", exc.stage, exc, exc_info=exc)
-                self.q.put(("error", self._format_error(exc.user_message, exc.detail)))
+                cause_type = type(exc.__cause__).__name__ if exc.__cause__ is not None else type(exc).__name__
+                failure = _ConversionFailure(
+                    error_type=cause_type,
+                    user_message=exc.user_message,
+                    detail=exc.detail,
+                    stage=exc.stage,
+                    mode=mode_label,
+                    musescore_error=exc.musescore_error,
+                    traceback_text=traceback.format_exc(),
+                    staged_musicxml=exc.staged_musicxml,
+                    source_path=pdf,
+                    output_path=out,
+                )
+                self.q.put(("error", failure))
             except Exception as exc:  # unexpected - log full traceback
                 log.exception("Unexpected error during conversion")
-                self.q.put(("error", self._format_error("Unexpected error.", f"{type(exc).__name__}: {exc}")))
+                failure = _ConversionFailure(
+                    error_type=type(exc).__name__,
+                    user_message="Unexpected error.",
+                    detail=f"{type(exc).__name__}: {exc}",
+                    stage="Conversion",
+                    mode=mode_label,
+                    traceback_text=traceback.format_exc(),
+                    source_path=pdf,
+                    output_path=out,
+                )
+                self.q.put(("error", failure))
 
         self.worker = threading.Thread(target=work, daemon=True, name="conversion")
         self.worker.start()
@@ -1772,6 +2323,45 @@ class App(ttk.Frame):
             self._dismissed_dual_install = self._dual_install_notice.dismiss_key
             self.save_preferences()
             log.info("Dismissed dual-install notice (%s)", self._dismissed_dual_install)
+
+    def _check_previous_crash(self) -> None:
+        try:
+            crash = detect_previous_crash(
+                Path(self.config_.log_dir),
+                dismissed_signature=self._dismissed_crash,
+            )
+        except Exception as exc:
+            log.debug("Previous crash check failed: %s", exc)
+            return
+        if crash is None:
+            return
+        self._crash_notice = crash
+        when = f" ({crash.timestamp.replace('T', ' ')})" if crash.timestamp else ""
+        self.crash_banner_lbl.configure(
+            text=f"PDF to MuseScore closed unexpectedly in a previous session{when}."
+        )
+        if not self.crash_banner.winfo_manager():
+            self.crash_banner.pack(fill="x", pady=(4, 4), before=self._workspace)
+            self._fit_window_to_content()
+
+    def on_dismiss_crash_banner(self) -> None:
+        self._acknowledge_crash()
+        log.info("Dismissed previous crash notice (%s)", self._dismissed_crash)
+
+    def on_report_previous_crash(self) -> None:
+        crash = self._crash_notice
+        if crash is None:
+            return
+        report = collect_bug_report(
+            user_message="The application closed unexpectedly during a previous session.",
+            error_detail=crash.excerpt,
+            error_type="PreviousCrash",
+            stage="Previous session",
+            mode="Crash Recovery",
+            traceback_text=crash.excerpt,
+            log_dir=Path(self.config_.log_dir),
+        )
+        self._show_error_dialog(report, is_crash=True)
 
     def on_open_store_page(self) -> None:
         log.info("Opening Microsoft Store product page: %s", MSIX_STORE_URI)
@@ -1895,7 +2485,51 @@ class App(ttk.Frame):
                 self.status_var.set("Conversion failed. See Activity Log for details.")
                 self.log_section.set_expanded(True)
                 self._notify_taskbar()
-                self.show_error("Conversion failed", payload)
+                if isinstance(payload, _ConversionFailure):
+                    report = self._build_report_from_failure(payload)
+                else:
+                    report = collect_bug_report(
+                        user_message=str(payload),
+                        error_type="ConversionError",
+                        stage="Conversion",
+                        log_dir=Path(self.config_.log_dir),
+                        source_path=self._last_source_for_report,
+                        output_path=self._last_output_for_report,
+                    )
+                self._show_error_dialog(report, is_crash=False)
+            elif kind == "bug_report_sent":
+                res: BugReportResult = payload
+                if self._error_popup is not None and self._error_popup.winfo_exists():
+                    status_v = self._error_widgets.get("status_var")
+                    send_b = self._error_widgets.get("send_btn")
+                    link_w = self._error_widgets.get("issue_link")
+                    if status_v is not None:
+                        label_num = f" #{res.issue_number}" if res.issue_number else ""
+                        status_v.set(
+                            f"✓ Added +1 to Issue{label_num}:" if res.duplicate else f"✓ Opened Issue{label_num}:"
+                        )
+                    if send_b is not None:
+                        send_b.configure(text="✓ Sent", state="disabled")
+                    if link_w is not None:
+                        link_w.configure(
+                            text=res.issue_url,
+                            command=lambda u=res.issue_url: self.open_url(u),
+                        )
+                        if not link_w.winfo_manager():
+                            link_w.pack(side="left", padx=(6, 0))
+                if self._active_error_is_crash:
+                    self._acknowledge_crash()
+            elif kind == "bug_report_error":
+                if self._error_popup is not None and self._error_popup.winfo_exists():
+                    status_v = self._error_widgets.get("status_var")
+                    send_b = self._error_widgets.get("send_btn")
+                    fb_b = self._error_widgets.get("fallback_gh_btn")
+                    if status_v is not None:
+                        status_v.set(f"Could not send automatically ({payload}).")
+                    if send_b is not None:
+                        send_b.configure(state="normal")
+                    if fb_b is not None and not fb_b.winfo_manager():
+                        fb_b.pack(side="right")
             elif kind == "update_available":
                 self._available_update = payload
                 self.update_btn.configure(
@@ -1962,6 +2596,7 @@ class App(ttk.Frame):
 
     def destroy(self) -> None:
         self._close_completion_popup()
+        self._close_error_popup()
         try:
             self.save_preferences()
         except Exception:

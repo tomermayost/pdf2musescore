@@ -11,6 +11,7 @@ def test_defaults_when_no_file(tmp_path):
     assert cfg.log_level == "INFO"
     assert cfg.third_party_log_level == "INFO"
     assert cfg.check_updates is True
+    assert cfg.bug_report_url == ""
 
 
 def test_file_values_loaded(tmp_path):
@@ -21,6 +22,7 @@ def test_file_values_loaded(tmp_path):
         'musescore_path = "C:/M/MuseScore4.exe"\n'
         'render_dpi = 250\n'
         'check_updates = false\n'
+        'bug_report_url = "https://bugs.example.workers.dev/report"\n'
     )
     cfg = load_config(f, environ={})
     assert cfg.log_level == "DEBUG"
@@ -28,6 +30,7 @@ def test_file_values_loaded(tmp_path):
     assert cfg.musescore_path == Path("C:/M/MuseScore4.exe")
     assert cfg.render_dpi == 250
     assert cfg.check_updates is False
+    assert cfg.bug_report_url == "https://bugs.example.workers.dev/report"
 
 
 def test_env_overrides_file(tmp_path):
@@ -46,6 +49,11 @@ def test_env_overrides_file(tmp_path):
     assert cfg.third_party_log_level == "DEBUG"
     assert cfg.check_updates is True
     assert load_config(f, environ={"PDF2MSCZ_CHECK_UPDATES": "off"}).check_updates is False
+    assert (
+        load_config(f, environ={"PDF2MSCZ_BUG_REPORT_URL": "https://env.example.workers.dev"}).bug_report_url
+        == "https://env.example.workers.dev"
+    )
+    assert load_config(f, environ={"PDF2MSCZ_BUG_REPORT_URL": ""}).bug_report_url == ""
 
 
 def test_unknown_key_warns(tmp_path, caplog):
@@ -64,6 +72,7 @@ def test_empty_env_value_becomes_none(tmp_path):
 @pytest.mark.parametrize("content", ['log_level = "LOUD"\n', 'third_party_log_level = "LOUD"\n',
                                      "render_dpi = 50\n",
                                      'render_dpi = "abc"\n', 'check_updates = "maybe"\n',
+                                     'bug_report_url = "ftp://invalid.example"\n',
                                      "not = valid = toml\n"])
 def test_invalid_values_raise(tmp_path, content):
     f = tmp_path / "c.toml"

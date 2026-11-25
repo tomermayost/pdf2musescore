@@ -33,11 +33,20 @@ CancelFn = Callable[[], bool]
 class ConversionError(RuntimeError):
     """Error with a plain-language message suitable for end users."""
 
-    def __init__(self, user_message: str, detail: str = "", stage: str = "") -> None:
+    def __init__(
+        self,
+        user_message: str,
+        detail: str = "",
+        stage: str = "",
+        staged_musicxml: Optional[Path] = None,
+        musescore_error: str = "",
+    ) -> None:
         super().__init__(f"{user_message} {detail}".strip())
         self.user_message = user_message
         self.detail = detail
         self.stage = stage
+        self.staged_musicxml = Path(staged_musicxml) if staged_musicxml is not None else None
+        self.musescore_error = musescore_error
 
 
 def _sha256_file(path: Path) -> str:
@@ -75,52 +84,67 @@ def _prune_old_jobs(safe_root: Path, keep: int = 3) -> list[Path]:
     return removed
 
 
-def _map_conversion_error(exc: Exception, detail: str, stage: str) -> ConversionError:
+def _map_conversion_error(
+    exc: Exception,
+    detail: str,
+    stage: str,
+    *,
+    staged_musicxml: Optional[Path] = None,
+) -> ConversionError:
     if isinstance(exc, OptionsError):
-        return ConversionError(str(exc), detail, stage=stage)
+        return ConversionError(str(exc), detail, stage=stage, staged_musicxml=staged_musicxml)
     if isinstance(exc, ToolNotFoundError):
         return ConversionError(
             "MuseScore is not installed. Save as MusicXML (.musicxml) or install MuseScore 4 from musescore.org.",
             detail,
             stage=stage,
+            staged_musicxml=staged_musicxml,
         )
     if isinstance(exc, InstallError):
         return ConversionError(
             "Installing MuseScore failed. Check your internet connection and try again.",
             detail,
             stage=stage,
+            staged_musicxml=staged_musicxml,
         )
     if isinstance(exc, ModelDownloadError):
         return ConversionError(
             "The AI models could not be downloaded. Check your internet connection and try again.",
             detail,
             stage=stage,
+            staged_musicxml=staged_musicxml,
         )
     if isinstance(exc, OmrError):
         msg = str(exc)
         if "page" in msg.lower() and ("range" in msg.lower() or "no pages" in msg.lower()):
-            return ConversionError(msg, detail, stage=stage)
+            return ConversionError(msg, detail, stage=stage, staged_musicxml=staged_musicxml)
         return ConversionError(
             "The music could not be read from this PDF. Clear, printed scores work best.",
             detail,
             stage=stage,
+            staged_musicxml=staged_musicxml,
         )
     if isinstance(exc, MergeError):
         return ConversionError(
             "The recognized music could not be combined into one score.",
             detail,
             stage=stage,
+            staged_musicxml=staged_musicxml,
         )
     if isinstance(exc, ExportError):
+        ms_err = getattr(exc, "musescore_detail", "") or ""
         return ConversionError(
             "MuseScore could not save the file. Try saving as MusicXML instead.",
             detail,
             stage=stage,
+            staged_musicxml=staged_musicxml,
+            musescore_error=ms_err,
         )
     return ConversionError(
         "Something unexpected went wrong while converting.",
         detail,
         stage=stage,
+        staged_musicxml=staged_musicxml,
     )
 
 
@@ -201,6 +225,7 @@ class Pipeline:
         )
         check_low_memory_warning(log, render_dpi=opts.render_dpi, full_score=opts.full_score)
         failed = False
+        completed_xml: Optional[Path] = None
         try:
             work.mkdir(parents=True, exist_ok=True)
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +285,7 @@ class Pipeline:
             else:
                 self._step(75, f"Combining {len(pages_xml)} page(s) into one score...")
                 xml = merge_files(pages_xml, staged_xml, title=output.stem, options=opts)
+            completed_xml = Path(xml)
 
             if musescore is not None:
                 self._step(85, "Saving MuseScore file...")
@@ -277,8 +303,14 @@ class Pipeline:
         except Exception as exc:
             failed = True
             detail = f"{type(exc).__name__}: {exc}"
+            available_xml = completed_xml if (completed_xml is not None and completed_xml.is_file()) else None
             log.error("Conversion failed during stage %r: %s", self._current_stage, detail, exc_info=True)
-            raise _map_conversion_error(exc, detail, self._current_stage) from exc
+            raise _map_conversion_error(
+                exc,
+                detail,
+                self._current_stage,
+                staged_musicxml=available_xml,
+            ) from exc
         finally:
             if failed:
                 log.warning("Kept work folder for diagnosis: %s", work)

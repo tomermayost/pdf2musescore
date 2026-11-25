@@ -145,6 +145,31 @@ def test_errors_mapped(tmp_path, pdf, kwargs, match, detail_type, caplog):
     assert "Traceback" in caplog.text
     # Failed conversion preserves its work folder for diagnosis
     assert any(d.name.startswith("job-") for d in (tmp_path / "work").iterdir())
+    if detail_type == "ExportError":
+        assert ei.value.staged_musicxml is not None
+        assert ei.value.staged_musicxml.name == "score.musicxml"
+        assert ei.value.staged_musicxml.is_file()
+    else:
+        assert ei.value.staged_musicxml is None
+
+
+def test_pipeline_export_error_exposes_musescore_detail_and_staged_xml(tmp_path, pdf):
+    class _DetailedFailExporter:
+        def __init__(self, _exe):
+            pass
+
+        def export(self, _src, _dst):
+            raise ExportError(
+                "MuseScore export failed (code 1320): failed load notation, err: [2009] Incomplete measure",
+                musescore_detail="failed load notation, err: [2009] Incomplete measure",
+            )
+
+    p, _ = make(tmp_path, exporter=_DetailedFailExporter)
+    with pytest.raises(ConversionError) as ei:
+        p.convert(pdf, tmp_path / "out.mscz")
+    assert ei.value.musescore_error == "failed load notation, err: [2009] Incomplete measure"
+    assert ei.value.staged_musicxml is not None and ei.value.staged_musicxml.is_file()
+    assert "<score-partwise" in ei.value.staged_musicxml.read_text(encoding="utf-8")
 
 
 def test_prune_old_jobs_keeps_newest_three(tmp_path, pdf):

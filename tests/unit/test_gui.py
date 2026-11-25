@@ -20,6 +20,7 @@ class FakePipeline:
     behaviour = "ok"
     last_pages_spec = None
     last_options = None
+    staged_xml_path = None
 
     def __init__(self, config, confirm, progress, is_cancelled=lambda: False, model_manager=None):
         self.confirm, self.progress, self.is_cancelled = confirm, progress, is_cancelled
@@ -37,7 +38,15 @@ class FakePipeline:
             if not self.confirm("Install?"):
                 raise ConversionError("declined")
         elif self.behaviour == "error":
-            raise ConversionError("friendly message")
+            raise ConversionError("friendly message", detail="OmrError: bad scan", stage="Reading music")
+        elif self.behaviour == "export_error":
+            raise ConversionError(
+                "MuseScore could not save the file.",
+                detail="ExportError: MuseScore export failed (code 1320): err: [2009] Incomplete measure",
+                stage="Saving MuseScore file...",
+                staged_musicxml=FakePipeline.staged_xml_path,
+                musescore_error="err: [2009] Incomplete measure",
+            )
         elif self.behaviour == "crash":
             raise RuntimeError("boom")
         return out
@@ -46,6 +55,8 @@ class FakePipeline:
 def close_app(app):
     if app.worker is not None and app.worker.is_alive():
         app.worker.join(timeout=2)
+    if getattr(app, "_report_thread", None) is not None and app._report_thread.is_alive():
+        app._report_thread.join(timeout=2)
     if getattr(app, "update_thread", None) is not None and app.update_thread.is_alive():
         app.update_thread.join(timeout=2)
     if getattr(app, "model_thread", None) is not None and app.model_thread.is_alive():
@@ -88,14 +99,23 @@ def make_app(
     installer_downloader=None,
     theme=None,
     prefs_path=None,
+    bug_report_url="",
+    report_submitter=None,
 ):
     logging.getLogger("pdf2musescore").setLevel("DEBUG")
     kwargs = {}
     if installer_downloader is not None:
         kwargs["installer_downloader"] = installer_downloader
+    if report_submitter is not None:
+        kwargs["report_submitter"] = report_submitter
     return App(
         root,
-        AppConfig(log_dir=tmp_path / "logs", work_dir=tmp_path / "work", check_updates=check_updates),
+        AppConfig(
+            log_dir=tmp_path / "logs",
+            work_dir=tmp_path / "work",
+            check_updates=check_updates,
+            bug_report_url=bug_report_url,
+        ),
         pipeline_factory=FakePipeline,
         musescore_available=lambda: musescore,
         page_counter=page_counter,
@@ -387,9 +407,9 @@ def test_load_cancelled(root, calls, tmp_path):
 @pytest.mark.parametrize(
     "behaviour,yes,expected_parts",
     [
-        ("error", True, ["friendly message", "Full technical log:", "pdf2musescore.log"]),
-        ("crash", True, ["Unexpected error.", "Details: RuntimeError: boom", "pdf2musescore.log"]),
-        ("confirm", False, ["declined", "Full technical log:", "pdf2musescore.log"]),
+        ("error", True, ["friendly message", "OmrError: bad scan", "Fingerprint:"]),
+        ("crash", True, ["Unexpected error.", "RuntimeError: boom", "Fingerprint:"]),
+        ("confirm", False, ["declined", "Fingerprint:"]),
     ],
 )
 def test_errors_auto_expand_log(root, calls, tmp_path, behaviour, yes, expected_parts):
@@ -398,11 +418,13 @@ def test_errors_auto_expand_log(root, calls, tmp_path, behaviour, yes, expected_
     app.on_load()
     app.log_section.set_expanded(False)
     app.on_convert()
-    pump(app, root, lambda: calls["error"])
-    assert len(calls["error"]) == 1
-    popup = calls["error"][0]
+    pump(app, root, lambda: app._error_popup is not None)
+    popup = app._error_popup
+    assert popup is not None and popup.winfo_exists()
+    preview = popup.preview_text.get("1.0", "end")
     for part in expected_parts:
-        assert part in popup
+        assert part in preview
+    assert popup.save_xml_btn is None
     assert "failed" in app.status_var.get()
     assert app.log_section.is_expanded is True
     close_app(app)
@@ -973,7 +995,213 @@ def test_gui_completion_popup_and_taskbar_flash(root, calls, tmp_path):
         FakePipeline.behaviour = "error"
         app.on_convert()
         assert app._completion_popup is None
-        pump(app, root, lambda: bool(calls["error"]))
+        pump(app, root, lambda: app._error_popup is not None)
         assert len(calls["flash"]) == 5
     finally:
         close_app(app)
+
+
+def test_gui_error_dialog_actions_save_xml_zip_copy_and_submit(root, calls, tmp_path):
+    import zipfile
+    from pdf2musescore.bug_report import BugReportError, BugReportResult
+
+    staged_xml = tmp_path / "work" / "score.musicxml"
+    staged_xml.parent.mkdir(parents=True, exist_ok=True)
+    staged_xml.write_text("<score-partwise><part id='P1'/></score-partwise>", encoding="utf-8")
+
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "logs" / "pdf2musescore.log").write_text(
+        r"2026-11-25 INFO Converting C:\Users\Alice\Private.pdf" + "\n", encoding="utf-8"
+    )
+
+    saved_xml_out = tmp_path / "rescued" / "song.musicxml"
+    saved_zip_out = tmp_path / "rescued" / "diag.zip"
+    save_answers = [str(tmp_path / "x" / "song.mscz"), str(saved_xml_out), str(saved_zip_out)]
+
+    def fake_ask_save(**k):
+        calls["save_kwargs"] = k
+        return save_answers.pop(0)
+
+    # 1. Without Worker URL -> Send Bug Report opens pre-filled GitHub Issue URL
+    FakePipeline.behaviour = "export_error"
+    FakePipeline.staged_xml_path = staged_xml
+    app = make_app(
+        root,
+        calls,
+        tmp_path,
+        open_path=r"C:\Users\Alice\Private.pdf",
+        bug_report_url="",
+    )
+    app.ask_save = fake_ask_save
+    try:
+        app.on_load()
+        app.on_convert()
+        pump(app, root, lambda: app._error_popup is not None)
+        popup = app._error_popup
+        assert popup is not None and popup.save_xml_btn is not None
+
+        # Preview is sanitized and shows MuseScore 4 error
+        preview = popup.preview_text.get("1.0", "end")
+        assert "[2009] Incomplete measure" in preview
+        assert "Alice" not in preview
+        assert "Private.pdf" not in preview
+
+        # User note dynamically updates sanitized preview
+        popup.note_text.insert("1.0", "Failed on bar 46")
+        popup.refresh_preview()
+        assert "Failed on bar 46" in popup.preview_text.get("1.0", "end")
+
+        # Theme toggle updates open error popup cleanly
+        app.toggle_theme()
+        assert popup.cget("bg") == app.palette.card
+
+        # Copy Report copies sanitized report to clipboard
+        popup.copy_btn.invoke()
+        assert "Copied" in popup.status_var.get()
+        assert "Failed on bar 46" in root.clipboard_get()
+
+        # Save MusicXML anyway copies staged score.musicxml
+        popup.save_xml_btn.invoke()
+        assert saved_xml_out.is_file()
+        assert "<score-partwise>" in saved_xml_out.read_text(encoding="utf-8")
+
+        # Save Diagnostic ZIP (with optional score.musicxml enabled)
+        popup.include_xml_var.set(True)
+        popup.save_zip_btn.invoke()
+        assert saved_zip_out.is_file()
+        with zipfile.ZipFile(saved_zip_out) as zf:
+            assert {"bug_report.md", "pdf2musescore.log", "score.musicxml"}.issubset(set(zf.namelist()))
+            assert "Alice" not in zf.read("pdf2musescore.log").decode("utf-8")
+
+        # Send Bug Report without Worker URL -> opens pre-filled GitHub Issue URL
+        popup.send_btn.invoke()
+        assert calls["url"] and "github.com/tomermayost/pdf2musescore/issues/new?" in calls["url"][-1]
+        assert "Opened pre-filled GitHub Issue" in popup.status_var.get()
+        popup.close_btn.invoke()
+        assert app._error_popup is None
+    finally:
+        FakePipeline.staged_xml_path = None
+        close_app(app)
+
+    # 2. With Worker URL -> sends in background, handles error fallback, then succeeds and shows clickable link
+    calls["url"].clear()
+    submit_modes = ["fail", "ok"]
+    submitted_payloads = []
+
+    def fake_submit(report, url):
+        submitted_payloads.append((report, url))
+        if submit_modes.pop(0) == "fail":
+            raise BugReportError("HTTP 503: offline")
+        return BugReportResult(
+            issue_url="https://github.com/tomermayost/pdf2musescore/issues/77",
+            issue_number=77,
+            duplicate=True,
+        )
+
+    FakePipeline.behaviour = "error"
+    app2 = make_app(
+        root,
+        calls,
+        tmp_path,
+        bug_report_url="https://bugs.example.workers.dev/report",
+        report_submitter=fake_submit,
+    )
+    try:
+        app2.on_load()
+        app2.on_convert()
+        pump(app2, root, lambda: app2._error_popup is not None)
+        popup2 = app2._error_popup
+        assert popup2 is not None
+
+        # First attempt fails -> shows fallback GitHub button and clicking it opens GitHub URL
+        popup2.send_btn.invoke()
+        pump(app2, root, lambda: "Could not send automatically" in popup2.status_var.get())
+        assert popup2.fallback_gh_btn.winfo_manager()
+        popup2.fallback_gh_btn.invoke()
+        assert calls["url"] and "github.com/tomermayost/pdf2musescore/issues/new?" in calls["url"][-1]
+
+        # Retry succeeds -> displays clickable Issue link and disables Send button
+        popup2.send_btn.invoke()
+        pump(app2, root, lambda: "Issue #77" in popup2.status_var.get())
+        assert str(popup2.send_btn["state"]) == "disabled"
+        assert "issues/77" in popup2.issue_link_btn.cget("text")
+        app2.toggle_theme()
+        popup2.issue_link_btn.invoke()
+        assert calls["url"][-1] == "https://github.com/tomermayost/pdf2musescore/issues/77"
+    finally:
+        close_app(app2)
+
+
+def test_gui_previous_crash_banner_and_persistence(root, calls, tmp_path):
+    from pdf2musescore.bug_report import BugReportResult
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    prefs_file = tmp_path / "crash_prefs.json"
+    crash_file = log_dir / "crash.log"
+
+    # Clean header-only crash.log -> no banner
+    crash_file.write_text("\n=== 2026-11-25T20:00:00 pdf2musescore 0.4.7 pid=12345 ===\n", encoding="utf-8")
+    app_clean = make_app(root, calls, tmp_path, prefs_path=prefs_file)
+    try:
+        assert not app_clean.crash_banner.winfo_manager()
+    finally:
+        close_app(app_clean)
+
+    # Real prior crash -> shows banner, Report Previous Crash opens dialog, sending dismisses & persists
+    crash_file.write_text(
+        "\n=== 2026-11-25T20:05:00 pdf2musescore 0.4.7 pid=12345 ===\n"
+        "Windows fatal exception: access violation\n",
+        encoding="utf-8",
+    )
+    app_crash = make_app(
+        root,
+        calls,
+        tmp_path,
+        prefs_path=prefs_file,
+        bug_report_url="https://bugs.example.workers.dev/report",
+        report_submitter=lambda _r, _u: BugReportResult(
+            issue_url="https://github.com/tomermayost/pdf2musescore/issues/88",
+            issue_number=88,
+            duplicate=False,
+        ),
+    )
+    try:
+        assert app_crash.crash_banner.winfo_manager()
+        assert "2026-11-25 20:05:00" in app_crash.crash_banner_lbl.cget("text")
+        app_crash.crash_report_btn.invoke()
+        assert app_crash._error_popup is not None
+        assert "access violation" in app_crash._error_popup.preview_text.get("1.0", "end")
+
+        app_crash._error_popup.send_btn.invoke()
+        pump(app_crash, root, lambda: not app_crash.crash_banner.winfo_manager())
+        assert app_crash._dismissed_crash
+    finally:
+        close_app(app_crash)
+
+    # Restart with same crash.log -> banner remains suppressed
+    app_after = make_app(root, calls, tmp_path, prefs_path=prefs_file)
+    try:
+        assert not app_after.crash_banner.winfo_manager()
+    finally:
+        close_app(app_after)
+
+    # New crash -> banner appears again and dismiss button persists dismissal
+    crash_file.write_text(
+        "\n=== 2026-11-25T21:00:00 pdf2musescore 0.4.7 pid=54321 ===\n"
+        "Fatal Python error: Segmentation fault\n",
+        encoding="utf-8",
+    )
+    app_new = make_app(root, calls, tmp_path, prefs_path=prefs_file)
+    try:
+        assert app_new.crash_banner.winfo_manager()
+        app_new.crash_dismiss_btn.invoke()
+        assert not app_new.crash_banner.winfo_manager()
+    finally:
+        close_app(app_new)
+
+    app_new_after = make_app(root, calls, tmp_path, prefs_path=prefs_file)
+    try:
+        assert not app_new_after.crash_banner.winfo_manager()
+    finally:
+        close_app(app_new_after)

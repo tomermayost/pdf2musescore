@@ -46,6 +46,7 @@ def test_save_and_load_roundtrip(tmp_path):
         full_score_target_width=4096,
         last_dir="C:/Scores/Bach",
         dismissed_dual_install="store:0.4.3|standalone:0.4.5",
+        dismissed_crash="deadbeefcafebabe",
     )
     assert save_preferences(original, p) is True
     assert p.is_file()

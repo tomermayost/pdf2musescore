@@ -9,6 +9,7 @@ datas = copy_metadata("homr") + copy_metadata("rapidocr") + [
 ]
 binaries = []
 hiddenimports = [
+    "pdf2musescore.bug_report",
     "pdf2musescore.gui",
     "pdf2musescore.ui_download",
     "PIL.ImageTk",

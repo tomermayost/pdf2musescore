@@ -58,7 +58,11 @@ def _read_recent_musescore_error(since_ts: float, log_dir: Optional[Path] = None
 
 
 class ExportError(RuntimeError):
-    pass
+    """Raised when MuseScore CLI export fails."""
+
+    def __init__(self, message: str, *, musescore_detail: str = "") -> None:
+        super().__init__(message)
+        self.musescore_detail = musescore_detail
 
 
 class MuseScoreExporter:
@@ -96,7 +100,10 @@ class MuseScoreExporter:
             detail = _read_recent_musescore_error(started, self.musescore_log_dir)
             if detail:
                 log.error("MuseScore log detail: %s", detail)
-                raise ExportError(f"MuseScore export failed (code {res.returncode}): {detail}")
+                raise ExportError(
+                    f"MuseScore export failed (code {res.returncode}): {detail}",
+                    musescore_detail=detail,
+                )
             raise ExportError(f"MuseScore export failed (code {res.returncode})")
 
         for line in out_lines:
