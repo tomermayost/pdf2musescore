@@ -51,6 +51,27 @@ def is_newer_version(latest: str, current: str) -> bool:
     return a_pad > b_pad
 
 
+def _select_installer_url(assets: Any, version_clean: str, release_url: str) -> str:
+    """Pick the best Windows Setup .exe URL from GitHub Release ``assets``."""
+    preferred_names = {
+        f"pdf2musescore-{version_clean}-setup-x64.exe".lower(),
+        INSTALLER_ASSET_NAME,
+    }
+    exe_assets: list[tuple[str, str]] = []
+    for asset in assets or ():
+        name = str(asset.get("name") or "").strip()
+        url = str(asset.get("browser_download_url") or "")
+        lower = name.lower()
+        if lower in preferred_names and url:
+            return url
+        if lower.endswith(".exe") and url:
+            exe_assets.append((lower, url))
+    for lower, url in exe_assets:
+        if "setup" in lower:
+            return url
+    return exe_assets[0][1] if exe_assets else release_url
+
+
 def check_for_update(
     current_version: str,
     api_url: str = GITHUB_LATEST_RELEASE_API,
@@ -77,23 +98,10 @@ def check_for_update(
         log.debug("Update check: current v%s is up to date (latest tag=%r)", current_version, tag)
         return None
 
-    release_url = str(data.get("html_url") or RELEASES_FALLBACK_URL)
-    assets = data.get("assets") or []
-    download_url = ""
-    for asset in assets:
-        if str(asset.get("name") or "").lower() == INSTALLER_ASSET_NAME:
-            download_url = str(asset.get("browser_download_url") or "")
-            break
-    if not download_url:
-        for asset in assets:
-            name = str(asset.get("name") or "").lower()
-            if name.endswith(".exe"):
-                download_url = str(asset.get("browser_download_url") or "")
-                break
-    if not download_url:
-        download_url = release_url
-
     version_clean = tag.lstrip("vV")
+    release_url = str(data.get("html_url") or RELEASES_FALLBACK_URL)
+    download_url = _select_installer_url(data.get("assets"), version_clean, release_url)
+
     log.info("Update available: v%s (current v%s) -> %s", version_clean, current_version, download_url)
     return UpdateInfo(
         version=version_clean,

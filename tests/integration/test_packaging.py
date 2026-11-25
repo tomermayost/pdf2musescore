@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from pdf2musescore import __version__
+
 ROOT = Path(__file__).resolve().parents[2]
 EXE = ROOT / "tmp" / "dist" / "pdf2musescore" / "pdf2musescore.exe"
-SETUP_EXE = ROOT / "tmp" / "dist" / "pdf2musescore-setup.exe"
+SETUP_EXE = ROOT / "tmp" / "dist" / f"pdf2musescore-{__version__}-setup-x64.exe"
 
 pytestmark = pytest.mark.integration
 

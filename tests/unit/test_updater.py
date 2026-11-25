@@ -65,6 +65,37 @@ def test_check_for_update_variants(caplog):
         notes="Release notes",
     )
 
+    # Versioned setup installer name preferred over other .exe assets
+    info_ver = check_for_update(
+        "0.4.7",
+        opener=make_opener({
+            "tag_name": "v0.4.8",
+            "html_url": "https://example.com/rel48",
+            "assets": [
+                {"name": "helper.exe", "browser_download_url": "https://example.com/helper.exe"},
+                {
+                    "name": "pdf2musescore-0.4.8-setup-x64.exe",
+                    "browser_download_url": "https://example.com/v048-setup.exe",
+                },
+            ],
+        }),
+    )
+    assert info_ver is not None and info_ver.download_url == "https://example.com/v048-setup.exe"
+
+    # Generic *setup*.exe preferred over unrelated .exe assets
+    info_setup = check_for_update(
+        "0.4.7",
+        opener=make_opener({
+            "tag_name": "v0.5.0",
+            "html_url": "https://example.com/rel50",
+            "assets": [
+                {"name": "helper.exe", "browser_download_url": "https://example.com/helper.exe"},
+                {"name": "pdf2musescore-v0.5.0-setup.exe", "browser_download_url": "https://example.com/setup50.exe"},
+            ],
+        }),
+    )
+    assert info_setup is not None and info_setup.download_url == "https://example.com/setup50.exe"
+
     # Fallback to any .exe asset
     info2 = check_for_update(
         "0.3.0",

@@ -32,7 +32,14 @@ if (-not $iscc) {
 }
 
 Write-Host "==> Building Setup Wizard with Inno Setup ($iscc)..."
+$initText = Get-Content -Path "src\pdf2musescore\__init__.py" -Raw
+if ($initText -notmatch '__version__\s*=\s*"([^"]+)"') {
+    throw "Could not parse __version__ from src\pdf2musescore\__init__.py"
+}
+$rawVersion = $Matches[1]
+Get-ChildItem -Path "tmp\dist" -Filter "pdf2musescore*setup*.exe" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 & $iscc packaging\installer.iss
 
 Write-Host "==> Done! Outputs:"
-Get-ChildItem tmp\dist\pdf2musescore-setup.exe, tmp\dist\pdf2musescore\pdf2musescore.exe | Select-Object FullName, Length
+Get-ChildItem "tmp\dist\pdf2musescore-$rawVersion-setup-x64.exe", "tmp\dist\pdf2musescore\pdf2musescore.exe" | Select-Object FullName, Length

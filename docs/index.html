@@ -34,7 +34,7 @@
     "license": "https://www.gnu.org/licenses/agpl-3.0.en.html",
     "url": "https://tomermayost.github.io/pdf2musescore/",
     "installUrl": "https://apps.microsoft.com/detail/9N6NCBWM3BHT",
-    "downloadUrl": "https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe",
+    "downloadUrl": "https://github.com/tomermayost/pdf2musescore/releases/latest",
     "author": {
       "@type": "Person",
       "name": "Tomer Mayost"
@@ -95,7 +95,7 @@
               </svg>
               <span>Get it from Microsoft Store</span>
             </a>
-            <a id="heroDownloadBtn" class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">
+            <a id="heroDownloadBtn" class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases/latest">
               <span>Standalone .exe</span>
               <span id="releaseTagBadge" class="version-tag version-tag-muted">Latest</span>
             </a>
@@ -354,8 +354,8 @@
             <summary>Why does Windows SmartScreen warn about the standalone .exe installer?</summary>
             <div class="faq-body">
               For zero SmartScreen warnings and automatic updates, install the Microsoft-signed <a href="https://apps.microsoft.com/detail/9N6NCBWM3BHT" target="_blank" rel="noopener">Microsoft Store</a> edition. The standalone GitHub <code>.exe</code> installer is not signed with a commercial EV certificate yet, so SmartScreen may appear — click <strong>More info → Run anyway</strong>, or verify every public CI build using <code>SHA256SUMS.txt</code> and GitHub Build Provenance Attestations:
-              <pre>Get-FileHash .\pdf2musescore-setup.exe -Algorithm SHA256
-gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore</pre>
+              <pre>Get-FileHash .\pdf2musescore-&lt;version&gt;-setup-x64.exe -Algorithm SHA256
+gh attestation verify .\pdf2musescore-&lt;version&gt;-setup-x64.exe --repo tomermayost/pdf2musescore</pre>
             </div>
           </details>
 
@@ -407,7 +407,7 @@ gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore
               </svg>
               <span>Get it from Microsoft Store</span>
             </a>
-            <a class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe">Standalone .exe</a>
+            <a id="bottomDownloadBtn" class="btn btn-secondary" href="https://github.com/tomermayost/pdf2musescore/releases/latest">Standalone .exe</a>
           </div>
         </div>
       </div>

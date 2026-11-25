@@ -117,9 +117,11 @@
     }
   });
 
-  /* Non-blocking latest GitHub release tag badge */
+  /* Non-blocking latest GitHub release tag badge & versioned .exe link */
   var tagBadge = document.getElementById("releaseTagBadge");
-  if (tagBadge && typeof window.fetch === "function") {
+  var heroDownloadBtn = document.getElementById("heroDownloadBtn");
+  var bottomDownloadBtn = document.getElementById("bottomDownloadBtn");
+  if ((tagBadge || heroDownloadBtn || bottomDownloadBtn) && typeof window.fetch === "function") {
     window
       .fetch("https://api.github.com/repos/tomermayost/pdf2musescore/releases/latest", {
         headers: { Accept: "application/vnd.github+json" }
@@ -128,8 +130,28 @@
         return resp.ok ? resp.json() : null;
       })
       .then(function (data) {
-        if (data && typeof data.tag_name === "string" && data.tag_name.trim()) {
+        if (!data) {
+          return;
+        }
+        if (tagBadge && typeof data.tag_name === "string" && data.tag_name.trim()) {
           tagBadge.textContent = data.tag_name.trim();
+        }
+        if (Array.isArray(data.assets)) {
+          var exeAsset =
+            data.assets.find(function (a) {
+              return a && typeof a.name === "string" && /setup.*\.exe$/i.test(a.name);
+            }) ||
+            data.assets.find(function (a) {
+              return a && typeof a.name === "string" && /\.exe$/i.test(a.name);
+            });
+          if (exeAsset && typeof exeAsset.browser_download_url === "string" && exeAsset.browser_download_url) {
+            if (heroDownloadBtn) {
+              heroDownloadBtn.href = exeAsset.browser_download_url;
+            }
+            if (bottomDownloadBtn) {
+              bottomDownloadBtn.href = exeAsset.browser_download_url;
+            }
+          }
         }
       })
       .catch(function () {

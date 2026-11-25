@@ -379,6 +379,8 @@ def test_gui_store_mode_update_alerts_and_opens_store(root, tmp_path: Path) -> N
 def test_installer_iss_downgrade_and_dual_install_guards() -> None:
     iss_text = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
     assert f'#define MyAppVersion "{__version__}"' in iss_text
+    assert "OutputBaseFilename=pdf2musescore-{#MyAppVersion}-setup-x64" in iss_text
+    assert "pdf2musescore-$rawVersion-x64.msix" in (ROOT / "packaging" / "build_msix.ps1").read_text(encoding="utf-8")
     for token in (
         "InitializeSetup",
         "CompareVersionStrings",
@@ -482,7 +484,10 @@ def test_generate_msix_assets_and_manifest_and_ci(tmp_path: Path) -> None:
     for token in (
         "build_msix.ps1",
         "msix-store-package",
-        "pdf2musescore.msix",
+        "SETUP_EXE_NAME",
+        "MSIX_NAME",
+        "-setup-x64.exe",
+        "-x64.msix",
         "microsoft/microsoft-store-apppublisher@v1.4",
         "9N6NCBWM3BHT",
     ):

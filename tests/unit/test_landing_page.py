@@ -102,16 +102,12 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert ld["@type"] == "SoftwareApplication"
     assert ld["offers"]["price"] == "0"
     assert ld["installUrl"] == "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
-    assert ld["downloadUrl"] == (
-        "https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe"
-    )
+    assert ld["downloadUrl"] == "https://github.com/tomermayost/pdf2musescore/releases/latest"
 
-    # Primary Store install link and standalone .exe download link exist
+    # Primary Store install link and standalone .exe fallback link exist
     assert "https://apps.microsoft.com/detail/9N6NCBWM3BHT" in parser.anchors
-    assert (
-        "https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe"
-        in parser.anchors
-    )
+    assert "https://github.com/tomermayost/pdf2musescore/releases/latest" in parser.anchors
+    assert 'id="bottomDownloadBtn"' in html_text
 
     # Every relative local asset referenced in index.html exists under docs/
     local_refs: list[str] = []
@@ -136,6 +132,7 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     js_text = (DOCS / "app.js").read_text(encoding="utf-8")
     assert "assets/ui-dark.png" in js_text
     assert "assets/ui-light.png" in js_text
+    assert "browser_download_url" in js_text
     assert (DOCS / "assets" / "ui-dark.png").is_file()
     assert (DOCS / "assets" / "ui-light.png").is_file()
 

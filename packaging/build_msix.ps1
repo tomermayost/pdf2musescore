@@ -60,10 +60,10 @@ if (-not $makeappx) {
     throw "makeappx.exe (Windows 10/11 SDK) was not found. Install the Windows SDK or run on GitHub Actions windows-latest."
 }
 
-$outMsix = Join-Path (Get-Location) "tmp\dist\pdf2musescore.msix"
-if (Test-Path $outMsix) {
-    Remove-Item -Path $outMsix -Force
-}
+$distDir = Join-Path (Get-Location) "tmp\dist"
+Get-ChildItem -Path $distDir -Filter "pdf2musescore*.msix" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+$outMsix = Join-Path $distDir "pdf2musescore-$rawVersion-x64.msix"
 
 Write-Host "==> Packing MSIX using $makeappx..."
 & $makeappx pack /o /d $stageDir /p $outMsix

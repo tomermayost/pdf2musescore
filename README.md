@@ -11,7 +11,7 @@
 
 Convert sheet music PDFs and photos (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) into editable **MuseScore 4 (`.mscz`)** and **MusicXML (`.musicxml`)** files — **100% free, runs locally on your PC, no account, no page limits, and no Python or Java setup**.
 
-> 👉 **[Get it from Microsoft Store (Recommended — Signed, Zero SmartScreen)](https://apps.microsoft.com/detail/9N6NCBWM3BHT)** · **[Standalone `.exe` Installer (~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** · 🌐 **[Website](https://tomermayost.github.io/pdf2musescore/)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
+> 👉 **[Get it from Microsoft Store (Recommended — Signed, Zero SmartScreen)](https://apps.microsoft.com/detail/9N6NCBWM3BHT)** · **[Standalone `.exe` Installer (Latest Release)](https://github.com/tomermayost/pdf2musescore/releases/latest)** · 🌐 **[Website](https://tomermayost.github.io/pdf2musescore/)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
 
 ![PDF to MuseScore Light Studio Interface](docs/assets/ui-light.png)
 
@@ -76,7 +76,7 @@ Optical music recognition (OMR) has come a long way, and setting clear expectati
 - On first launch, the app automatically downloads the open-source `homr` and `RapidOCR` ONNX AI models once (~180 MB) and caches them locally in `%LOCALAPPDATA%\pdf2musescore\models`.
 
 ### Option 2 — Standalone GitHub Installer (`.exe`)
-- Download **[`pdf2musescore-setup.exe` (~105 MB)](https://github.com/tomermayost/pdf2musescore/releases/latest/download/pdf2musescore-setup.exe)** from [GitHub Releases](https://github.com/tomermayost/pdf2musescore/releases).
+- Download **`pdf2musescore-<version>-setup-x64.exe`** from the **[Latest GitHub Release](https://github.com/tomermayost/pdf2musescore/releases/latest)** (or browse [All Releases](https://github.com/tomermayost/pdf2musescore/releases)).
 - During installation, the Setup Wizard downloads the open-source `homr` and `RapidOCR` ONNX AI models once (~180 MB) into `%LOCALAPPDATA%\pdf2musescore\models` (with automatic startup download fallback for offline installs).
 - **Windows SmartScreen note:** Standalone GitHub `.exe` releases are currently **unsigned** (see [Code Signing & Trust](#code-signing-trust--privacy-policy)), so Windows SmartScreen may show *"Windows protected your PC"*. For zero SmartScreen warnings, install via **Option 1 (Microsoft Store)** above, or click **More info** → **Run anyway** after verifying the checksum/provenance below.
 
@@ -98,10 +98,10 @@ Every public CI release is built automatically on GitHub-hosted Windows runners 
 
 ```powershell
 # Verify SHA-256 hash matches the value in SHA256SUMS.txt from the release page
-Get-FileHash .\pdf2musescore-setup.exe -Algorithm SHA256
+Get-FileHash .\pdf2musescore-<version>-setup-x64.exe -Algorithm SHA256
 
 # Optional (if GitHub CLI is installed): verify CI provenance against this repository
-gh attestation verify .\pdf2musescore-setup.exe --repo tomermayost/pdf2musescore
+gh attestation verify .\pdf2musescore-<version>-setup-x64.exe --repo tomermayost/pdf2musescore
 ```
 
 ---
@@ -147,7 +147,7 @@ Run from source:
 
 Coverage report: `tmp/coverage_html/index.html` (minimum coverage gate: 85%).
 
-## Building the Windows Installer (`pdf2musescore-setup.exe`) & Microsoft Store MSIX
+## Building the Windows Installer & Microsoft Store MSIX
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1
@@ -157,8 +157,8 @@ powershell -ExecutionPolicy Bypass -File .\packaging\build_msix.ps1
 
 Outputs in `tmp/dist/`:
 - `tmp/dist/pdf2musescore/pdf2musescore.exe` — standalone portable folder
-- `tmp/dist/pdf2musescore-setup.exe` — Windows Setup Wizard installer
-- `tmp/dist/pdf2musescore.msix` — Microsoft Store MSIX package (when `packaging/build_msix.ps1` is run)
+- `tmp/dist/pdf2musescore-<version>-setup-x64.exe` — Windows Setup Wizard installer
+- `tmp/dist/pdf2musescore-<version>-x64.msix` — Microsoft Store MSIX package (when `packaging/build_msix.ps1` is run)
 
 ## Configuration
 
