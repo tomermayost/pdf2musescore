@@ -21,6 +21,7 @@ from ..musicxml import (
     write_musicxml,
 )
 from ..options import ConversionOptions
+from ..tempo import TempoMarking, apply_tempo_marking
 from .instruments import (
     InstrumentLabel,
     InstrumentPlaybackProfile,
@@ -45,6 +46,7 @@ class PageSidecar:
     sys_min_x: int = 0
     sys_max_x: int = 0
     crop_x: int = 0
+    tempo: Optional[TempoMarking] = None
 
 
 def sidecar_path_for(xml_path: Path) -> Path:
@@ -55,7 +57,7 @@ def sidecar_path_for(xml_path: Path) -> Path:
 def write_page_sidecar(sidecar: PageSidecar, xml_path: Path) -> Path:
     """Persist ``sidecar`` JSON alongside ``xml_path``."""
     path = sidecar_path_for(xml_path)
-    payload = {
+    payload: dict[str, object] = {
         "page_number": sidecar.page_number,
         "staff_count": sidecar.staff_count,
         "staff_cys": list(sidecar.staff_cys),
@@ -65,6 +67,8 @@ def write_page_sidecar(sidecar: PageSidecar, xml_path: Path) -> Path:
         "sys_max_x": sidecar.sys_max_x,
         "crop_x": sidecar.crop_x,
     }
+    if sidecar.tempo is not None:
+        payload["tempo"] = sidecar.tempo.to_dict()
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     log.debug("Wrote full-score sidecar %s (%d staves)", path.name, sidecar.staff_count)
     return path
@@ -96,6 +100,7 @@ def read_page_sidecar(xml_path: Path) -> Optional[PageSidecar]:
             sys_min_x=int(raw.get("sys_min_x", 0)),
             sys_max_x=int(raw.get("sys_max_x", 0)),
             crop_x=int(raw.get("crop_x", 0)),
+            tempo=TempoMarking.from_dict(raw.get("tempo")),
         )
     except Exception as exc:
         log.warning("Could not read full-score sidecar %s (%s: %s) — falling back", path.name, type(exc).__name__, exc)
@@ -1783,7 +1788,10 @@ def merge_fullscore_pages(
         for _ in base_parts
     ]
     dedup_removed = 0
-    for page_idx, root in enumerate(reconciled_roots, start=1):
+    page_start_measures: list[tuple[int, Optional[TempoMarking]]] = []
+    for page_idx, (root, (_pno, _aroot, sc)) in enumerate(zip(reconciled_roots, aligned_pages), start=1):
+        start_idx = counters[0]
+        page_start_measures.append((start_idx, sc.tempo if sc is not None else None))
         parts = root.findall("part")
         for pi, part in enumerate(parts):
             for mi, m in enumerate(part.findall("measure")):
@@ -1805,6 +1813,15 @@ def merge_fullscore_pages(
         keep_line_breaks=keep_line_breaks,
         is_transposed_score=is_transposed_score,
     )
+    last_tempo_key: Optional[tuple[str, Optional[int], str, bool]] = None
+    for start_idx, p_tempo in page_start_measures:
+        if p_tempo is None:
+            continue
+        t_key = (p_tempo.text.lower(), p_tempo.bpm, p_tempo.beat_unit, p_tempo.beat_unit_dot)
+        if t_key == last_tempo_key:
+            continue
+        if apply_tempo_marking(merged, p_tempo, measure_index=start_idx):
+            last_tempo_key = t_key
     verify_fullscore_invariants(merged)
     return merged
 

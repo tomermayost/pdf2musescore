@@ -35,6 +35,7 @@ _OMR_SOURCE_FILES: tuple[Path, ...] = (
     ROOT / "src" / "pdf2musescore" / "fullscore" / "homr_patch.py",
     ROOT / "src" / "pdf2musescore" / "fullscore" / "instruments.py",
     ROOT / "src" / "pdf2musescore" / "engines" / "homr_engine.py",
+    ROOT / "src" / "pdf2musescore" / "tempo.py",
 )
 
 pytestmark = pytest.mark.integration
@@ -318,6 +319,21 @@ def test_fullscore_green_hill_opening_pages():
             assert ch == 10
         else:
             assert ch != 10
+
+    # No leftover homr default midi-program=54 or instrument-sound="voice"
+    for sp in sps:
+        assert sp.findtext("./score-instrument/instrument-sound") != "voice"
+        assert sp.findtext("./midi-instrument/midi-program") != "54"
+
+    # Opening tempo marking ("Adagio affetuoso", BPM 72) detected & exported to MuseScore <Tempo>
+    m1_dir = root.find("./part[@id='P1']/measure[@number='1']/direction")
+    assert m1_dir is not None
+    assert "Adagio" in (m1_dir.findtext(".//words") or "")
+    assert m1_dir.findtext(".//metronome/per-minute") == "72"
+    assert m1_dir.find("./sound").get("tempo") == "72"
+    mscx_tempos = mscx_root.findall(".//Tempo")
+    assert mscx_tempos, "Expected MuseScore 4 to import <Tempo> element"
+    assert any(abs(float(t.findtext("tempo") or "0") - 1.2) < 0.05 for t in mscx_tempos)
 
 
 def test_fullscore_green_hill_midscore_and_meter_change():

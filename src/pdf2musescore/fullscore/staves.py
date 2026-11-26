@@ -24,6 +24,8 @@ class StaffLayoutResult:
     staff_y_norms: list[float]
     y_lo: float
     y_hi: float
+    top_staff_y: float = 0.0
+    staff_left_x: float = 0.0
     dropped_narrow_count: int = 0
     deduped_overlap_count: int = 0
     extended_count: int = 0
@@ -226,6 +228,8 @@ def flatten_filter_and_extend_staves(
         staff_y_norms=staff_y_norms,
         y_lo=y_lo,
         y_hi=y_hi,
+        top_staff_y=float(staff_top_ys[0]),
+        staff_left_x=float(np.median(staff_left_xs)),
         dropped_narrow_count=dropped_narrow,
         deduped_overlap_count=deduped_overlap,
         extended_count=extended_count,

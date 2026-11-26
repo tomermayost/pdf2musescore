@@ -536,8 +536,10 @@ def annotate_standard_page_instruments(
     ocr_dir: Optional[Path] = None,
     margin_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
     header_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
+    detect_tempo: bool = True,
+    tempo_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
 ) -> list[str]:
-    """Detect written instrument names in Standard Mode or replace homr's default ``Voice`` with ``Piano``."""
+    """Detect written instrument names & tempo in Standard Mode or replace default ``Voice`` with ``Piano``."""
     from ..fullscore.instruments import (
         InstrumentLabel,
         extract_header_instrument_label,
@@ -550,6 +552,7 @@ def annotate_standard_page_instruments(
         is_homr_default_voice,
         set_score_part_instrument,
     )
+    from ..tempo import apply_tempo_marking, extract_tempo_marking
 
     xml_path = Path(xml_path)
     if not xml_path.is_file():
@@ -566,7 +569,7 @@ def annotate_standard_page_instruments(
     if not score_parts or not parts:
         return []
 
-    crop_x, _sys_left_x, top_staff_y, part_cys, part_tops, part_bots, avg_h = _resolve_system_geometry(
+    crop_x, sys_left_x, top_staff_y, part_cys, part_tops, part_bots, avg_h = _resolve_system_geometry(
         multi_staffs, parts, to_input_image
     )
 
@@ -634,6 +637,18 @@ def annotate_standard_page_instruments(
             if not is_percussion_instrument(pname):
                 pitched_i += 1
             resolved_names.append(pname)
+
+    if detect_tempo and top_staff_y >= 25:
+        tempo = extract_tempo_marking(
+            Path(img_path),
+            top_staff_y,
+            staff_left_x=sys_left_x,
+            ocr_reader=ocr_reader,
+            ocr_dir=ocr_dir,
+            ocr_runner=tempo_ocr_runner,
+        )
+        if tempo is not None:
+            apply_tempo_marking(root, tempo)
 
     ET.indent(root)
     ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)

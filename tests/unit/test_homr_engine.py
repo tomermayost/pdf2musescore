@@ -444,7 +444,7 @@ def test_annotate_standard_page_instruments(tmp_path):
     assert r1.findtext("./part-list/score-part[@id='P2']/score-instrument/instrument-sound") == "strings.cello"
     assert r1.findtext("./part-list/score-part[@id='P2']/midi-instrument/midi-program") == "43"
 
-    # 2) Single-part with no left-margin name -> detects written instrument in header
+    # 2) Single-part with no left-margin name -> detects written instrument in header + tempo marking
     x2 = tmp_path / "solo_header.musicxml"
     x2.write_text(_homr_xml(1), encoding="utf-8")
     ms_solo = [SimpleNamespace(staffs=[_StdStaff(80, 950, 240, 300)])]
@@ -454,11 +454,14 @@ def test_annotate_standard_page_instruments(tmp_path):
         ms_solo,
         margin_ocr_runner=lambda _m: ([], []),
         header_ocr_runner=lambda _h: ([[[60, 150], [240, 150], [240, 180], [60, 180]]], ["Bb Clarinet"]),
+        tempo_ocr_runner=lambda _h: ([[[100, 190], [310, 190], [310, 220], [100, 220]]], ["Andante = 88"]),
     )
     assert names2 == ["Bb Clarinet"]
     r2 = ET.parse(x2).getroot()
     assert r2.findtext("./part-list/score-part/score-instrument/instrument-sound") == "wind.reed.clarinet.bflat"
     assert r2.findtext("./part-list/score-part/midi-instrument/midi-program") == "72"
+    assert r2.findtext("./part/measure/direction/direction-type/words") == "Andante"
+    assert r2.findtext("./part/measure/direction/direction-type/metronome/per-minute") == "88"
 
     # 3) Single-part with NO written instrument name anywhere -> falls back from Voice to Piano
     x3 = tmp_path / "solo_noname.musicxml"

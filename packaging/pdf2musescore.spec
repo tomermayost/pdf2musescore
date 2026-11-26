@@ -11,6 +11,7 @@ binaries = []
 hiddenimports = [
     "pdf2musescore.bug_report",
     "pdf2musescore.gui",
+    "pdf2musescore.tempo",
     "pdf2musescore.ui_download",
     "PIL.ImageTk",
     "PIL._tkinter_finder",

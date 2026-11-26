@@ -26,6 +26,7 @@ from pdf2musescore.fullscore.align import (
 from pdf2musescore.fullscore.instruments import InstrumentLabel
 from pdf2musescore.musicxml import MergeError, write_musicxml
 from pdf2musescore.options import ConversionOptions
+from pdf2musescore.tempo import TempoMarking
 
 
 def _make_part(
@@ -102,13 +103,45 @@ def test_sidecar_roundtrip_and_corrupt(tmp_path):
         sys_min_x=400,
         sys_max_x=3500,
         crop_x=395,
+        tempo=TempoMarking(text="Adagio affetuoso", bpm=72, raw_ocr="Adagio affetuoso= 72"),
     )
     sc_path = write_page_sidecar(sc, xml_path)
     assert sc_path == sidecar_path_for(xml_path)
     assert read_page_sidecar(xml_path) == sc
 
+    # Backwards-compatibility: sidecar JSON without "tempo" loads with tempo=None
+    sc_no_tempo = PageSidecar(
+        page_number=5,
+        staff_count=1,
+        staff_cys=[100.0],
+        staff_y_norms=[0.5],
+        labels=[InstrumentLabel("Flute", "Fl.")],
+    )
+    write_page_sidecar(sc_no_tempo, xml_path)
+    assert read_page_sidecar(xml_path).tempo is None
+
     sc_path.write_text("{corrupt", encoding="utf-8")
     assert read_page_sidecar(xml_path) is None
+
+
+def test_merge_fullscore_pages_tempo_dedup_and_change():
+    labels = [InstrumentLabel("Flute", "Fl.")]
+    r1 = _build_score([_make_part("P1", [(False, ("4", "4"))])])
+    r2 = _build_score([_make_part("P1", [(False, ("4", "4"))])])
+    r3 = _build_score([_make_part("P1", [(False, ("4", "4"))])])
+    t1 = TempoMarking(text="Adagio", bpm=72)
+    t3 = TempoMarking(text="Allegro", bpm=132)
+    sc1 = PageSidecar(1, 1, [100.0], [0.5], labels, tempo=t1)
+    sc2 = PageSidecar(2, 1, [100.0], [0.5], labels, tempo=t1)  # repeated header -> deduplicated
+    sc3 = PageSidecar(3, 1, [100.0], [0.5], labels, tempo=t3)  # mid-piece tempo change -> kept
+
+    merged = merge_fullscore_pages([(1, r1, sc1), (2, r2, sc2), (3, r3, sc3)], title="Tempo Test")
+    ms = merged.findall("./part[@id='P1']/measure")
+    assert ms[0].findtext("./direction/direction-type/words") == "Adagio"
+    assert ms[0].findtext("./direction/direction-type/metronome/per-minute") == "72"
+    assert ms[1].find("direction") is None
+    assert ms[2].findtext("./direction/direction-type/words") == "Allegro"
+    assert ms[2].findtext("./direction/direction-type/metronome/per-minute") == "132"
 
 
 def test_align_page_score_consensus_noise_trim_pad_and_inherited_ts():

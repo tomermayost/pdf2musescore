@@ -12,6 +12,7 @@ from typing import Any, Callable, Optional, Sequence
 from ..diagnostics import memory_snapshot
 from ..engines.base import OmrError
 from ..engines.homr_engine import CancelledError, PageFailure, configure_model_cache
+from ..tempo import TempoMarking, extract_tempo_marking
 from .align import PageSidecar, write_page_sidecar
 from .homr_patch import DEFAULT_TARGET_WIDTH, fullscore_homr_context
 from .instruments import extract_instrument_labels
@@ -188,6 +189,18 @@ def run_fullscore_homr(
                     ocr_dir=ocr_ver_dir,
                 )
 
+                tempo: Optional[TempoMarking] = None
+                try:
+                    tempo = extract_tempo_marking(
+                        img_path,
+                        layout.top_staff_y,
+                        staff_left_x=layout.staff_left_x,
+                        ocr_reader=ocr_reader,
+                        ocr_dir=ocr_ver_dir,
+                    )
+                except Exception as exc:
+                    log.warning("Tempo OCR failed on page %d (%s): %s", pno, img_path.name, exc)
+
                 active_page["idx"] = idx
                 active_page["staff_count"] = len(layout.kept_staffs)
 
@@ -219,6 +232,7 @@ def run_fullscore_homr(
                         sys_min_x=layout.sys_min_x,
                         sys_max_x=layout.sys_max_x,
                         crop_x=layout.crop_x,
+                        tempo=tempo,
                     ),
                     xml_path,
                 )

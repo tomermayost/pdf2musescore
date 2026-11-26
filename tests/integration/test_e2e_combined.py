@@ -10,6 +10,7 @@ from pdf2musescore.deps import MUSESCORE, find_tool
 from pdf2musescore.engines.homr_engine import HomrEngine
 from pdf2musescore.exporters.musescore import MuseScoreExporter
 from pdf2musescore.musicxml import merge_files, read_score, set_score_part_instrument, write_musicxml
+from pdf2musescore.tempo import TempoMarking, apply_tempo_marking
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "bach_cello_suite_2.pdf"
@@ -77,3 +78,29 @@ def test_musescore_instrument_mixer_names():
     assert track_names == ["Violin I", "Viola", "Violoncello"]
     assert inst_ids == ["strings.violin", "strings.viola", "strings.cello"]
     assert all("voice" not in (t or "").lower() for t in track_names + inst_ids)
+
+
+def test_musescore_tempo_import():
+    ms = find_tool(MUSESCORE)
+    if not ms:
+        pytest.skip("MuseScore required")
+
+    raw_xml = """<score-partwise version="4.0">
+      <part-list>
+        <score-part id="P1"><part-name>Piano</part-name><score-instrument id="P1-I1"><instrument-name>Piano</instrument-name><instrument-sound>keyboard.piano</instrument-sound></score-instrument><midi-instrument id="P1-I1"><midi-channel>1</midi-channel><midi-program>1</midi-program></midi-instrument></score-part>
+      </part-list>
+      <part id="P1"><measure number="1"><attributes><divisions>4</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note></measure></part>
+    </score-partwise>"""
+    root = ET.fromstring(raw_xml)
+    assert apply_tempo_marking(root, TempoMarking(text="Adagio affetuoso", bpm=72)) is True
+
+    xml_path = write_musicxml(root, OUT / "tempo_import.musicxml")
+    mscz = MuseScoreExporter(ms).export(xml_path, OUT / "tempo_import.mscz")
+    with zipfile.ZipFile(mscz) as z:
+        mscx_name = next(n for n in z.namelist() if n.endswith(".mscx"))
+        mscx_root = ET.fromstring(z.read(mscx_name))
+
+    tempos = mscx_root.findall(".//Tempo")
+    assert tempos, "Expected MuseScore 4 to import <Tempo> element"
+    assert abs(float(tempos[0].findtext("tempo") or "0") - 1.2) < 0.05
+    assert "Adagio affetuoso" in "".join(tempos[0].itertext())

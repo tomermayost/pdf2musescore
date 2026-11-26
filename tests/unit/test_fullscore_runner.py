@@ -158,6 +158,40 @@ def test_run_fullscore_homr_success_and_cover_skip(tmp_path):
     sc = read_page_sidecar(outs[0])
     assert sc is not None and sc.page_number == 2
     assert [l.full_name for l in sc.labels] == ["Flute", "Timpani"]
+    assert sc.tempo is None
+
+    # Tempo OCR hit on header crop is stored in sidecar, and tempo OCR failure does not crash page
+    def _ocr_with_tempo(_ocr_dir):
+        def _read(crop):
+            if crop.shape[1] > 400:
+                return SimpleNamespace(
+                    boxes=[[[180, 40], [360, 40], [360, 70], [180, 70]]],
+                    txts=["Allegro = 120"],
+                )
+            return SimpleNamespace(
+                boxes=[[[0, 120], [50, 120], [50, 140], [0, 140]], [[0, 280], [50, 280], [50, 300], [0, 300]]],
+                txts=["Flute", "Timpani"],
+            )
+
+        return _read
+
+    mods_t, _, _ = _build_fake_homr("ok")
+    outs_t = run_fullscore_homr([p2], homr_modules=mods_t, ocr_reader_factory=_ocr_with_tempo)
+    sc_t = read_page_sidecar(outs_t[0])
+    assert sc_t is not None and sc_t.tempo is not None
+    assert sc_t.tempo.text == "Allegro" and sc_t.tempo.bpm == 120
+
+    def _ocr_tempo_boom(_ocr_dir):
+        def _read(crop):
+            if crop.shape[1] > 400:
+                raise RuntimeError("ocr header glitch")
+            return SimpleNamespace(boxes=[], txts=[])
+
+        return _read
+
+    outs_boom_t = run_fullscore_homr([p2], homr_modules=mods_t, ocr_reader_factory=_ocr_tempo_boom)
+    assert len(outs_boom_t) == 1
+    assert read_page_sidecar(outs_boom_t[0]).tempo is None
 
 
 def test_run_fullscore_homr_empty_staves_partial_fail_all_fail_and_cancel(tmp_path):
