@@ -1,11 +1,13 @@
 # PDF to MuseScore
 
-[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-Free%20Download-0078D4?logo=microsoft&logoColor=white)](https://apps.microsoft.com/detail/9N6NCBWM3BHT)
-[![Latest Release](https://img.shields.io/github/v/release/tomermayost/pdf2musescore?label=Download&color=2563EB)](https://github.com/tomermayost/pdf2musescore/releases/latest)
-[![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
-[![Platform: Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6)](#download--installation-no-python-or-java-required)
-[![CI Build](https://img.shields.io/github/actions/workflow/status/tomermayost/pdf2musescore/release.yml?label=CI%20Build)](https://github.com/tomermayost/pdf2musescore/actions/workflows/release.yml)
-[![OMR Engine: homr 0.7+](https://img.shields.io/badge/OMR%20Engine-homr%200.7%2B-4338CA)](https://github.com/liebharc/homr)
+<p>
+  <a href="https://apps.microsoft.com/detail/9N6NCBWM3BHT"><img src="https://img.shields.io/badge/Microsoft%20Store-Free%20Download-0078D4?logo=microsoft&logoColor=white" alt="Microsoft Store" height="20"></a>
+  <a href="https://github.com/tomermayost/pdf2musescore/releases/latest"><img src="https://img.shields.io/github/v/release/tomermayost/pdf2musescore?label=Download&color=2563EB" alt="Latest Release" height="20"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg" alt="License: AGPL-3.0-or-later" height="20"></a>
+  <a href="#download--installation-no-python-or-java-required"><img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6" alt="Platform: Windows 10/11" height="20"></a>
+  <a href="https://github.com/tomermayost/pdf2musescore/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/tomermayost/pdf2musescore/release.yml?label=CI%20Build" alt="CI Build" height="20"></a>
+  <a href="https://github.com/liebharc/homr"><img src="https://img.shields.io/badge/OMR%20Engine-homr%200.7%2B-4338CA" alt="OMR Engine: homr 0.7+" height="20"></a>
+</p>
 
 **By Tomer Mayost**
 
