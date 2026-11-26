@@ -535,3 +535,49 @@ def test_annotate_standard_page_instruments(tmp_path):
     x5 = tmp_path / "mismatch.musicxml"
     x5.write_text(_homr_xml(1), encoding="utf-8")
     assert annotate_standard_page_instruments(png, x5, [SimpleNamespace(staffs=[])]) == ["Piano"]
+
+    # 7) Multi-system tempo detection maps System 0 (left + right) and System 1 (right)
+    x7 = tmp_path / "multi_sys.musicxml"
+    x7.write_text(
+        "<score-partwise><part-list><score-part id='P1'><part-name>Voice</part-name>"
+        "<score-instrument id='P1-I1'><instrument-name>Voice</instrument-name><instrument-sound>voice</instrument-sound></score-instrument>"
+        "<midi-instrument id='P1-I1'><midi-channel>1</midi-channel><midi-program>54</midi-program></midi-instrument>"
+        "</score-part></part-list><part id='P1'>"
+        "<measure number='1'><attributes><key><fifths>2</fifths></key></attributes><note/></measure>"
+        "<measure number='2'><note/><barline location='right'><bar-style>light-light</bar-style></barline></measure>"
+        "<measure number='3'><attributes><key><fifths>-2</fifths></key></attributes><note/></measure>"
+        "<measure number='4'><print new-system='yes'/><note/></measure>"
+        "<measure number='5'><note/></measure>"
+        "<measure number='6'><note/></measure>"
+        "</part></score-partwise>",
+        encoding="utf-8",
+    )
+    ms_multi = [
+        SimpleNamespace(staffs=[_StdStaff(120, 920, 200, 260)]),
+        SimpleNamespace(staffs=[_StdStaff(80, 920, 420, 480)]),
+    ]
+    band_calls = {"n": 0}
+
+    def _multi_tempo_ocr(_crop):
+        band_calls["n"] += 1
+        if band_calls["n"] == 1:
+            return (
+                [[[130, 120], [340, 120], [340, 150], [130, 150]], [[660, 120], [880, 120], [880, 150], [660, 150]]],
+                ["Andante maestoso (J=72)", "Allegro (in t) alla Spagnola"],
+            )
+        return ([[[700, 20], [900, 20], [900, 50], [700, 50]]], ["Andante moderato (J=s4)"])
+
+    annotate_standard_page_instruments(
+        png,
+        x7,
+        ms_multi,
+        margin_ocr_runner=lambda _m: ([], []),
+        header_ocr_runner=lambda _h: ([[[40, 60], [180, 60], [180, 90], [40, 90]]], ["BARITONE"]),
+        tempo_ocr_runner=_multi_tempo_ocr,
+    )
+    r7 = ET.parse(x7).getroot()
+    ms7 = r7.findall("./part/measure")
+    assert ms7[0].findtext("./direction/direction-type/words") == "Andante maestoso"
+    assert ms7[2].findtext("./direction/direction-type/words") == "Allegro (in 1) alla Spagnola"
+    assert ms7[5].findtext("./direction/direction-type/words") == "Andante moderato"
+    assert ms7[5].find("./direction/sound").get("tempo") == "84"

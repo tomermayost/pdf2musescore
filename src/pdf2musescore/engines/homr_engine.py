@@ -526,6 +526,33 @@ def _resolve_system_geometry(
     return crop_x, sys_left_x, top_staff_y, part_cys, part_tops, part_bots, avg_h
 
 
+def _resolve_all_systems_boxes(
+    multi_staffs: Sequence[Any],
+    to_input_image: Optional[Callable[[tuple[float, float]], tuple[float, float]]],
+) -> list[tuple[float, float, float, float]]:
+    """Return ``(sys_min_x, sys_max_x, sys_top_y, sys_bot_y)`` per system sorted top-to-bottom."""
+    map_pt = to_input_image if to_input_image is not None else _identity_pt
+    boxes: list[tuple[float, float, float, float]] = []
+    for ms in multi_staffs:
+        staffs = getattr(ms, "staffs", ())
+        if not staffs:
+            continue
+        xs0: list[float] = []
+        xs1: list[float] = []
+        ys0: list[float] = []
+        ys1: list[float] = []
+        for st in staffs:
+            lx, ty = map_pt((float(st.min_x), float(st.min_y)))
+            rx, by = map_pt((float(st.max_x), float(st.max_y)))
+            xs0.append(float(lx))
+            xs1.append(float(rx))
+            ys0.append(float(ty))
+            ys1.append(float(by))
+        boxes.append((min(xs0), max(xs1), min(ys0), max(ys1)))
+    boxes.sort(key=lambda b: b[2])
+    return boxes
+
+
 def annotate_standard_page_instruments(
     img_path: Path,
     xml_path: Path,
@@ -552,7 +579,7 @@ def annotate_standard_page_instruments(
         is_homr_default_voice,
         set_score_part_instrument,
     )
-    from ..tempo import apply_tempo_marking, extract_tempo_marking
+    from ..tempo import extract_tempo_markings_in_band, map_system_tempos_to_measures
 
     xml_path = Path(xml_path)
     if not xml_path.is_file():
@@ -638,17 +665,36 @@ def annotate_standard_page_instruments(
                 pitched_i += 1
             resolved_names.append(pname)
 
-    if detect_tempo and top_staff_y >= 25:
-        tempo = extract_tempo_marking(
-            Path(img_path),
-            top_staff_y,
-            staff_left_x=sys_left_x,
-            ocr_reader=ocr_reader,
-            ocr_dir=ocr_dir,
-            ocr_runner=tempo_ocr_runner,
-        )
-        if tempo is not None:
-            apply_tempo_marking(root, tempo)
+    if detect_tempo and multi_staffs:
+        sys_boxes = _resolve_all_systems_boxes(multi_staffs, to_input_image)
+        if sys_boxes:
+            img = cv2.imread(str(img_path))
+            if img is not None:
+                all_sys_tempos = []
+                for s_idx, (sx0, sx1, sy0, _sy1) in enumerate(sys_boxes):
+                    if s_idx == 0:
+                        if sy0 < 25:
+                            all_sys_tempos.append([])
+                            continue
+                        band_top, band_bot = 0, int(sy0) + 8
+                    else:
+                        prev_bot = sys_boxes[s_idx - 1][3]
+                        band_top = max(int(prev_bot) - 4, int(sy0) - int(max(90.0, avg_h * 2.4)))
+                        band_bot = int(sy0) + 6
+                    all_sys_tempos.append(
+                        extract_tempo_markings_in_band(
+                            img,
+                            band_top,
+                            band_bot,
+                            sys_min_x=sx0,
+                            sys_max_x=sx1,
+                            ocr_reader=ocr_reader,
+                            ocr_dir=ocr_dir,
+                            ocr_runner=tempo_ocr_runner,
+                            source_name=Path(img_path).name,
+                        )
+                    )
+                map_system_tempos_to_measures(root, all_sys_tempos)
 
     ET.indent(root)
     ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)

@@ -69,7 +69,7 @@ _BOILERPLATE_RE = re.compile(
 
 _METRO_EQ_RE = re.compile(
     r"(?:(?:(?<![A-Za-z])(?P<unit>♩|𝅗𝅥|♪|𝅗𝅥|q|h|e|d|j)(?P<dot>\.)?|(?:m\.?m\.?|ca\.?|c\.))\s*)?"
-    r"[=≈]\s*(?P<bpm>\d{2,3})(?:\b|[)\]])",
+    r"[=≈]\s*[,.'`~]*\s*(?P<bpm>[0-9sSBbOoDlI|Zz]{2,3})(?:\b|[)\]])",
     re.IGNORECASE,
 )
 _METRO_BPM_RE = re.compile(
@@ -77,6 +77,12 @@ _METRO_BPM_RE = re.compile(
     r"\bm\.?m\.?\s*[:=]?\s*(?P<bpm3>\d{2,3})\b)",
     re.IGNORECASE,
 )
+_BPM_OCR_DIGIT_MAP = str.maketrans(
+    {"s": "8", "S": "8", "B": "8", "b": "6", "O": "0", "o": "0", "D": "0", "l": "1", "I": "1", "|": "1", "Z": "2", "z": "2"}
+)
+_PAREN_IN_ONE_RE = re.compile(r"\(\s*in\s+[1-4tlI|]\s*\)", re.IGNORECASE)
+_PAREN_METRONOME_RE = re.compile(r"\([^)]*[=≈][^)]*\)")
+_SECTION_BAR_STYLES = frozenset({"light-light", "heavy-heavy", "light-heavy"})
 
 _UNIT_MAP: dict[str, str] = {
     "h": "half",
@@ -85,6 +91,17 @@ _UNIT_MAP: dict[str, str] = {
     "e": "eighth",
     "♪": "eighth",
 }
+
+
+def _repair_bpm_token(tok: str) -> Optional[int]:
+    """Repair common single-character OCR digit misreads (e.g. ``'s4'`` -> ``84``) and validate range."""
+    if not tok or not any(ch.isdigit() for ch in tok):
+        return None
+    repaired = tok.translate(_BPM_OCR_DIGIT_MAP)
+    if not repaired.isdigit():
+        return None
+    val = int(repaired)
+    return val if 24 <= val <= 260 else None
 
 
 @dataclass(frozen=True)
@@ -107,6 +124,11 @@ class TempoMarking:
             return max(20, min(300, val))
         if self.text:
             low = self.text.lower()
+            m_first = _TEMPO_HEADWORD_RE.search(low)
+            if m_first is not None:
+                kw = re.sub(r"\s+", " ", m_first.group(0)).replace("più", "piu")
+                if kw in _DEFAULT_TEMPO_BPM:
+                    return _DEFAULT_TEMPO_BPM[kw]
             for kw, default_bpm in _DEFAULT_TEMPO_BPM.items():
                 if re.search(rf"\b{re.escape(kw)}\b", low):
                     return default_bpm
@@ -156,6 +178,7 @@ def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
         return None
     if _BOILERPLATE_RE.search(cleaned):
         return None
+    cleaned = re.sub(r"\(\s*in\s+[tlI|]\s*\)", "(in 1)", cleaned, flags=re.IGNORECASE)
 
     bpm: Optional[int] = None
     beat_unit = "quarter"
@@ -164,8 +187,8 @@ def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
 
     m_eq = _METRO_EQ_RE.search(cleaned)
     if m_eq is not None:
-        cand = int(m_eq.group("bpm"))
-        if 24 <= cand <= 260:
+        cand = _repair_bpm_token(m_eq.group("bpm"))
+        if cand is not None:
             bpm = cand
             match_start = m_eq.start()
             unit_tok = (m_eq.group("unit") or "").lower()
@@ -182,6 +205,7 @@ def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
 
     if bpm is not None:
         prefix = cleaned[:match_start].strip(" \t\r\n([,:;-–—")
+        prefix = re.sub(r"^\d{1,2}\s+(?=[A-Za-z])", "", prefix).strip()
         words = prefix.split()
         if prefix and (_TEMPO_HEADWORD_RE.search(prefix) or (len(words) <= 4 and not re.search(r"\d", prefix))):
             text = prefix
@@ -195,11 +219,15 @@ def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
             raw_ocr=cleaned,
         )
 
-    # Word-only tempo marking (e.g. "Allegro ma non troppo")
-    text_only = cleaned.strip(" \t\r\n.,:;-–—()")
-    if not text_only or re.search(r"\d|[=≈]", text_only):
+    # Word-only tempo marking (e.g. "Allegro ma non troppo", "Allegro (in 1) alla Spagnola")
+    stripped_paren = _PAREN_METRONOME_RE.sub("", cleaned)
+    text_only = stripped_paren.strip(" \t\r\n.,:;-–—")
+    text_only = text_only.lstrip("(").rstrip(")") if text_only.count("(") != text_only.count(")") else text_only
+    text_only = text_only.strip()
+    check_str = _PAREN_IN_ONE_RE.sub("", text_only)
+    if not text_only or re.search(r"\d|[=≈]", check_str):
         return None
-    if len(text_only.split()) > 5:
+    if len(text_only.split()) > 6:
         return None
     if not _TEMPO_START_RE.match(text_only):
         return None
@@ -238,6 +266,149 @@ def _merge_horizontal_ocr_boxes(
             merged.append([left, top, right, bottom, text])
 
     return [(float(m[0]), float(m[1]), float(m[2]), float(m[3]), str(m[4])) for m in merged]
+
+
+@dataclass(frozen=True)
+class PositionedTempo:
+    """A tempo marking with its horizontal bounding box and normalized system X coordinate."""
+
+    tempo: TempoMarking
+    x_left: float
+    x_right: float
+    y_top: float
+    y_bottom: float
+    u_norm: float = 0.0
+
+
+def extract_tempo_markings_in_band(
+    img: np.ndarray,
+    y_top: int,
+    y_bot: int,
+    *,
+    sys_min_x: float = 0.0,
+    sys_max_x: float = 0.0,
+    ocr_reader: Any = None,
+    ocr_dir: Optional[Path] = None,
+    ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
+    source_name: str = "",
+) -> list[PositionedTempo]:
+    """Extract all tempo markings from the vertical band ``[y_top, y_bot)`` sorted left-to-right."""
+    h_px, w_px = img.shape[:2]
+    y0 = max(0, int(y_top))
+    y1 = min(h_px, int(y_bot))
+    if y1 - y0 < 15:
+        return []
+
+    from .fullscore.instruments import _run_rapidocr_on_crop
+
+    crop = img[y0:y1, :]
+    boxes_raw, txts_raw = _run_rapidocr_on_crop(
+        crop, ocr_reader=ocr_reader, ocr_dir=ocr_dir, ocr_runner=ocr_runner
+    )
+    if not boxes_raw or not txts_raw:
+        return []
+
+    merged_boxes = _merge_horizontal_ocr_boxes(boxes_raw, txts_raw)
+    has_sys_span = sys_max_x > sys_min_x + 20.0
+    x_base = float(sys_min_x) if has_sys_span else 0.0
+    span = float(sys_max_x - sys_min_x) if has_sys_span else float(max(1, w_px))
+
+    raw_cands: list[tuple[tuple[int, int, float], PositionedTempo]] = []
+    for left, top, right, bottom, txt in merged_boxes:
+        tempo = parse_tempo_text(txt)
+        if tempo is None:
+            continue
+        u_norm = max(0.0, min(1.0, (float(left) - x_base) / span))
+        pt = PositionedTempo(
+            tempo=tempo,
+            x_left=float(left),
+            x_right=float(right),
+            y_top=float(y0 + top),
+            y_bottom=float(y0 + bottom),
+            u_norm=u_norm,
+        )
+        score = (1 if tempo.bpm is not None else 0, 1 if tempo.text else 0, float(bottom))
+        raw_cands.append((score, pt))
+
+    if not raw_cands:
+        return []
+
+    # Deduplicate horizontally overlapping detections, keeping the highest-scored one
+    kept: list[tuple[tuple[int, int, float], PositionedTempo]] = []
+    for score, pt in sorted(raw_cands, key=lambda item: item[0], reverse=True):
+        overlaps = any(
+            min(pt.x_right, ex.x_right) - max(pt.x_left, ex.x_left) > 10.0
+            for _, ex in kept
+        )
+        if not overlaps:
+            kept.append((score, pt))
+
+    result = sorted((pt for _, pt in kept), key=lambda item: item.x_left)
+    for pt in result:
+        log.info(
+            "Tempo band OCR on %s (y=%d..%d) detected %r (bpm=%s, u=%.2f)",
+            source_name or "image",
+            y0,
+            y1,
+            pt.tempo.text or pt.tempo.raw_ocr,
+            pt.tempo.bpm,
+            pt.u_norm,
+        )
+    return result
+
+
+def map_system_tempos_to_measures(
+    root: ET.Element,
+    system_tempos: Sequence[Sequence[PositionedTempo]],
+) -> int:
+    """Map per-system positioned tempos onto MusicXML measures using ``<print new-system='yes'/>``."""
+    first_part = root.find("part")
+    if first_part is None:
+        return 0
+    measures = first_part.findall("measure")
+    if not measures:
+        return 0
+
+    systems: list[list[int]] = [[0]]
+    for mi in range(1, len(measures)):
+        pr = measures[mi].find("print")
+        if pr is not None and pr.get("new-system") == "yes":
+            systems.append([mi])
+        else:
+            systems[-1].append(mi)
+
+    injected = 0
+    for sys_idx, tempos in enumerate(system_tempos):
+        if sys_idx >= len(systems) or not tempos:
+            continue
+        sys_indices = systems[sys_idx]
+        k = len(sys_indices)
+        for pt in tempos:
+            if pt.u_norm < 0.12 or k == 1:
+                local_idx = 0
+            else:
+                est_float = pt.u_norm * k
+                est_idx = min(k - 1, max(0, int(est_float)))
+                boundaries: list[int] = []
+                for j in range(max(1, est_idx - 2), min(k, est_idx + 3)):
+                    g = sys_indices[j]
+                    cur_m = measures[g]
+                    prev_m = measures[g - 1]
+                    has_attr_change = cur_m.find("./attributes/key") is not None or cur_m.find("./attributes/time") is not None
+                    has_bar = any(
+                        bl.find("repeat") is not None
+                        or (bl.findtext("bar-style") or "").strip().lower() in _SECTION_BAR_STYLES
+                        for bl in prev_m.findall("barline")
+                    )
+                    if has_attr_change or has_bar:
+                        boundaries.append(j)
+                if boundaries:
+                    local_idx = min(boundaries, key=lambda j: abs(j - est_float))
+                else:
+                    local_idx = est_idx
+            if apply_tempo_marking(root, pt.tempo, measure_index=sys_indices[local_idx]):
+                injected += 1
+    return injected
 
 
 def extract_tempo_marking(

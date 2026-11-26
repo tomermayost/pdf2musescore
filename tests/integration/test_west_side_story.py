@@ -1,0 +1,102 @@
+"""Integration: West Side Story (Baritone TC) -> homr AI + OCR + MuseScore 4."""
+
+from __future__ import annotations
+
+import shutil
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from pdf2musescore.config import AppConfig
+from pdf2musescore.deps import MUSESCORE, find_tool
+from pdf2musescore.pipeline import Pipeline
+
+ROOT = Path(__file__).resolve().parents[2]
+WSS_PDF = Path(r"C:\Users\tmayo\Desktop\תווים\west side story\west side story - bariton tc.pdf")
+LOCAL_MODELS = Path(r"C:\Users\tmayo\AppData\Local\pdf2musescore\models")
+OUT = ROOT / "tmp" / "integration" / "west_side_story"
+
+pytestmark = pytest.mark.integration
+
+
+def test_west_side_story_baritone_time_sigs_tempos_and_courtesy_sharp():
+    if not WSS_PDF.is_file():
+        pytest.skip(f"Test PDF missing: {WSS_PDF}")
+    if not find_tool(MUSESCORE):
+        pytest.skip("MuseScore required")
+
+    work_dir = OUT / "work"
+    shutil.rmtree(work_dir, ignore_errors=True)
+    models_dir = LOCAL_MODELS if LOCAL_MODELS.is_dir() else (ROOT / "tmp" / "models")
+    cfg = AppConfig(work_dir=work_dir, models_dir=models_dir, log_level="DEBUG")
+    out_mscz = OUT / "west_side_story_baritone.mscz"
+    out_mscz.parent.mkdir(parents=True, exist_ok=True)
+
+    result = Pipeline(cfg).convert(WSS_PDF, out_mscz)
+    assert result == out_mscz and zipfile.is_zipfile(out_mscz)
+
+    staged_jobs = sorted(work_dir.glob("job-*/score.musicxml"), key=lambda p: p.stat().st_mtime)
+    assert staged_jobs
+    xml_root = ET.parse(staged_jobs[-1]).getroot()
+
+    # 1) Instrument must be BARITONE (not Voice)
+    sp = xml_root.find("./part-list/score-part")
+    assert sp is not None
+    assert "baritone" in (sp.findtext("part-name") or "").lower()
+    assert sp.findtext("./score-instrument/instrument-sound") == "brass.euphonium"
+
+    # 2) Time signatures: 4/4 at M1 -> 3/4 at rehearsal [1] -> 4/4 at rehearsal [5]
+    xml_ms = xml_root.findall("./part/measure")
+    assert len(xml_ms) >= 75
+    ts_changes = [
+        (i + 1, m.findtext("./attributes/time/beats"), m.findtext("./attributes/time/beat-type"))
+        for i, m in enumerate(xml_ms)
+        if m.find("./attributes/time") is not None
+    ]
+    assert ts_changes[0] == (1, "4", "4")
+    assert len(ts_changes) >= 3
+    assert ts_changes[1][1:] == ("3", "4") and ts_changes[1][0] in (6, 7)
+    assert ts_changes[2][1:] == ("4", "4") and ts_changes[2][0] >= 73
+
+    # 3) Courtesy sharp on Bar 5 F#4 (after Bar 4 F-natural)
+    bar5_acc = xml_ms[4].find("./note/accidental")
+    assert bar5_acc is not None
+    assert bar5_acc.text == "sharp"
+    assert bar5_acc.get("cautionary") == "yes"
+
+    # 4) All 3 tempos detected and single-page title not stamped on Bar 1
+    tempo_words = [
+        (w.text or "").strip()
+        for w in xml_root.findall("./part/measure/direction/direction-type/words")
+    ]
+    assert "WEST SIDE STORY" not in tempo_words
+    joined_tempos = " | ".join(tempo_words).lower()
+    assert "andante maestoso" in joined_tempos
+    assert "allegro" in joined_tempos and "spagnola" in joined_tempos
+    assert "andante moderato" in joined_tempos
+
+    sound_bpms = [s.get("tempo") for s in xml_root.findall("./part/measure/direction/sound[@tempo]")]
+    assert "72" in sound_bpms
+    assert "84" in sound_bpms
+
+    # 5) MuseScore 4 (.mscx) verification
+    with zipfile.ZipFile(out_mscz) as z:
+        mscx_name = next(n for n in z.namelist() if n.endswith(".mscx"))
+        mscx_root = ET.fromstring(z.read(mscx_name))
+
+    assert mscx_root.findtext("./Score/Part/Instrument/instrumentId") != "voice.vocals"
+    mscx_ms = mscx_root.findall("./Score/Staff/Measure")
+    # Bars 1-5 and final 4 bars must have no overfull len mismatch
+    for idx in (0, 1, 2, 3, 4, len(mscx_ms) - 4, len(mscx_ms) - 3, len(mscx_ms) - 2, len(mscx_ms) - 1):
+        assert mscx_ms[idx].get("len") is None, f"Measure {idx + 1} still has overfull len={mscx_ms[idx].get('len')}"
+
+    # Bar 5 has visible accidentalSharp in MuseScore
+    assert mscx_ms[4].findtext(".//Note/Accidental/subtype") == "accidentalSharp"
+
+    # All 3 <Tempo> elements imported into MuseScore
+    mscx_tempo_texts = ["".join(t.itertext()).lower() for t in mscx_root.findall(".//Tempo")]
+    assert any("andante maestoso" in t for t in mscx_tempo_texts)
+    assert any("spagnola" in t for t in mscx_tempo_texts)
+    assert any("andante moderato" in t for t in mscx_tempo_texts)

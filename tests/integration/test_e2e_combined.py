@@ -104,3 +104,35 @@ def test_musescore_tempo_import():
     assert tempos, "Expected MuseScore 4 to import <Tempo> element"
     assert abs(float(tempos[0].findtext("tempo") or "0") - 1.2) < 0.05
     assert "Adagio affetuoso" in "".join(tempos[0].itertext())
+
+
+def test_musescore_courtesy_accidental_import():
+    ms = find_tool(MUSESCORE)
+    if not ms:
+        pytest.skip("MuseScore required")
+
+    from pdf2musescore.musicxml import add_courtesy_accidentals
+
+    raw_xml = """<score-partwise version="4.0">
+      <part-list><score-part id="P1"><part-name>Baritone</part-name></score-part></part-list>
+      <part id="P1">
+        <measure number="1">
+          <attributes><divisions>4</divisions><key><fifths>2</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+          <note><pitch><step>F</step><octave>4</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note>
+        </measure>
+        <measure number="2">
+          <note><pitch><step>F</step><alter>1</alter><octave>4</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note>
+        </measure>
+      </part>
+    </score-partwise>"""
+    root = ET.fromstring(raw_xml)
+    assert add_courtesy_accidentals(root) == 1
+    xml_path = write_musicxml(root, OUT / "courtesy_acc.musicxml")
+    mscz = MuseScoreExporter(ms).export(xml_path, OUT / "courtesy_acc.mscz")
+    with zipfile.ZipFile(mscz) as z:
+        mscx_name = next(n for n in z.namelist() if n.endswith(".mscx"))
+        mscx_root = ET.fromstring(z.read(mscx_name))
+
+    m2_note = mscx_root.findall("./Score/Staff/Measure")[1].find(".//Note")
+    assert m2_note is not None
+    assert m2_note.findtext("./Accidental/subtype") == "accidentalSharp"
