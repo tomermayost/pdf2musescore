@@ -71,7 +71,7 @@ jobs:
       - name: Upload Microsoft Store MSIX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: msix-store-package
+          name: msix-store-package-${{ env.APP_VERSION }}
           path: tmp/dist/${{ env.MSIX_NAME }}
 
       - name: Run packaging integration test (--version, --self-test, size check)
@@ -83,7 +83,7 @@ jobs:
         id: upload-unsigned
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-installer
+          name: unsigned-installer-${{ env.APP_VERSION }}
           path: tmp/dist/${{ env.SETUP_EXE_NAME }}
 
       - name: Submit signing request to SignPath (when configured)

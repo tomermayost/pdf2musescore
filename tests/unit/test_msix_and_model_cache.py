@@ -486,7 +486,8 @@ def test_generate_msix_assets_and_manifest_and_ci(tmp_path: Path) -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     for token in (
         "build_msix.ps1",
-        "msix-store-package",
+        "msix-store-package-${{ env.APP_VERSION }}",
+        "unsigned-installer-${{ env.APP_VERSION }}",
         "SETUP_EXE_NAME",
         "MSIX_NAME",
         "-setup-x64.exe",
