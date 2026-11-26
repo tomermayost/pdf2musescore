@@ -28,6 +28,7 @@ DEFAULT_UI_LIGHT_OUT = ROOT / "docs" / "assets" / "ui-light.png"
 DEFAULT_BEFORE_AFTER_OUT = ROOT / "docs" / "assets" / "before-after-bach.png"
 DEFAULT_SOCIAL_OUT = ROOT / "docs" / "assets" / "social-preview.png"
 DEFAULT_MEDIA_TMP = ROOT / "tmp" / "media"
+DEFAULT_STORE_DIR = ROOT / "tmp" / "store_screenshots"
 DEFAULT_MUSESCORE = Path(r"C:\Program Files\MuseScore 4\bin\MuseScore4.exe")
 
 
@@ -491,7 +492,23 @@ def _capture_window_printwindow(hwnd: int) -> Optional[Image.Image]:
         user32.ReleaseDC(wintypes.HWND(hwnd), hwnd_dc)
 
 
-def _capture_window_image(window: tk.Tk) -> Image.Image:
+def _create_showcase_window() -> tk.Tk | tk.Toplevel:
+    """Create a standalone Tk root in CLI runs, or a Toplevel when a Tk root already exists."""
+    existing = getattr(tk, "_default_root", None)
+    if existing is not None:
+        try:
+            if existing.winfo_exists():
+                win = tk.Toplevel(existing)
+                win.withdraw()
+                return win
+        except Exception:
+            pass
+    win = tk.Tk()
+    win.withdraw()
+    return win
+
+
+def _capture_window_image(window: tk.Misc) -> Image.Image:
     """Capture the exact visible bounds of a Tk window (including Windows DWM titlebar)."""
     window.update_idletasks()
     window.update()
@@ -517,7 +534,7 @@ def _capture_window_image(window: tk.Tk) -> Image.Image:
 
 
 def _configure_showcase_window(
-    root: tk.Tk,
+    root: tk.Tk | tk.Toplevel,
     theme: str,
     dark_titlebar: bool,
 ) -> None:
@@ -564,7 +581,7 @@ def capture_ui_screenshots(
     dark_out: Path,
     light_out: Path,
     *,
-    capture_fn: Optional[Callable[[tk.Tk], Image.Image]] = None,
+    capture_fn: Optional[Callable[[tk.Misc], Image.Image]] = None,
 ) -> tuple[Path, Path]:
     """Render and capture fresh Dark and Light Studio screenshots for README & docs."""
     pdf_path = Path(pdf_path)
@@ -589,8 +606,7 @@ def capture_ui_screenshots(
         tmp_dir = Path(td)
 
         # 1. Dark Studio: loaded PDF, collapsed optional drawers with live summary badge, completion banner
-        root_dark = tk.Tk()
-        root_dark.withdraw()
+        root_dark = _create_showcase_window()
         app_dark = App(
             root_dark,
             AppConfig(log_dir=tmp_dir / "logs_d", work_dir=tmp_dir / "work_d", check_updates=False),
@@ -623,8 +639,7 @@ def capture_ui_screenshots(
             root_dark.destroy()
 
         # 2. Light Studio: loaded PDF, expanded Instrument/Clef/Transpose drawer with live interval hint
-        root_light = tk.Tk()
-        root_light.withdraw()
+        root_light = _create_showcase_window()
         app_light = App(
             root_light,
             AppConfig(log_dir=tmp_dir / "logs_l", work_dir=tmp_dir / "work_l", check_updates=False),
@@ -655,12 +670,276 @@ def capture_ui_screenshots(
     return dark_out, light_out
 
 
+_STORE_LISTING_COPY = """=== MICROSOFT STORE PARTNER CENTER LISTING COPY (PDF2MuseScore v0.4.7+) ===
+
+--- SHORT DESCRIPTION ---
+Convert sheet music PDFs & photos into editable MuseScore 4 (.mscz) and MusicXML scores — 100% free, local AI, no account or page limits.
+
+--- FULL DESCRIPTION ---
+PDF2MuseScore converts printed sheet music PDFs, faded photocopies, and smartphone photos (.png, .jpg, .webp, .bmp, .tif) into editable MuseScore 4 (.mscz) and MusicXML (.musicxml) scores — running 100% locally on your Windows PC with no account, no cloud uploads, and no page limits.
+
+Powered by the open-source homr deep-learning optical music recognition engine and RapidOCR, PDF2MuseScore supports both Single Part and Full Score (Conductor) modes — recognizing notes, slurs, ties, beams, dynamics, tempo markings, and multi-page scores while sanitizing slurs, tuplets, and forced line breaks so MuseScore 4 imports cleanly.
+
+Key highlights:
+• Drag-and-drop PDFs or phone photos with live page preview and context-aware page range picking for multi-page scores
+• One-click scan presets: Clean PDF, Faded Scan (contrast boost + deskew), and Phone Photo (shadow cleanup)
+• Single Part & Full Score (Conductor) modes with automatic multi-staff instrument detection and playback transpositions
+• Optional collapsible Instrument, Clef & Transpose overrides with live interval hints (e.g. +2 for B♭ instruments)
+• Clean Dark & Light Studio themes with one-click Open in MuseScore and Show in Folder completion actions
+
+NOTE: On first launch, the app automatically downloads the open-source homr and RapidOCR AI model weights (~180 MB) once into your local user folder for offline use afterward. Exporting directly to .mscz uses MuseScore 4 if installed on your PC; MusicXML (.musicxml) export works standalone without MuseScore.
+
+System requirements: 64-bit Windows 10/11, x86-64 CPU with AVX2 & SSE4.2, 8 GB RAM recommended (4 GB minimum), ~500 MB free disk space.
+
+Open source under GNU AGPL-3.0-or-later (source code: https://github.com/tomermayost/pdf2musescore). PDF2MuseScore is an independent open-source project and is not affiliated with or endorsed by Muse Group or MuseScore.
+
+--- PRODUCT FEATURES (UP TO 200 CHARS EACH) ---
+1. 100% local offline AI on your PC — no account, no cloud uploads, no page limits
+2. Drag & drop PDFs or photos (.png, .jpg, .webp, .bmp, .tif) with live page preview
+3. Single Part & Full Score (Conductor) modes with auto-detected instruments and tempo
+4. One-click Clean PDF, Faded Scan, and Phone Photo presets plus optional AI tuning
+5. Pre-export Instrument, Clef & Transpose overrides with live musical interval hints
+6. Direct MuseScore 4 (.mscz) and standalone MusicXML (.musicxml) export with sanitization
+
+--- WHAT'S NEW IN THIS VERSION ---
+• Streamlined, beginner-friendly Studio UI: cleaner first-run screen, flush preview layout, softer active toggle pills, auto-fitting window height, and context-aware page picker, progress bar, and drawers.
+• Collapsible Instrument, Clef & Transpose drawer with live summary badges (e.g. "Cello · Bass" or "Trumpet · Treble · +2").
+• Added Full Score (Conductor) mode with multi-staff alignment, automatic instrument detection, playback transpositions, and OCR tempo/expression markings.
+• Added themed completion popup, taskbar flash, and optional privacy-sanitized bug reporting.
+"""
+
+
+def compose_store_slide(
+    image: Image.Image,
+    title: str,
+    subtitle: str,
+    out_path: Path,
+    *,
+    badge: str = "",
+    dark_canvas: bool = True,
+    size: tuple[int, int] = (1920, 1080),
+) -> Path:
+    """Compose a crisp 16:9 Microsoft Store showcase screenshot slide."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    w, h = int(size[0]), int(size[1])
+
+    bg = (15, 23, 42) if dark_canvas else (241, 245, 249)
+    title_fg = (248, 250, 252) if dark_canvas else (15, 23, 42)
+    sub_fg = (148, 163, 184) if dark_canvas else (71, 85, 105)
+    card_bg = (22, 32, 50) if dark_canvas else (255, 255, 255)
+    card_border = (51, 65, 85) if dark_canvas else (203, 213, 225)
+    shadow_col = (7, 11, 22) if dark_canvas else (203, 213, 225)
+    badge_bg = (30, 58, 104) if dark_canvas else (219, 234, 254)
+    badge_fg = (147, 197, 253) if dark_canvas else (29, 78, 216)
+    badge_border = (59, 130, 246)
+
+    canvas = Image.new("RGB", (w, h), bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Top cobalt-indigo gradient bar (#2563EB -> #4338CA)
+    c_left = (37, 99, 235)
+    c_right = (67, 56, 202)
+    for x in range(w):
+        t = x / max(1, w - 1)
+        color = tuple(int(round(c_left[i] + (c_right[i] - c_left[i]) * t)) for i in range(3))
+        draw.line([(x, 0), (x, 7)], fill=color)
+
+    badge_font = _load_font(15, bold=True)
+    title_font = _load_font(40, bold=True)
+    sub_font = _load_font(22, bold=False)
+
+    cur_y = 28
+    cleaned_badge = (badge or "").strip()
+    if cleaned_badge:
+        bb = draw.textbbox((0, 0), cleaned_badge, font=badge_font)
+        bw = (bb[2] - bb[0]) + 28
+        bh = (bb[3] - bb[1]) + 14
+        bx0 = (w - bw) // 2
+        draw.rounded_rectangle(
+            (bx0, cur_y, bx0 + bw, cur_y + bh),
+            radius=bh // 2,
+            fill=badge_bg,
+            outline=badge_border,
+            width=1,
+        )
+        draw.text(
+            (bx0 + (bw - (bb[2] - bb[0])) // 2 - bb[0], cur_y + (bh - (bb[3] - bb[1])) // 2 - bb[1]),
+            cleaned_badge,
+            font=badge_font,
+            fill=badge_fg,
+        )
+        cur_y += bh + 14
+
+    tb = draw.textbbox((0, 0), title, font=title_font)
+    tw, th = tb[2] - tb[0], tb[3] - tb[1]
+    draw.text(((w - tw) // 2 - tb[0], cur_y - tb[1]), title, font=title_font, fill=title_fg)
+    cur_y += th + 12
+
+    sb = draw.textbbox((0, 0), subtitle, font=sub_font)
+    sw, sh = sb[2] - sb[0], sb[3] - sb[1]
+    draw.text(((w - sw) // 2 - sb[0], cur_y - sb[1]), subtitle, font=sub_font, fill=sub_fg)
+    cur_y += sh + 26
+
+    bottom_margin = 34
+    card_pad = 16
+    avail_w = w - 120 - card_pad * 2
+    avail_h = max(200, h - cur_y - bottom_margin - card_pad * 2)
+    fitted = _fit_into_box(image.convert("RGB"), max_w=avail_w, max_h=avail_h)
+
+    card_w = fitted.width + card_pad * 2
+    card_h = fitted.height + card_pad * 2
+    cx0 = (w - card_w) // 2
+    cy0 = cur_y + max(0, (h - bottom_margin - cur_y - card_h) // 2)
+
+    draw.rounded_rectangle(
+        (cx0 + 4, cy0 + 8, cx0 + card_w + 4, cy0 + card_h + 8),
+        radius=20,
+        fill=shadow_col,
+    )
+    draw.rounded_rectangle(
+        (cx0, cy0, cx0 + card_w, cy0 + card_h),
+        radius=20,
+        fill=card_bg,
+        outline=card_border,
+        width=2,
+    )
+    sx = cx0 + card_pad
+    sy = cy0 + card_pad
+    draw.rounded_rectangle(
+        (sx - 2, sy - 2, sx + fitted.width + 2, sy + fitted.height + 2),
+        radius=8,
+        outline=card_border,
+        width=2,
+    )
+    canvas.paste(fitted, (sx, sy))
+
+    canvas.save(out_path, format="PNG")
+    log.info("Saved Microsoft Store slide to %s (%dx%d)", out_path, canvas.width, canvas.height)
+    return out_path
+
+
+def capture_empty_dark_screenshot(
+    out_path: Path,
+    *,
+    capture_fn: Optional[Callable[[tk.Misc], Image.Image]] = None,
+) -> Path:
+    """Capture the clean empty first-launch Dark Studio window."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if str(ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(ROOT / "src"))
+
+    from pdf2musescore.config import AppConfig
+    from pdf2musescore.gui import App
+    from pdf2musescore.ui_theme import enable_high_dpi
+
+    enable_high_dpi()
+    grab = _capture_window_image if capture_fn is None else capture_fn
+    with TemporaryDirectory() as td:
+        tmp_dir = Path(td)
+        root_empty = _create_showcase_window()
+        app_empty = App(
+            root_empty,
+            AppConfig(log_dir=tmp_dir / "logs_e", work_dir=tmp_dir / "work_e", check_updates=False),
+            musescore_available=lambda: True,
+            theme="dark",
+            prefs_path=tmp_dir / "prefs_empty.json",
+            enable_dnd=False,
+            prefetch_models=False,
+            dual_install_checker=lambda: None,
+        )
+        try:
+            _configure_showcase_window(root_empty, "dark", True)
+            img = grab(root_empty)
+            img.save(out_path, format="PNG")
+            log.info("Saved empty first-launch UI screenshot to %s (%dx%d)", out_path, img.width, img.height)
+        finally:
+            app_empty.destroy()
+            root_empty.destroy()
+    return out_path
+
+
+def generate_store_screenshots(
+    out_dir: Path,
+    *,
+    dark_ui_path: Path = DEFAULT_UI_DARK_OUT,
+    light_ui_path: Path = DEFAULT_UI_LIGHT_OUT,
+    before_after_path: Path = DEFAULT_BEFORE_AFTER_OUT,
+    capture_fn: Optional[Callable[[tk.Misc], Image.Image]] = None,
+) -> list[Path]:
+    """Generate 1920x1080 Microsoft Store showcase slides and Partner Center copy."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for req_path in (dark_ui_path, light_ui_path, before_after_path):
+        if not Path(req_path).is_file():
+            raise FileNotFoundError(f"Required source asset not found: {req_path}")
+
+    outputs: list[Path] = []
+    with Image.open(dark_ui_path) as img_dark:
+        outputs.append(
+            compose_store_slide(
+                img_dark,
+                "Convert Sheet Music PDFs & Photos Locally",
+                "100% Free · Offline homr AI · Direct MuseScore 4 (.mscz) & MusicXML",
+                out_dir / "01-dark-studio.png",
+                badge="MICROSOFT STORE · ZERO ACCOUNT · UNLIMITED PAGES",
+                dark_canvas=True,
+            )
+        )
+
+    with Image.open(before_after_path) as img_ba:
+        outputs.append(
+            compose_store_slide(
+                img_ba,
+                "Real Local AI Conversion: PDF Scan → Editable MuseScore 4",
+                "Preserves clefs, key & time signatures, slurs, ties, beams, and flowing measures",
+                out_dir / "02-before-after-bach.png",
+                badge="BACH CELLO SUITE NO. 2 · CONVERTED ON CPU",
+                dark_canvas=True,
+            )
+        )
+
+    with Image.open(light_ui_path) as img_light:
+        outputs.append(
+            compose_store_slide(
+                img_light,
+                "Light & Dark Studio · Built-In Transpose & Score Setup",
+                "Single Part & Full Score (Conductor) modes with live musical transpose hints",
+                out_dir / "03-light-studio-transpose.png",
+                badge="LIGHT & DARK THEMES · COLLAPSIBLE OVERRIDES",
+                dark_canvas=False,
+            )
+        )
+
+    with TemporaryDirectory() as td:
+        raw_empty = Path(td) / "ui-empty-dark.png"
+        capture_empty_dark_screenshot(raw_empty, capture_fn=capture_fn)
+        with Image.open(raw_empty) as img_empty:
+            outputs.append(
+                compose_store_slide(
+                    img_empty,
+                    "Clean First Launch · Powerful When You Need It",
+                    "Drag and drop a PDF or photo — advanced AI settings stay out of the way until needed",
+                    out_dir / "04-clean-first-launch.png",
+                    badge="STREAMLINED STUDIO WORKFLOW",
+                    dark_canvas=True,
+                )
+            )
+
+    copy_path = out_dir / "store_listing_copy.txt"
+    copy_path.write_text(_STORE_LISTING_COPY.lstrip(), encoding="utf-8")
+    log.info("Saved Microsoft Store Partner Center copy to %s", copy_path)
+    return outputs
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate README and GitHub social media assets.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--before-after", action="store_true", help="Generate before/after Bach comparison PNG.")
     parser.add_argument("--social-preview", action="store_true", help="Generate 1280x640 GitHub social preview PNG.")
     parser.add_argument("--ui-screenshots", action="store_true", help="Capture refreshed Dark & Light UI PNGs.")
+    parser.add_argument("--store-screenshots", action="store_true", help="Generate 1920x1080 Microsoft Store slides.")
     parser.add_argument("--all", action="store_true", help="Generate all media assets.")
     parser.add_argument("--pdf", type=Path, default=DEFAULT_PDF)
     parser.add_argument("--mscz", type=Path, default=DEFAULT_MSCZ)
@@ -669,6 +948,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot", type=Path, default=DEFAULT_SCREENSHOT)
     parser.add_argument("--ui-dark-out", type=Path, default=DEFAULT_UI_DARK_OUT)
     parser.add_argument("--ui-light-out", type=Path, default=DEFAULT_UI_LIGHT_OUT)
+    parser.add_argument("--store-out-dir", type=Path, default=DEFAULT_STORE_DIR)
     parser.add_argument("--tmp-dir", type=Path, default=DEFAULT_MEDIA_TMP)
     parser.add_argument("--before-after-out", type=Path, default=DEFAULT_BEFORE_AFTER_OUT)
     parser.add_argument("--social-out", type=Path, default=DEFAULT_SOCIAL_OUT)
@@ -683,7 +963,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
-    explicit = args.before_after or args.social_preview or args.ui_screenshots
+    explicit = args.before_after or args.social_preview or args.ui_screenshots or args.store_screenshots
     run_ba = args.all or args.before_after or not explicit
     run_social = args.all or args.social_preview or not explicit
 
@@ -699,6 +979,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if run_social:
         shot = args.ui_dark_out if args.ui_screenshots else args.screenshot
         generate_social_preview(args.icon, shot, args.social_out)
+
+    if args.store_screenshots:
+        generate_store_screenshots(
+            args.store_out_dir,
+            dark_ui_path=args.ui_dark_out,
+            light_ui_path=args.ui_light_out,
+            before_after_path=args.before_after_out,
+        )
 
     return 0
 

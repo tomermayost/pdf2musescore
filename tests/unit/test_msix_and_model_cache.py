@@ -473,6 +473,9 @@ def test_generate_msix_assets_and_manifest_and_ci(tmp_path: Path) -> None:
     assert app_el is not None
     assert app_el.get("Executable") == "pdf2musescore.exe"
     assert app_el.get("EntryPoint") == "Windows.FullTrustApplication"
+    vis_el = app_el.find("uap:VisualElements", ns)
+    assert vis_el is not None
+    assert "PDFs & photos" in (vis_el.get("Description") or "")
 
     for name, size in expected_sizes.items():
         committed = ROOT / "packaging" / "msix_assets" / name

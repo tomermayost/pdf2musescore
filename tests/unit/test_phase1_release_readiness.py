@@ -93,7 +93,7 @@ def test_render_pdf_first_page_and_cli_social_preview(tmp_path: Path) -> None:
         assert banner.size == (1280, 640)
 
 
-def test_capture_ui_screenshots_helper_and_cli_with_stub(tmp_path: Path, monkeypatch) -> None:
+def test_capture_ui_screenshots_helper_and_cli_with_stub(root, tmp_path: Path, monkeypatch) -> None:
     gm = _load_generate_media()
     dark_out = tmp_path / "ui-dark.png"
     light_out = tmp_path / "ui-light.png"
@@ -129,6 +129,42 @@ def test_capture_ui_screenshots_helper_and_cli_with_stub(tmp_path: Path, monkeyp
     ])
     assert rc == 0
     assert social_out.is_file()
+
+
+def test_generate_store_screenshots_and_cli_with_stub(root, tmp_path: Path, monkeypatch) -> None:
+    gm = _load_generate_media()
+    store_dir = tmp_path / "store_out"
+
+    def fake_grab(_win):
+        return Image.new("RGB", (860, 500), (22, 32, 50))
+
+    with pytest.raises(FileNotFoundError):
+        gm.generate_store_screenshots(
+            store_dir,
+            dark_ui_path=tmp_path / "missing.png",
+            capture_fn=fake_grab,
+        )
+
+    slides = gm.generate_store_screenshots(store_dir, capture_fn=fake_grab)
+    assert len(slides) == 4
+    for slide in slides:
+        assert slide.is_file()
+        with Image.open(slide) as im:
+            assert im.size == (1920, 1080)
+            assert im.mode == "RGB"
+
+    copy_file = store_dir / "store_listing_copy.txt"
+    assert copy_file.is_file()
+    copy_text = copy_file.read_text(encoding="utf-8")
+    assert "RapidOCR" in copy_text and "Full Score (Conductor)" in copy_text
+
+    monkeypatch.setattr(gm, "_capture_window_image", fake_grab)
+    cli_dir = tmp_path / "store_cli"
+    rc = gm.main(["--store-screenshots", "--store-out-dir", str(cli_dir)])
+    assert rc == 0
+    assert (cli_dir / "01-dark-studio.png").is_file()
+    assert (cli_dir / "04-clean-first-launch.png").is_file()
+    assert (cli_dir / "store_listing_copy.txt").is_file()
 
 
 def test_render_mscz_first_page_validation_and_mocked_cli(tmp_path: Path, monkeypatch) -> None:
