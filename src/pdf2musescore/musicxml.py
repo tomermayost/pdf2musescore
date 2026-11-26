@@ -7,11 +7,16 @@ import logging
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from .options import ConversionOptions
 
+if TYPE_CHECKING:  # pragma: no cover
+    from .fullscore.instruments import InstrumentPlaybackProfile
+
 log = logging.getLogger(__name__)
+
+_PITCHED_MIDI_CHANNELS: tuple[int, ...] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16)
 
 
 class MergeError(ValueError):
@@ -248,30 +253,162 @@ def apply_clef_override(root: ET.Element, clef_override: str) -> ET.Element:
     return root
 
 
+def extract_part_initial_clef(part: Optional[ET.Element]) -> Optional[tuple[str, str]]:
+    """Return the first primary ``(sign, line)`` clef declared in ``part``, or ``None``."""
+    if part is None:
+        return None
+    for attr in part.findall("./measure/attributes"):
+        for c_el in attr.findall("clef"):
+            if c_el.get("number") in (None, "1"):
+                sign = (c_el.findtext("sign") or "").strip()
+                line = (c_el.findtext("line") or "").strip()
+                if sign and line:
+                    return (sign, line)
+    return None
+
+
+def _extract_first_clef(root: ET.Element, part_id: str) -> Optional[tuple[str, str]]:
+    part = root.find(f"./part[@id='{part_id}']")
+    return extract_part_initial_clef(part)
+
+
+def set_score_part_instrument(
+    score_part: ET.Element,
+    instrument_name: str,
+    *,
+    abbreviation: Optional[str] = None,
+    clef: Optional[tuple[str, str]] = None,
+    pitched_channel_index: int = 0,
+) -> tuple[InstrumentPlaybackProfile, bool]:
+    """Write consistent ``<part-name>``, ``<part-abbreviation>``, ``<score-instrument>``, and ``<midi-instrument>``."""
+    from .fullscore.instruments import (
+        abbreviate_instrument_name,
+        infer_instrument_profile,
+        is_percussion_instrument,
+    )
+
+    part_id = score_part.get("id", "P1")
+    inst = instrument_name.strip()
+    profile = infer_instrument_profile(inst, clef=clef)
+    is_perc = is_percussion_instrument(inst)
+    abbr = abbreviation.strip() if (abbreviation and abbreviation.strip()) else abbreviate_instrument_name(inst)
+
+    pn = score_part.find("part-name")
+    if pn is None:
+        pn = ET.Element("part-name")
+        score_part.insert(0, pn)
+    pn.text = inst
+
+    for old_pa in list(score_part.findall("part-abbreviation")):
+        score_part.remove(old_pa)
+    pa = ET.Element("part-abbreviation")
+    pa.text = abbr
+    score_part.insert(list(score_part).index(pn) + 1, pa)
+
+    si = score_part.find("score-instrument")
+    if si is None:
+        si = ET.SubElement(score_part, "score-instrument", {"id": f"{part_id}-I1"})
+    iname = si.find("instrument-name")
+    if iname is None:
+        iname = ET.SubElement(si, "instrument-name")
+    iname.text = inst
+    isound = si.find("instrument-sound")
+    if isound is None:
+        isound = ET.SubElement(si, "instrument-sound")
+    isound.text = profile.sound_id
+
+    mi_el = score_part.find("midi-instrument")
+    if mi_el is None:
+        mi_el = ET.SubElement(score_part, "midi-instrument", {"id": f"{part_id}-I1"})
+    ch = mi_el.find("midi-channel")
+    if ch is None:
+        ch = ET.SubElement(mi_el, "midi-channel")
+    if is_perc:
+        ch.text = "10"
+    else:
+        ch.text = str(_PITCHED_MIDI_CHANNELS[pitched_channel_index % len(_PITCHED_MIDI_CHANNELS)])
+
+    prog_el = mi_el.find("midi-program")
+    if is_perc or profile.midi_program <= 0:
+        if prog_el is not None:
+            mi_el.remove(prog_el)
+    else:
+        if prog_el is None:
+            prog_el = ET.SubElement(mi_el, "midi-program")
+        prog_el.text = str(profile.midi_program)
+
+    return profile, is_perc
+
+
+def is_homr_default_voice(score_part: ET.Element) -> bool:
+    """Return True if ``score_part`` is homr's uncustomized single-staff ``Voice`` placeholder."""
+    part_name = (score_part.findtext("part-name") or "").strip().lower()
+    if part_name != "voice":
+        return False
+    sound_id = (score_part.findtext("./score-instrument/instrument-sound") or "").strip().lower()
+    midi_prog = (score_part.findtext("./midi-instrument/midi-program") or "").strip()
+    return sound_id in ("", "voice") and midi_prog in ("", "54")
+
+
+def normalize_default_instruments(root: ET.Element) -> int:
+    """Replace any uncustomized homr ``Voice`` placeholder parts with ``Piano`` (program 1)."""
+    from .fullscore.instruments import is_percussion_instrument
+
+    normalized = 0
+    pitched_i = 0
+    for sp in root.findall("./part-list/score-part"):
+        part_id = sp.get("id", "")
+        if is_homr_default_voice(sp):
+            clef = _extract_first_clef(root, part_id) if part_id else None
+            set_score_part_instrument(
+                sp,
+                "Piano",
+                abbreviation="Pno.",
+                clef=clef,
+                pitched_channel_index=pitched_i,
+            )
+            normalized += 1
+            pitched_i += 1
+        else:
+            pname = (sp.findtext("part-name") or "").strip()
+            if not is_percussion_instrument(pname):
+                pitched_i += 1
+    if normalized:
+        log.info("Replaced %d uncustomized default 'Voice' part(s) with 'Piano' (keyboard.piano)", normalized)
+    return normalized
+
+
 def apply_instrument_override(root: ET.Element, instrument_name: str) -> ET.Element:
-    """Set <part-name> and <instrument-name> on all score parts."""
+    """Set ``<part-name>``, ``<part-abbreviation>``, ``<instrument-name>``, ``<instrument-sound>``, and MIDI."""
     inst = (instrument_name or "auto").strip()
     if not inst or inst.lower() == "auto":
         return root
-    for sp in root.findall("./part-list/score-part"):
-        pn = sp.find("part-name")
-        if pn is None:
-            pn = ET.SubElement(sp, "part-name")
-        pn.text = inst
-        si = sp.find("score-instrument")
-        if si is None:
-            part_id = sp.get("id", "P1")
-            si = ET.SubElement(sp, "score-instrument", {"id": f"{part_id}-I1"})
-        iname = si.find("instrument-name")
-        if iname is None:
-            iname = ET.SubElement(si, "instrument-name")
-        iname.text = inst
+    pitched_i = 0
+    for idx, sp in enumerate(root.findall("./part-list/score-part")):
+        part_id = sp.get("id", f"P{idx + 1}")
+        clef = _extract_first_clef(root, part_id)
+        profile, is_perc = set_score_part_instrument(
+            sp,
+            inst,
+            clef=clef,
+            pitched_channel_index=pitched_i,
+        )
+        if not is_perc:
+            pitched_i += 1
+        log.info(
+            "Applied instrument override on %s: name=%r sound=%s midi_program=%s",
+            part_id,
+            inst,
+            profile.sound_id,
+            "perc-ch10" if is_perc else profile.midi_program,
+        )
     return root
 
 
 def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) -> ET.Element:
     """Apply Section 3 post-processing options (transpose, clef, instrument, layout) to ``root``."""
     if options is None:
+        normalize_default_instruments(root)
         return root
     if options.transpose_semitones != 0:
         transpose_score(root, options.transpose_semitones)
@@ -279,6 +416,8 @@ def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) 
         apply_clef_override(root, options.clef_override)
     if options.instrument_name.lower() != "auto":
         apply_instrument_override(root, options.instrument_name)
+    else:
+        normalize_default_instruments(root)
     if not options.keep_line_breaks:
         strip_layout_breaks(root)
     return root

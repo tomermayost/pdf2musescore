@@ -1,14 +1,19 @@
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
+from PIL import Image
 
 from pdf2musescore.engines.base import OmrError
 from pdf2musescore.engines.homr_engine import (
     CancelledError,
     HomrEngine,
     _default_render_pdf,
+    annotate_standard_page_instruments,
     deskew_image,
     get_engine_version,
     get_pdf_page_count,
@@ -373,3 +378,157 @@ def test_homr_engine_full_score_routing_and_isolation(pdf, tmp_path):
     assert len(seen_fs) == 1
     assert seen_fs[0]["target_width"] == 4096
     assert seen_fs[0]["staff_cb"] is staff_cb
+
+
+@dataclass
+class _StdStaff:
+    min_x: float
+    max_x: float
+    min_y: float
+    max_y: float
+
+
+def test_annotate_standard_page_instruments(tmp_path):
+    assert annotate_standard_page_instruments(tmp_path / "p.png", tmp_path / "missing.xml", []) == []
+
+    bad_xml = tmp_path / "bad.musicxml"
+    bad_xml.write_text("<broken", encoding="utf-8")
+    assert annotate_standard_page_instruments(tmp_path / "p.png", bad_xml, []) == []
+
+    empty_xml = tmp_path / "empty.musicxml"
+    empty_xml.write_text("<score-partwise/>", encoding="utf-8")
+    assert annotate_standard_page_instruments(tmp_path / "p.png", empty_xml, []) == []
+
+    png = tmp_path / "page_001.png"
+    Image.new("RGB", (1000, 1200), (255, 255, 255)).save(png)
+
+    def _homr_xml(part_count: int, staves_per_part: tuple[int, ...] = ()) -> str:
+        sps = []
+        pts = []
+        for i in range(part_count):
+            st = staves_per_part[i] if i < len(staves_per_part) else 1
+            pname = "Piano" if st == 2 else "Voice"
+            isound = "keyboard.piano" if st == 2 else "voice"
+            mprog = "1" if st == 2 else "54"
+            st_tag = f"<staves>{st}</staves>" if st == 2 else ""
+            sps.append(
+                f"<score-part id='P{i+1}'><part-name>{pname}</part-name>"
+                f"<score-instrument id='P{i+1}-I1'><instrument-name>{pname}</instrument-name>"
+                f"<instrument-sound>{isound}</instrument-sound></score-instrument>"
+                f"<midi-instrument id='P{i+1}-I1'><midi-channel>{i+1}</midi-channel>"
+                f"<midi-program>{mprog}</midi-program></midi-instrument></score-part>"
+            )
+            pts.append(
+                f"<part id='P{i+1}'><measure number='1'><attributes>{st_tag}"
+                f"<clef><sign>G</sign><line>2</line></clef></attributes><note/></measure></part>"
+            )
+        return f"<score-partwise><part-list>{''.join(sps)}</part-list>{''.join(pts)}</score-partwise>"
+
+    # 1) Multi-part string orchestra score: left-margin OCR assigns Violin I + Violoncello
+    x1 = tmp_path / "strings.musicxml"
+    x1.write_text(_homr_xml(2), encoding="utf-8")
+    ms_strings = [SimpleNamespace(staffs=[_StdStaff(180, 950, 260, 320), _StdStaff(180, 950, 440, 500)])]
+    names = annotate_standard_page_instruments(
+        png,
+        x1,
+        ms_strings,
+        margin_ocr_runner=lambda _m: (
+            [[[20, 275], [140, 275], [140, 305], [20, 305]], [[20, 455], [140, 455], [140, 485], [20, 485]]],
+            ["Violin I", "Violoncello"],
+        ),
+    )
+    assert names == ["Violin I", "Violoncello"]
+    r1 = ET.parse(x1).getroot()
+    assert r1.findtext("./part-list/score-part[@id='P1']/score-instrument/instrument-sound") == "strings.violin"
+    assert r1.findtext("./part-list/score-part[@id='P1']/midi-instrument/midi-program") == "41"
+    assert r1.findtext("./part-list/score-part[@id='P2']/score-instrument/instrument-sound") == "strings.cello"
+    assert r1.findtext("./part-list/score-part[@id='P2']/midi-instrument/midi-program") == "43"
+
+    # 2) Single-part with no left-margin name -> detects written instrument in header
+    x2 = tmp_path / "solo_header.musicxml"
+    x2.write_text(_homr_xml(1), encoding="utf-8")
+    ms_solo = [SimpleNamespace(staffs=[_StdStaff(80, 950, 240, 300)])]
+    names2 = annotate_standard_page_instruments(
+        png,
+        x2,
+        ms_solo,
+        margin_ocr_runner=lambda _m: ([], []),
+        header_ocr_runner=lambda _h: ([[[60, 150], [240, 150], [240, 180], [60, 180]]], ["Bb Clarinet"]),
+    )
+    assert names2 == ["Bb Clarinet"]
+    r2 = ET.parse(x2).getroot()
+    assert r2.findtext("./part-list/score-part/score-instrument/instrument-sound") == "wind.reed.clarinet.bflat"
+    assert r2.findtext("./part-list/score-part/midi-instrument/midi-program") == "72"
+
+    # 3) Single-part with NO written instrument name anywhere -> falls back from Voice to Piano
+    x3 = tmp_path / "solo_noname.musicxml"
+    x3.write_text(_homr_xml(1), encoding="utf-8")
+    names3 = annotate_standard_page_instruments(
+        png,
+        x3,
+        ms_solo,
+        margin_ocr_runner=lambda _m: ([], []),
+        header_ocr_runner=lambda _h: ([[[350, 50], [600, 50], [600, 90], [350, 90]]], ["Prélude."]),
+    )
+    assert names3 == ["Piano"]
+    r3 = ET.parse(x3).getroot()
+    assert r3.findtext("./part-list/score-part/part-name") == "Piano"
+    assert r3.findtext("./part-list/score-part/score-instrument/instrument-sound") == "keyboard.piano"
+    assert r3.findtext("./part-list/score-part/midi-instrument/midi-program") == "1"
+
+    # 4) Grand-staff (2 staves) + single staff preserves Piano and detects Percussion 1 (ch 10)
+    x4 = tmp_path / "grand_plus_perc.musicxml"
+    x4.write_text(_homr_xml(2, staves_per_part=(2, 1)), encoding="utf-8")
+    ms_gp = [
+        SimpleNamespace(
+            staffs=[
+                _StdStaff(200, 950, 200, 250),
+                _StdStaff(200, 950, 310, 360),
+                _StdStaff(200, 950, 460, 510),
+            ]
+        )
+    ]
+    names4 = annotate_standard_page_instruments(
+        png,
+        x4,
+        ms_gp,
+        margin_ocr_runner=lambda _m: ([[[20, 470], [160, 470], [160, 500], [20, 500]]], ["Snare Drum"]),
+    )
+    assert names4 == ["Piano", "Snare Drum"]
+    r4 = ET.parse(x4).getroot()
+    assert r4.findtext("./part-list/score-part[@id='P2']/midi-instrument/midi-channel") == "10"
+    assert r4.find("./part-list/score-part[@id='P2']/midi-instrument/midi-program") is None
+
+    # 5) Indented single staff with movement title "Prélude." above & plate "262" in margin -> Piano fallback
+    x5_indented = tmp_path / "indented_title.musicxml"
+    x5_indented.write_text(_homr_xml(1), encoding="utf-8")
+    ms_indented = [SimpleNamespace(staffs=[_StdStaff(180, 950, 260, 320)])]
+    names5 = annotate_standard_page_instruments(
+        png,
+        x5_indented,
+        ms_indented,
+        margin_ocr_runner=lambda _m: (
+            [[[40, 200], [150, 200], [150, 230], [40, 230]], [[20, 275], [65, 275], [65, 300], [20, 300]]],
+            ["Prélude.", "262"],
+        ),
+        header_ocr_runner=lambda _h: ([[[40, 200], [150, 200], [150, 230], [40, 230]]], ["Prélude."]),
+    )
+    assert names5 == ["Piano"]
+    # Also test skipping non-instrument text sitting directly beside the staff (e.g. "Allegro")
+    x5_noninst = tmp_path / "beside_noninst.musicxml"
+    x5_noninst.write_text(_homr_xml(1), encoding="utf-8")
+    assert (
+        annotate_standard_page_instruments(
+            png,
+            x5_noninst,
+            ms_indented,
+            margin_ocr_runner=lambda _m: ([[[20, 275], [140, 275], [140, 300], [20, 300]]], ["Allegro"]),
+            header_ocr_runner=lambda _h: ([], []),
+        )
+        == ["Piano"]
+    )
+
+    # 6) Mismatched staff count & empty multi_staffs still falls back dummy Voice -> Piano cleanly
+    x5 = tmp_path / "mismatch.musicxml"
+    x5.write_text(_homr_xml(1), encoding="utf-8")
+    assert annotate_standard_page_instruments(png, x5, [SimpleNamespace(staffs=[])]) == ["Piano"]

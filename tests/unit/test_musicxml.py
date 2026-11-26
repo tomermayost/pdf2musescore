@@ -8,11 +8,14 @@ from pdf2musescore.musicxml import (
     apply_clef_override,
     apply_instrument_override,
     apply_score_options,
+    is_homr_default_voice,
     merge_files,
     merge_scores,
+    normalize_default_instruments,
     read_score,
     sanitize_score,
     sanitize_slurs,
+    set_score_part_instrument,
     strip_layout_breaks,
     transpose_score,
     write_musicxml,
@@ -119,11 +122,15 @@ def test_transpose_clef_instrument_and_score_options():
     apply_clef_override(s_empty_clef, "alto")
     assert s_empty_clef.find(".//attributes/clef/sign").text == "C"
 
-    # Instrument override
+    # Instrument override updates part-name, abbreviation, sound, midi-channel, and midi-program
     assert apply_instrument_override(root, "auto") is root
     apply_instrument_override(root, "Trombone")
-    assert root.find("./part-list/score-part/part-name").text == "Trombone"
-    assert root.find("./part-list/score-part/score-instrument/instrument-name").text == "Trombone"
+    assert root.findtext("./part-list/score-part/part-name") == "Trombone"
+    assert root.findtext("./part-list/score-part/part-abbreviation") == "Tbn."
+    assert root.findtext("./part-list/score-part/score-instrument/instrument-name") == "Trombone"
+    assert root.findtext("./part-list/score-part/score-instrument/instrument-sound") == "brass.trombone"
+    assert root.findtext("./part-list/score-part/midi-instrument/midi-program") == "58"
+    assert root.findtext("./part-list/score-part/midi-instrument/midi-channel") == "1"
 
     # apply_score_options end-to-end
     s_opts = score(1)
@@ -135,7 +142,65 @@ def test_transpose_clef_instrument_and_score_options():
     )
     apply_score_options(s_opts, opts)
     assert s_opts.find("./part-list/score-part/part-name").text == "Trombone"
+    assert s_opts.find("./part-list/score-part/score-instrument/instrument-sound").text == "brass.trombone"
+    assert s_opts.find("./part-list/score-part/midi-instrument/midi-program").text == "58"
     assert s_opts.find(".//attributes/clef/sign").text == "F"
+
+
+def test_normalize_default_voice_and_percussion_midi():
+    homr_xml = """<score-partwise>
+      <part-list>
+        <score-part id="P1">
+          <part-name>Voice</part-name>
+          <score-instrument id="P1-I1">
+            <instrument-name>Voice</instrument-name>
+            <instrument-sound>voice</instrument-sound>
+          </score-instrument>
+          <midi-instrument id="P1-I1">
+            <midi-channel>1</midi-channel>
+            <midi-program>54</midi-program>
+          </midi-instrument>
+        </score-part>
+        <score-part id="P2">
+          <part-name>Voice</part-name>
+          <score-instrument id="P2-I1">
+            <instrument-name>Voice</instrument-name>
+            <instrument-sound>voice.vocals</instrument-sound>
+          </score-instrument>
+          <midi-instrument id="P2-I1">
+            <midi-channel>2</midi-channel>
+            <midi-program>53</midi-program>
+          </midi-instrument>
+        </score-part>
+      </part-list>
+      <part id="P1"><measure number="1"><attributes/><note/></measure></part>
+      <part id="P2"><measure number="1"><attributes/><note/></measure></part>
+    </score-partwise>"""
+    root = ET.fromstring(homr_xml)
+    sps = root.findall("./part-list/score-part")
+    assert is_homr_default_voice(sps[0]) is True
+    assert is_homr_default_voice(sps[1]) is False
+
+    # Normalizing replaces dummy Voice (P1) with Piano, while preserving real Voice (P2)
+    assert normalize_default_instruments(root) == 1
+    assert sps[0].findtext("part-name") == "Piano"
+    assert sps[0].findtext("part-abbreviation") == "Pno."
+    assert sps[0].findtext("./score-instrument/instrument-sound") == "keyboard.piano"
+    assert sps[0].findtext("./midi-instrument/midi-program") == "1"
+    assert sps[1].findtext("part-name") == "Voice"
+    assert sps[1].findtext("./score-instrument/instrument-sound") == "voice.vocals"
+    assert sps[1].findtext("./midi-instrument/midi-program") == "53"
+
+    # Unpitched percussion removes stale midi-program and assigns channel 10
+    set_score_part_instrument(sps[1], "Snare Drum")
+    assert sps[1].findtext("part-name") == "Snare Drum"
+    assert sps[1].findtext("./score-instrument/instrument-sound") == "drum.snare-drum"
+    assert sps[1].findtext("./midi-instrument/midi-channel") == "10"
+    assert sps[1].find("./midi-instrument/midi-program") is None
+
+    # merge_scores normalizes dummy Voice automatically
+    merged = merge_scores([ET.fromstring(homr_xml)])
+    assert merged.findtext("./part-list/score-part[@id='P1']/part-name") == "Piano"
 
 
 def test_read_errors(tmp_path):

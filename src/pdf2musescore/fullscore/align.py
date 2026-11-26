@@ -13,7 +13,13 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Optional, Sequence
 
-from ..musicxml import MergeError, read_score, strip_layout_breaks, write_musicxml
+from ..musicxml import (
+    MergeError,
+    read_score,
+    set_score_part_instrument,
+    strip_layout_breaks,
+    write_musicxml,
+)
 from ..options import ConversionOptions
 from .instruments import (
     InstrumentLabel,
@@ -25,8 +31,6 @@ from .instruments import (
 )
 
 log = logging.getLogger(__name__)
-
-_PITCHED_MIDI_CHANNELS: tuple[int, ...] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16)
 
 
 @dataclass(frozen=True)
@@ -1605,42 +1609,14 @@ def apply_conductor_metadata(
             inst_name, inst_abbr = f"Part {idx + 1}", f"P{idx + 1}"
 
         initial_clef = _extract_initial_clef(part_el) if part_el is not None else None
-        profile = infer_instrument_profile(inst_name, clef=initial_clef)
-
-        pn = sp.find("part-name")
-        if pn is None:
-            pn = ET.Element("part-name")
-            sp.insert(0, pn)
-        pn.text = inst_name
-
-        for old_pa in list(sp.findall("part-abbreviation")):
-            sp.remove(old_pa)
-        pa = ET.Element("part-abbreviation")
-        pa.text = inst_abbr
-        sp.insert(list(sp).index(pn) + 1, pa)
-
-        si = sp.find("score-instrument")
-        if si is None:
-            si = ET.SubElement(sp, "score-instrument", id=f"{part_id}-I1")
-        iname = si.find("instrument-name")
-        if iname is None:
-            iname = ET.SubElement(si, "instrument-name")
-        iname.text = inst_name
-        isound = si.find("instrument-sound")
-        if isound is None:
-            isound = ET.SubElement(si, "instrument-sound")
-        isound.text = profile.sound_id
-
-        mi_el = sp.find("midi-instrument")
-        if mi_el is None:
-            mi_el = ET.SubElement(sp, "midi-instrument", id=f"{part_id}-I1")
-        ch = mi_el.find("midi-channel")
-        if ch is None:
-            ch = ET.SubElement(mi_el, "midi-channel")
-        if is_percussion_instrument(inst_name):
-            ch.text = "10"
-        else:
-            ch.text = str(_PITCHED_MIDI_CHANNELS[pitched_i % len(_PITCHED_MIDI_CHANNELS)])
+        profile, is_perc = set_score_part_instrument(
+            sp,
+            inst_name,
+            abbreviation=inst_abbr,
+            clef=initial_clef,
+            pitched_channel_index=pitched_i,
+        )
+        if not is_perc:
             pitched_i += 1
 
         should_transpose = (is_transposed_score and profile.is_transposing) or (

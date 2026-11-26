@@ -267,8 +267,13 @@ def test_merge_fullscore_files_metadata_channels_scaling_dedup_and_invariants(tm
     # Timpani (25) and Mallet Percussion (26) are pitched -> NOT channel 10
     assert chans[25] != 10
     assert chans[26] != 10
-    # Unpitched Percussion 1 & 2 (27, 28) -> channel 10
+    # Unpitched Percussion 1 & 2 (27, 28) -> channel 10 and no stale midi-program
     assert chans[27] == 10 and chans[28] == 10
+    assert sps[0].findtext("./midi-instrument/midi-program") == "72"
+    assert sps[25].findtext("./midi-instrument/midi-program") == "48"
+    assert sps[26].findtext("./midi-instrument/midi-program") == "13"
+    assert sps[27].find("./midi-instrument/midi-program") is None
+    assert sps[28].find("./midi-instrument/midi-program") is None
 
     # Measure 2 kept 6/4 time signature change while deduplicating redundant divisions/key/clef
     m2_attrs = merged.find("./part/measure[@number='2']/attributes")

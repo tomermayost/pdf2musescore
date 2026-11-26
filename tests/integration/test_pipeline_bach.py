@@ -29,3 +29,9 @@ def test_pipeline_mscz():
                    progress=lambda p, m: steps.append(p)).convert(heb_in, heb_out)
     assert zipfile.is_zipfile(out)
     assert steps[-1] == 100
+    with zipfile.ZipFile(out) as z:
+        mscx_name = next(n for n in z.namelist() if n.endswith(".mscx"))
+        mscx_txt = z.read(mscx_name).decode("utf-8", errors="replace")
+        assert "<trackName>Piano</trackName>" in mscx_txt
+        assert "<trackName>Voice</trackName>" not in mscx_txt
+        assert "voice.vocals" not in mscx_txt

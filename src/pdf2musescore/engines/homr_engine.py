@@ -8,6 +8,7 @@ import logging
 import re
 import shutil
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
@@ -465,6 +466,181 @@ def run_pages(
     return outputs
 
 
+def _identity_pt(pt: tuple[float, float]) -> tuple[float, float]:
+    return float(pt[0]), float(pt[1])
+
+
+def _resolve_system_geometry(
+    multi_staffs: Sequence[Any],
+    parts: Sequence[ET.Element],
+    to_input_image: Optional[Callable[[tuple[float, float]], tuple[float, float]]],
+) -> tuple[int, float, float, list[float], list[float], list[float], float]:
+    """Compute System 1 input-image coordinates and per-part vertical centers."""
+    if not multi_staffs:
+        return 0, 0.0, 0.0, [], [], [], 60.0
+    sys0_staffs = sorted(getattr(multi_staffs[0], "staffs", ()), key=lambda s: float(s.min_y))
+    if not sys0_staffs:
+        return 0, 0.0, 0.0, [], [], [], 60.0
+
+    map_pt = to_input_image if to_input_image is not None else _identity_pt
+    left_xs: list[float] = []
+    top_ys: list[float] = []
+    bot_ys: list[float] = []
+    cys: list[float] = []
+    heights: list[float] = []
+    for st in sys0_staffs:
+        lx, ty = map_pt((float(st.min_x), float(st.min_y)))
+        _, by = map_pt((float(st.max_x), float(st.max_y)))
+        left_xs.append(float(lx))
+        top_ys.append(float(ty))
+        bot_ys.append(float(by))
+        cys.append(0.5 * (float(ty) + float(by)))
+        heights.append(max(20.0, abs(float(by) - float(ty))))
+
+    sys_left_x = float(np.median(left_xs))
+    crop_x = max(0, int(min(left_xs)) - 5)
+    top_staff_y = min(top_ys)
+    avg_h = float(np.mean(heights))
+
+    part_staff_counts: list[int] = []
+    for p in parts:
+        st_txt = (p.findtext("./measure/attributes/staves") or "").strip()
+        part_staff_counts.append(int(st_txt) if st_txt.isdigit() and int(st_txt) >= 1 else 1)
+
+    part_cys: list[float] = []
+    part_tops: list[float] = []
+    part_bots: list[float] = []
+    if len(sys0_staffs) == len(parts):
+        part_cys = cys
+        part_tops = top_ys
+        part_bots = bot_ys
+    elif sum(part_staff_counts) == len(sys0_staffs):
+        cursor = 0
+        for cnt in part_staff_counts:
+            sl_cys = cys[cursor : cursor + cnt]
+            part_cys.append(float(np.mean(sl_cys)))
+            part_tops.append(top_ys[cursor])
+            part_bots.append(bot_ys[cursor + cnt - 1])
+            cursor += cnt
+
+    return crop_x, sys_left_x, top_staff_y, part_cys, part_tops, part_bots, avg_h
+
+
+def annotate_standard_page_instruments(
+    img_path: Path,
+    xml_path: Path,
+    multi_staffs: Sequence[Any],
+    to_input_image: Optional[Callable[[tuple[float, float]], tuple[float, float]]] = None,
+    *,
+    ocr_reader: Any = None,
+    ocr_dir: Optional[Path] = None,
+    margin_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
+    header_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
+) -> list[str]:
+    """Detect written instrument names in Standard Mode or replace homr's default ``Voice`` with ``Piano``."""
+    from ..fullscore.instruments import (
+        InstrumentLabel,
+        extract_header_instrument_label,
+        extract_instrument_labels,
+        is_percussion_instrument,
+        is_recognized_instrument_label,
+    )
+    from ..musicxml import (
+        extract_part_initial_clef,
+        is_homr_default_voice,
+        set_score_part_instrument,
+    )
+
+    xml_path = Path(xml_path)
+    if not xml_path.is_file():
+        return []
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+    except Exception as exc:
+        log.warning("Could not parse %s for standard instrument annotation: %s", xml_path, exc)
+        return []
+
+    score_parts = root.findall("./part-list/score-part")
+    parts = root.findall("part")
+    if not score_parts or not parts:
+        return []
+
+    crop_x, _sys_left_x, top_staff_y, part_cys, part_tops, part_bots, avg_h = _resolve_system_geometry(
+        multi_staffs, parts, to_input_image
+    )
+
+    detected: list[Optional[InstrumentLabel]] = [None] * len(score_parts)
+    if crop_x >= 40 and len(part_cys) == len(score_parts):
+        gaps = [part_cys[i + 1] - part_cys[i] for i in range(len(part_cys) - 1)]
+        median_gap = float(np.median(gaps)) if gaps else max(60.0, avg_h * 1.4)
+        y_lo = part_tops[0] - 0.6 * avg_h
+        y_hi = part_bots[-1] + 0.6 * avg_h
+        margin_labels = extract_instrument_labels(
+            Path(img_path),
+            part_cys,
+            crop_x,
+            median_gap,
+            y_lo,
+            y_hi,
+            ocr_reader=ocr_reader,
+            ocr_dir=ocr_dir,
+            ocr_runner=margin_ocr_runner,
+        )
+        for idx, lbl in enumerate(margin_labels):
+            if not lbl.is_fallback and is_recognized_instrument_label(lbl.full_name):
+                detected[idx] = lbl
+            elif not lbl.is_fallback:
+                log.debug("Standard mode skipped non-instrument margin text on slot %d: %r", idx, lbl.full_name)
+
+    if len(score_parts) == 1 and detected[0] is None and top_staff_y >= 25:
+        detected[0] = extract_header_instrument_label(
+            Path(img_path),
+            top_staff_y,
+            ocr_reader=ocr_reader,
+            ocr_dir=ocr_dir,
+            ocr_runner=header_ocr_runner,
+        )
+
+    resolved_names: list[str] = []
+    pitched_i = 0
+    for idx, sp in enumerate(score_parts):
+        part_el = parts[idx] if idx < len(parts) else None
+        clef = extract_part_initial_clef(part_el)
+        lbl = detected[idx]
+        if lbl is not None:
+            _prof, is_perc = set_score_part_instrument(
+                sp,
+                lbl.full_name,
+                abbreviation=lbl.abbreviation,
+                clef=clef,
+                pitched_channel_index=pitched_i,
+            )
+            if not is_perc:
+                pitched_i += 1
+            resolved_names.append(lbl.full_name)
+        elif is_homr_default_voice(sp):
+            set_score_part_instrument(
+                sp,
+                "Piano",
+                abbreviation="Pno.",
+                clef=clef,
+                pitched_channel_index=pitched_i,
+            )
+            pitched_i += 1
+            resolved_names.append("Piano")
+        else:
+            pname = (sp.findtext("part-name") or "").strip() or f"Part {idx + 1}"
+            if not is_percussion_instrument(pname):
+                pitched_i += 1
+            resolved_names.append(pname)
+
+    ET.indent(root)
+    ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)
+    log.info("Standard mode instruments for %s: %s", Path(img_path).name, resolved_names)
+    return resolved_names
+
+
 def _default_run_homr(image_paths: Sequence[Path],
                       page_cb: Optional[Callable[[int, int], None]] = None,
                       is_cancelled: Callable[[], bool] = lambda: False,
@@ -510,6 +686,14 @@ def _default_run_homr(image_paths: Sequence[Path],
     orig_extract = hmain.extract
     orig_ellipses = hmain.create_bounding_ellipses
     orig_clahe = hmain.color_adjust.apply_clahe
+    orig_detect = hmain.detect_staffs_in_image
+    captured: dict[str, Any] = {}
+
+    def _capturing_detect(*args, **kwargs):
+        res = orig_detect(*args, **kwargs)
+        captured["multi_staffs"] = res[0]
+        captured["to_input_image"] = res[5] if len(res) > 5 else None
+        return res
 
     def _custom_extract(preprocessed, img_path, step_size=320, use_cache=False, use_gpu_inference=False):
         return orig_extract(
@@ -524,6 +708,7 @@ def _default_run_homr(image_paths: Sequence[Path],
         ms = (int(min_notehead_size), int(min_notehead_size))
         return orig_ellipses(notehead_map, min_size=ms, **kwargs)
 
+    hmain.detect_staffs_in_image = _capturing_detect
     hmain.extract = _custom_extract
     hmain.create_bounding_ellipses = _custom_ellipses
     if (preprocess_mode or "auto").strip().lower() == "none":
@@ -531,12 +716,27 @@ def _default_run_homr(image_paths: Sequence[Path],
 
     try:
         def _process_one(img: Path) -> Optional[Path]:
+            captured.clear()
             process_image(str(img), cfg, xargs)
             xml_path = img.with_suffix(".musicxml")
-            return xml_path if xml_path.is_file() else None
+            if not xml_path.is_file():
+                return None
+            try:
+                annotate_standard_page_instruments(
+                    img,
+                    xml_path,
+                    captured.get("multi_staffs", ()),
+                    captured.get("to_input_image"),
+                    ocr_reader=htitle._reader,
+                    ocr_dir=ocr_ver_dir,
+                )
+            except Exception as exc:
+                log.warning("Standard instrument annotation failed on %s: %s", img.name, exc)
+            return xml_path
 
         return run_pages(image_paths, _process_one, page_cb=page_cb, is_cancelled=is_cancelled)
     finally:
+        hmain.detect_staffs_in_image = orig_detect
         hmain.extract = orig_extract
         hmain.create_bounding_ellipses = orig_ellipses
         hmain.color_adjust.apply_clahe = orig_clahe

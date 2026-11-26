@@ -16,13 +16,14 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class InstrumentPlaybackProfile:
-    """Playback sound ID and written-to-sounding transposition parameters."""
+    """Playback sound ID, written-to-sounding transposition parameters, and 1-based GM MIDI program."""
 
     sound_id: str
     diatonic: int = 0
     chromatic: int = 0
     octave_change: int = 0
     fifths_shift: int = 0
+    midi_program: int = 1
 
     @property
     def is_transposing(self) -> bool:
@@ -39,24 +40,32 @@ _UNPITCHED_SOUND_RULES: tuple[tuple[str, str], ...] = (
     (r"\bdrum\s*set\b|\bdr\.\s*set\b", "drum.group.set"),
 )
 
-_PITCHED_PERCUSSION_RULES: tuple[tuple[str, str], ...] = (
-    (r"\btimpani\b|\btimp\b", "drum.timpani"),
-    (r"\bglockenspiel\b|\bglock\b", "pitched-percussion.glockenspiel"),
-    (r"\bxylophone\b|\bxyl\b", "pitched-percussion.xylophone"),
-    (r"\bvibraphone\b|\bvib\b", "pitched-percussion.vibraphone"),
-    (r"\bmarimba\b|\bmallet|\bmall\b", "pitched-percussion.marimba"),
-    (r"\bcelesta\b|\bcel\b", "keyboard.celesta"),
-    (r"\btubular\s+bells\b|\bchimes\b|\bbells\b|\bcrotales\b", "pitched-percussion.tubular-bells"),
+_PITCHED_PERCUSSION_RULES: tuple[tuple[str, str, int], ...] = (
+    (r"\btimpani\b|\btimp\b", "drum.timpani", 48),
+    (r"\bglockenspiel\b|\bglock\b", "pitched-percussion.glockenspiel", 10),
+    (r"\bxylophone\b|\bxyl\b", "pitched-percussion.xylophone", 14),
+    (r"\bvibraphone\b|\bvib\b", "pitched-percussion.vibraphone", 12),
+    (r"\bmarimba\b|\bmallet|\bmall\b", "pitched-percussion.marimba", 13),
+    (r"\bcelesta\b|\bcel\b", "keyboard.celesta", 9),
+    (r"\btubular\s+bells\b|\bchimes\b|\bbells\b|\bcrotales\b", "pitched-percussion.tubular-bells", 15),
 )
 
 _OTHER_INST_RULES: tuple[tuple[str, InstrumentPlaybackProfile], ...] = (
-    (r"\bviolin\b|\bvln\b", InstrumentPlaybackProfile("strings.violin")),
-    (r"\bviola\b|\bvla\b", InstrumentPlaybackProfile("strings.viola")),
-    (r"\bvioloncello\b|\bcello\b|\bvc\b", InstrumentPlaybackProfile("strings.cello")),
-    (r"\bpiano\b|\bpno\b", InstrumentPlaybackProfile("keyboard.piano")),
-    (r"\borgan\b|\borg\b", InstrumentPlaybackProfile("keyboard.organ")),
-    (r"\bharp\b|\bhp\b", InstrumentPlaybackProfile("pluck.harp")),
-    (r"\bguitar\b|\bgtr\b", InstrumentPlaybackProfile("pluck.guitar", 0, 0, -1, 0)),
+    (r"\bviolin\b|\bvln\b", InstrumentPlaybackProfile("strings.violin", midi_program=41)),
+    (r"\bviola\b|\bvla\b", InstrumentPlaybackProfile("strings.viola", midi_program=42)),
+    (r"\bvioloncello\b|\bcello\b|\bvc\b", InstrumentPlaybackProfile("strings.cello", midi_program=43)),
+    (r"\bpiano\b|\bpno\b", InstrumentPlaybackProfile("keyboard.piano", midi_program=1)),
+    (r"\borgan\b|\borg\b", InstrumentPlaybackProfile("keyboard.organ", midi_program=20)),
+    (r"\bharp\b|\bhp\b", InstrumentPlaybackProfile("pluck.harp", midi_program=47)),
+    (r"\bguitar\b|\bgtr\b", InstrumentPlaybackProfile("pluck.guitar", 0, 0, -1, 0, midi_program=25)),
+)
+
+_VOCAL_INST_RULES: tuple[tuple[str, str], ...] = (
+    (r"\bsoprano\b", "voice.soprano"),
+    (r"\b(?:mezzo-?soprano|contralto|alto)\b", "voice.alto"),
+    (r"\btenor\b", "voice.tenor"),
+    (r"\b(?:bass\s+voice|voice\s+bass)\b", "voice.bass"),
+    (r"\b(?:voice|vocal|vocals|choir|chorus|singer)\b", "voice.vocals"),
 )
 
 
@@ -128,6 +137,13 @@ _ABBREV_RULES: tuple[tuple[str, str], ...] = (
     (r"\bPiano\b", "Pno."),
     (r"\bOrgan\b", "Org."),
     (r"\bHarp\b", "Hp."),
+    (r"\bSoprano\b", "S."),
+    (r"\bAlto\b", "A."),
+    (r"\bTenor\b", "T."),
+    (r"\bVoice\b", "Voc."),
+    (r"\bVocals?\b", "Voc."),
+    (r"\bChoir\b", "Ch."),
+    (r"\bChorus\b", "Ch."),
 )
 
 _EXPAND_MAP: tuple[tuple[str, str], ...] = (
@@ -213,8 +229,10 @@ _KNOWN_INSTRUMENT_WORD_RE = re.compile(
     r"flugelhorn|horn|trombone|euphonium|baritone|tuba|bass|basses|timpani|mallet|percussion|"
     r"glockenspiel|xylophone|vibraphone|marimba|celesta|chimes|violin|viola|cello|violoncello|"
     r"contrabass|piano|organ|harp|guitar|snare|cymbal|triangle|tambourine|drum|"
+    r"voice|vocal|vocals|soprano|alto|tenor|choir|chorus|"
+    r"recorder|harpsichord|accordion|mandolin|ukulele|banjo|strings|fiddle|keyboard|synthesizer|synth|"
     r"picc|fl|ob|bsn|cbsn|cl|tpt|cnt|flgh|hn|tbn|euph|bar|tba|timp|mall|perc|glock|xyl|vib|mar|"
-    r"vln|vla|vc|cb|pno|org|hp|gtr|str|cym|tri|tamb)\b",
+    r"vln|vla|vc|cb|pno|org|hp|gtr|str|cym|tri|tamb|voc)\b",
     re.IGNORECASE,
 )
 
@@ -222,7 +240,16 @@ _FULL_WORD_INSTRUMENT_RE = re.compile(
     r"\b(?:piccolo|flute|oboe|bassoon|contrabassoon|clarinet|saxophone|trumpet|cornet|"
     r"flugelhorn|horn|trombone|euphonium|baritone|tuba|basses|timpani|percussion|"
     r"glockenspiel|xylophone|vibraphone|marimba|celesta|violin|viola|cello|violoncello|"
-    r"contrabass|piano|organ|harp|guitar)\b",
+    r"contrabass|piano|organ|harp|guitar|voice|vocal|vocals|soprano|alto|tenor|choir|chorus|"
+    r"recorder|harpsichord|accordion|mandolin|ukulele|banjo|strings|fiddle|keyboard|synthesizer)\b",
+    re.IGNORECASE,
+)
+
+_HEADER_NON_INSTRUMENT_RE = re.compile(
+    r"\b(?:suite|sonata|symphony|concerto|prelude|pr[eé]lude|etude|[eé]tude|opus|op\.|no\.|bwv|"
+    r"k\.|kv|movement|overture|fantasy|fantasia|march|waltz|minuet|menuet|sarabande|"
+    r"allemande|courante|gigue|air|allegro|andante|adagio|moderato|largo|presto|vivace|"
+    r"lento|grave|maestoso)\b",
     re.IGNORECASE,
 )
 
@@ -302,6 +329,16 @@ def looks_low_quality_label(label: str) -> bool:
     return alpha_chars < 4
 
 
+def is_recognized_instrument_label(label: str) -> bool:
+    """Return True if ``label`` is a plausible, recognized instrument name rather than a title or stray text."""
+    txt = (label or "").strip()
+    if not txt or looks_low_quality_label(txt):
+        return False
+    if _HEADER_NON_INSTRUMENT_RE.search(txt):
+        return False
+    return bool(_KNOWN_INSTRUMENT_WORD_RE.search(txt))
+
+
 def is_percussion_instrument(name: str) -> bool:
     """Return True ONLY for unpitched percussion (Channel 10); pitched percussion (Timpani/Mallets) stays False."""
     if not name:
@@ -316,88 +353,89 @@ def _infer_woodwind_profile(txt: str, clef: Optional[tuple[str, str]]) -> Option
     has_flute = bool(re.search(r"\bflute|\bfl\b", txt))
     has_picc = bool(re.search(r"\bpiccolo\b|\bpicc\b", txt))
     if has_flute and has_picc:
-        return InstrumentPlaybackProfile("wind.flutes.flute")
+        return InstrumentPlaybackProfile("wind.flutes.flute", midi_program=74)
     if has_picc:
-        return InstrumentPlaybackProfile("wind.flutes.flute.piccolo", 0, 0, 1, 0)
+        return InstrumentPlaybackProfile("wind.flutes.flute.piccolo", 0, 0, 1, 0, midi_program=73)
     if re.search(r"\balto\s+(?:flute\b|fl\b)", txt):
-        return InstrumentPlaybackProfile("wind.flutes.flute.alto", -3, -5, 0, -1)
+        return InstrumentPlaybackProfile("wind.flutes.flute.alto", -3, -5, 0, -1, midi_program=74)
     if has_flute:
-        return InstrumentPlaybackProfile("wind.flutes.flute")
+        return InstrumentPlaybackProfile("wind.flutes.flute", midi_program=74)
     if re.search(r"\benglish\s+horn\b|\bcor\s+anglais\b|\be\.\s*hn\b", txt):
-        return InstrumentPlaybackProfile("wind.reed.english-horn", -4, -7, 0, 1)
+        return InstrumentPlaybackProfile("wind.reed.english-horn", -4, -7, 0, 1, midi_program=70)
     if re.search(r"\boboe\b|\bob\b", txt):
-        return InstrumentPlaybackProfile("wind.reed.oboe")
+        return InstrumentPlaybackProfile("wind.reed.oboe", midi_program=69)
     if re.search(r"\bcontrabassoon\b|\bcbsn\b", txt):
-        return InstrumentPlaybackProfile("wind.reed.contrabassoon", 0, 0, -1, 0)
+        return InstrumentPlaybackProfile("wind.reed.contrabassoon", 0, 0, -1, 0, midi_program=71)
     if re.search(r"\bbassoon\b|\bbsn\b", txt):
-        return InstrumentPlaybackProfile("wind.reed.bassoon")
+        return InstrumentPlaybackProfile("wind.reed.bassoon", midi_program=71)
 
     if re.search(r"\bclarinet|\bcl\b", txt):
         if re.search(r"\bcontrabass\b", txt):
             if re.search(r"\beb\b|\bin\s+eb\b", txt):
-                return InstrumentPlaybackProfile("wind.reed.clarinet.contrabass", -5, -9, -1, 3)
-            return InstrumentPlaybackProfile("wind.reed.clarinet.contrabass", -1, -2, -2, 2)
+                return InstrumentPlaybackProfile("wind.reed.clarinet.contrabass", -5, -9, -1, 3, midi_program=72)
+            return InstrumentPlaybackProfile("wind.reed.clarinet.contrabass", -1, -2, -2, 2, midi_program=72)
         if re.search(r"\bbass\b|\bb\.\s*cl\b", txt):
             oct_chg = 0 if clef == ("F", "4") else -1
-            return InstrumentPlaybackProfile("wind.reed.clarinet.bass", -1, -2, oct_chg, 2)
+            return InstrumentPlaybackProfile("wind.reed.clarinet.bass", -1, -2, oct_chg, 2, midi_program=72)
         if re.search(r"\balto\b|\ba\.\s*cl\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.clarinet.alto", -5, -9, 0, 3)
+            return InstrumentPlaybackProfile("wind.reed.clarinet.alto", -5, -9, 0, 3, midi_program=72)
         if re.search(r"\beb\s+(?:clarinet|cl)\b|\b(?:clarinet|cl)\s+in\s+eb\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.clarinet.eflat", 2, 3, 0, 3)
+            return InstrumentPlaybackProfile("wind.reed.clarinet.eflat", 2, 3, 0, 3, midi_program=72)
         if re.search(r"\ba\s+(?:clarinet|cl)\b|\b(?:clarinet|cl)\s+in\s+a\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.clarinet.a", -2, -3, 0, -3)
+            return InstrumentPlaybackProfile("wind.reed.clarinet.a", -2, -3, 0, -3, midi_program=72)
         if re.search(r"\bc\s+(?:clarinet|cl)\b|\b(?:clarinet|cl)\s+in\s+c\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.clarinet")
-        return InstrumentPlaybackProfile("wind.reed.clarinet.bflat", -1, -2, 0, 2)
+            return InstrumentPlaybackProfile("wind.reed.clarinet", midi_program=72)
+        return InstrumentPlaybackProfile("wind.reed.clarinet.bflat", -1, -2, 0, 2, midi_program=72)
 
     if re.search(r"\bsax(?:ophone)?\b", txt):
         if re.search(r"\bsoprano\b|\bs\.\s*sax\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.saxophone.soprano", -1, -2, 0, 2)
+            return InstrumentPlaybackProfile("wind.reed.saxophone.soprano", -1, -2, 0, 2, midi_program=65)
         if re.search(r"\balto\b|\ba\.\s*sax\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.saxophone.alto", -5, -9, 0, 3)
+            return InstrumentPlaybackProfile("wind.reed.saxophone.alto", -5, -9, 0, 3, midi_program=66)
         if re.search(r"\btenor\b|\bt\.\s*sax\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.saxophone.tenor", -1, -2, -1, 2)
+            return InstrumentPlaybackProfile("wind.reed.saxophone.tenor", -1, -2, -1, 2, midi_program=67)
         if re.search(r"\bbaritone\b|\bbar\.\s*sax\b", txt):
-            return InstrumentPlaybackProfile("wind.reed.saxophone.baritone", -5, -9, -1, 3)
+            return InstrumentPlaybackProfile("wind.reed.saxophone.baritone", -5, -9, -1, 3, midi_program=68)
+        return InstrumentPlaybackProfile("wind.reed.saxophone.alto", -5, -9, 0, 3, midi_program=66)
     return None
 
 
 def _infer_brass_profile(txt: str, clef: Optional[tuple[str, str]]) -> Optional[InstrumentPlaybackProfile]:
     if re.search(r"\b(?:trumpet|tpt|cornet|cnt|flugelhorn|flgh)\b", txt):
         if re.search(r"\bd\s+(?:trumpet|tpt)\b|\b(?:trumpet|tpt)\s+in\s+d\b", txt):
-            return InstrumentPlaybackProfile("brass.trumpet.d", 1, 2, 0, -2)
+            return InstrumentPlaybackProfile("brass.trumpet.d", 1, 2, 0, -2, midi_program=57)
         if re.search(r"\bc\s+(?:trumpet|tpt)\b|\b(?:trumpet|tpt)\s+in\s+c\b", txt):
-            return InstrumentPlaybackProfile("brass.trumpet.c")
+            return InstrumentPlaybackProfile("brass.trumpet.c", midi_program=57)
         if re.search(r"\beb\s+(?:trumpet|tpt|cornet|cnt)\b|\b(?:trumpet|tpt|cornet|cnt)\s+in\s+eb\b", txt):
-            return InstrumentPlaybackProfile("brass.trumpet", 2, 3, 0, 3)
+            return InstrumentPlaybackProfile("brass.trumpet", 2, 3, 0, 3, midi_program=57)
         if re.search(r"\ba\s+(?:trumpet|tpt)\b|\b(?:trumpet|tpt)\s+in\s+a\b", txt):
-            return InstrumentPlaybackProfile("brass.trumpet", -2, -3, 0, -3)
+            return InstrumentPlaybackProfile("brass.trumpet", -2, -3, 0, -3, midi_program=57)
         if re.search(r"\bflugelhorn\b|\bflgh\b", txt):
             sound_id = "brass.flugelhorn"
         elif re.search(r"\bcornet\b|\bcnt\b", txt) and not re.search(r"\btrumpet\b|\btpt\b", txt):
             sound_id = "brass.cornet"
         else:
             sound_id = "brass.trumpet.bflat"
-        return InstrumentPlaybackProfile(sound_id, -1, -2, 0, 2)
+        return InstrumentPlaybackProfile(sound_id, -1, -2, 0, 2, midi_program=57)
 
     if re.search(r"\b(?:eb\s+horn|alto\s+horn|tenor\s+horn)\b", txt):
-        return InstrumentPlaybackProfile("brass.alto-horn", -5, -9, 0, 3)
+        return InstrumentPlaybackProfile("brass.alto-horn", -5, -9, 0, 3, midi_program=61)
     if re.search(r"\b(?:french\s+horn|f\s+horn|horn|hn)\b", txt):
-        return InstrumentPlaybackProfile("brass.french-horn", -4, -7, 0, 1)
+        return InstrumentPlaybackProfile("brass.french-horn", -4, -7, 0, 1, midi_program=61)
     if re.search(r"\bbass\s+trombone\b|\bb\.?\s*tbn\b", txt):
-        return InstrumentPlaybackProfile("brass.trombone.bass")
+        return InstrumentPlaybackProfile("brass.trombone.bass", midi_program=58)
 
     explicit_bb_treble = bool(re.search(r"\bbb\b|\bin\s+bb\b", txt)) and clef == ("G", "2")
     if re.search(r"\btrombone\b|\btbn\b", txt):
         if explicit_bb_treble:
-            return InstrumentPlaybackProfile("brass.trombone", -1, -2, -1, 2)
-        return InstrumentPlaybackProfile("brass.trombone")
+            return InstrumentPlaybackProfile("brass.trombone", -1, -2, -1, 2, midi_program=58)
+        return InstrumentPlaybackProfile("brass.trombone", midi_program=58)
     if re.search(r"\b(?:baritone|euphonium|bar|euph)\b", txt):
         if explicit_bb_treble:
-            return InstrumentPlaybackProfile("brass.euphonium", -1, -2, -1, 2)
-        return InstrumentPlaybackProfile("brass.euphonium")
+            return InstrumentPlaybackProfile("brass.euphonium", -1, -2, -1, 2, midi_program=58)
+        return InstrumentPlaybackProfile("brass.euphonium", midi_program=58)
     if re.search(r"\b(?:tuba|tba|basses)\b", txt):
-        return InstrumentPlaybackProfile("brass.tuba")
+        return InstrumentPlaybackProfile("brass.tuba", midi_program=59)
     return None
 
 
@@ -405,21 +443,21 @@ def infer_instrument_profile(
     name: str,
     clef: Optional[tuple[str, str]] = None,
 ) -> InstrumentPlaybackProfile:
-    """Infer MusicXML ``<instrument-sound>`` and transposition intervals from a part name."""
+    """Infer MusicXML ``<instrument-sound>``, transposition intervals, and 1-based GM MIDI program."""
     txt = (name or "").replace("♭", "b").replace("♯", "#")
     txt = re.sub(r"\s+", " ", txt).strip().lower()
     if not txt:
-        return InstrumentPlaybackProfile("voice")
+        return InstrumentPlaybackProfile("keyboard.piano", midi_program=1)
 
     if is_percussion_instrument(name):
         for pat, sid in _UNPITCHED_SOUND_RULES:
             if re.search(pat, txt):
-                return InstrumentPlaybackProfile(sid)
-        return InstrumentPlaybackProfile("drum.group")
+                return InstrumentPlaybackProfile(sid, midi_program=0)
+        return InstrumentPlaybackProfile("drum.group", midi_program=0)
 
-    for pat, sid in _PITCHED_PERCUSSION_RULES:
+    for pat, sid, prog in _PITCHED_PERCUSSION_RULES:
         if re.search(pat, txt):
-            return InstrumentPlaybackProfile(sid)
+            return InstrumentPlaybackProfile(sid, midi_program=prog)
 
     ww = _infer_woodwind_profile(txt, clef)
     if ww is not None:
@@ -427,9 +465,9 @@ def infer_instrument_profile(
 
     # String/Double/Electric Bass must be checked BEFORE Tuba / "Basses"
     if re.search(r"\b(?:string|double)\s+bass\b|\bcontrabass\b|\b(?:str|db)\.?\s*bass\b|\bcb\b", txt):
-        return InstrumentPlaybackProfile("strings.contrabass", 0, 0, -1, 0)
+        return InstrumentPlaybackProfile("strings.contrabass", 0, 0, -1, 0, midi_program=44)
     if re.search(r"\belectric\s+bass\b|\be\.\s*bass\b", txt):
-        return InstrumentPlaybackProfile("pluck.bass.electric", 0, 0, -1, 0)
+        return InstrumentPlaybackProfile("pluck.bass.electric", 0, 0, -1, 0, midi_program=34)
 
     br = _infer_brass_profile(txt, clef)
     if br is not None:
@@ -439,7 +477,14 @@ def infer_instrument_profile(
         if re.search(pat, txt):
             return prof
 
-    return InstrumentPlaybackProfile("voice")
+    for pat, sid in _VOCAL_INST_RULES:
+        if re.search(pat, txt):
+            return InstrumentPlaybackProfile(sid, midi_program=53)
+
+    if re.search(r"\bbass\b", txt):
+        return InstrumentPlaybackProfile("strings.contrabass", 0, 0, -1, 0, midi_program=44)
+
+    return InstrumentPlaybackProfile("keyboard.piano", midi_program=1)
 
 
 def _label_from_cleaned_text(cleaned: str, raw_joined: str) -> InstrumentLabel:
@@ -461,6 +506,89 @@ def _label_from_cleaned_text(cleaned: str, raw_joined: str) -> InstrumentLabel:
         is_fallback=False,
         is_abbreviated_source=False,
     )
+
+
+def _run_rapidocr_on_crop(
+    crop: np.ndarray,
+    *,
+    ocr_reader: Any = None,
+    ocr_dir: Optional[Path] = None,
+    ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
+) -> tuple[Sequence[Any], Sequence[str]]:
+    """Run RapidOCR (or a test ``ocr_runner``) on ``crop`` and return ``(boxes, texts)``."""
+    if ocr_runner is not None:
+        return ocr_runner(crop)
+    reader = ocr_reader
+    if reader is None:  # pragma: no cover - live RapidOCR init
+        from rapidocr import RapidOCR
+
+        params = {"Global.model_root_dir": str(ocr_dir)} if ocr_dir is not None else None
+        reader = RapidOCR(params=params) if params is not None else RapidOCR()
+    res = reader(crop)
+    txts_raw = list(res.txts) if getattr(res, "txts", None) is not None else []
+    boxes_raw = list(res.boxes) if getattr(res, "boxes", None) is not None else []
+    return boxes_raw, txts_raw
+
+
+def extract_header_instrument_label(
+    png_path: Path,
+    top_y: float,
+    *,
+    ocr_reader: Any = None,
+    ocr_dir: Optional[Path] = None,
+    ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
+) -> Optional[InstrumentLabel]:
+    """Scan the header region above ``top_y`` on ``png_path`` for a single-part instrument label."""
+    if top_y < 25:
+        return None
+    img = cv2.imread(str(png_path))
+    if img is None:
+        log.warning("Could not read %s for header instrument OCR", png_path)
+        return None
+
+    h_px, w_px = img.shape[:2]
+    crop_h = max(1, min(int(top_y), h_px))
+    header = img[:crop_h, :]
+    boxes_raw, txts_raw = _run_rapidocr_on_crop(
+        header, ocr_reader=ocr_reader, ocr_dir=ocr_dir, ocr_runner=ocr_runner
+    )
+
+    candidates: list[tuple[tuple[int, int, float, int], InstrumentLabel]] = []
+    for box, text in zip(boxes_raw, txts_raw):
+        raw_t = str(text).strip()
+        if not raw_t or "=" in raw_t:
+            continue
+        low = raw_t.lower()
+        if any(tok in low for tok in _BOILERPLATE_TOKENS):
+            continue
+        if _HEADER_NON_INSTRUMENT_RE.search(raw_t):
+            continue
+        cleaned = clean_instrument_label(raw_t)
+        words = cleaned.split()
+        if not words or len(words) > 5:
+            continue
+        if not _KNOWN_INSTRUMENT_WORD_RE.search(cleaned) or looks_low_quality_label(cleaned):
+            continue
+        cx = float(sum(float(pt[0]) for pt in box)) / max(1, len(box))
+        cy = float(sum(float(pt[1]) for pt in box)) / max(1, len(box))
+        is_left = 1 if (w_px > 0 and cx / float(w_px) < 0.45) else 0
+        lbl = _label_from_cleaned_text(cleaned, raw_t)
+        score = (is_left, -len(words), cy, -len(lbl.full_name))
+        candidates.append((score, lbl))
+
+    if not candidates:
+        log.debug("Header instrument OCR on %s (y<%.1f): no written instrument label found", Path(png_path).name, top_y)
+        return None
+
+    best_lbl = max(candidates, key=lambda item: item[0])[1]
+    log.info(
+        "Header instrument OCR on %s detected %r (abbr=%r, raw=%r)",
+        Path(png_path).name,
+        best_lbl.full_name,
+        best_lbl.abbreviation,
+        best_lbl.raw_ocr,
+    )
+    return best_lbl
 
 
 def extract_instrument_labels(
@@ -493,18 +621,9 @@ def extract_instrument_labels(
     margin = img[:, :safe_crop_x]
     log.info("Running left-margin OCR on %s (0..%d px, median_gap=%.1f px)", Path(png_path).name, safe_crop_x, median_gap)
 
-    if ocr_runner is not None:
-        boxes_raw, txts_raw = ocr_runner(margin)
-    else:
-        reader = ocr_reader
-        if reader is None:
-            from rapidocr import RapidOCR
-
-            params = {"Global.model_root_dir": str(ocr_dir)} if ocr_dir is not None else None
-            reader = RapidOCR(params=params) if params is not None else RapidOCR()
-        res = reader(margin)
-        txts_raw = list(res.txts) if getattr(res, "txts", None) is not None else []
-        boxes_raw = list(res.boxes) if getattr(res, "boxes", None) is not None else []
+    boxes_raw, txts_raw = _run_rapidocr_on_crop(
+        margin, ocr_reader=ocr_reader, ocr_dir=ocr_dir, ocr_runner=ocr_runner
+    )
 
     assigned: list[list[tuple[float, str]]] = [[] for _ in staff_cys]
     for box, text in zip(boxes_raw, txts_raw):
@@ -515,8 +634,8 @@ def extract_instrument_labels(
         if cy < y_lo or cy > y_hi:
             log.debug("OCR skip outside Y band (y=%.1f): %r", cy, clean_t)
             continue
-        if len(clean_t) == 1 and clean_t.isdigit():
-            log.debug("OCR skip single-digit stray (y=%.1f): %r", cy, clean_t)
+        if clean_t.isdigit() and (len(clean_t) == 1 or int(clean_t) > 12):
+            log.debug("OCR skip numeric stray (y=%.1f): %r", cy, clean_t)
             continue
         low = clean_t.lower()
         if any(tok in low for tok in _BOILERPLATE_TOKENS):
