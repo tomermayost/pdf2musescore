@@ -363,11 +363,13 @@ class PdfPreviewPane(tk.Frame):
             cursor="hand2",
         )
         self.stage.pack_propagate(False)
-        self.stage.pack()
+        self.stage.pack(fill="both", expand=True)
 
         # Empty dropzone frame
         self.empty_frame = tk.Frame(self.stage, cursor="hand2")
-        self.empty_icon_lbl = tk.Label(self.empty_frame, text="♪", font=("Segoe UI", 26, "bold"), cursor="hand2")
+        self.empty_center = tk.Frame(self.empty_frame, cursor="hand2")
+        self.empty_center.pack(expand=True)
+        self.empty_icon_lbl = tk.Label(self.empty_center, text="♪", font=("Segoe UI", 26, "bold"), cursor="hand2")
         try:
             png = get_assets_dir() / "icon.png"
             if png.is_file():
@@ -377,10 +379,10 @@ class PdfPreviewPane(tk.Frame):
                 self.empty_icon_lbl.configure(image=self._emblem_ref, text="")
         except Exception as exc:  # pragma: no cover - defensive icon fallback
             log.debug("Preview emblem fallback: %s", exc)
-        self.empty_icon_lbl.pack(pady=(72, 10))
+        self.empty_icon_lbl.pack(pady=(0, 10))
 
         self.empty_title_lbl = tk.Label(
-            self.empty_frame,
+            self.empty_center,
             text="Select or Drop Sheet Music",
             font=("Segoe UI", 9, "bold"),
             justify="center",
@@ -390,7 +392,7 @@ class PdfPreviewPane(tk.Frame):
         self.empty_title_lbl.pack()
 
         self.empty_sub_lbl = tk.Label(
-            self.empty_frame,
+            self.empty_center,
             text="Drop a PDF or photo here,\nclick, or press Ctrl+O",
             font=("Segoe UI", 8),
             justify="center",
@@ -399,7 +401,14 @@ class PdfPreviewPane(tk.Frame):
         )
         self.empty_sub_lbl.pack(pady=(6, 0))
 
-        for w in (self.stage, self.empty_frame, self.empty_icon_lbl, self.empty_title_lbl, self.empty_sub_lbl):
+        for w in (
+            self.stage,
+            self.empty_frame,
+            self.empty_center,
+            self.empty_icon_lbl,
+            self.empty_title_lbl,
+            self.empty_sub_lbl,
+        ):
             w.bind("<Button-1>", self._handle_stage_click, add="+")
 
         # Image / fallback label for loaded PDFs
@@ -565,6 +574,7 @@ class PdfPreviewPane(tk.Frame):
         self.configure(background=palette.card, highlightbackground=palette.border)
         self.stage.configure(background=palette.preview_bg, highlightbackground=palette.border)
         self.empty_frame.configure(background=palette.preview_bg)
+        self.empty_center.configure(background=palette.preview_bg)
         self.empty_icon_lbl.configure(background=palette.preview_bg, foreground=palette.accent)
         self.empty_title_lbl.configure(background=palette.preview_bg, foreground=palette.text)
         self.empty_sub_lbl.configure(background=palette.preview_bg, foreground=palette.text_muted)

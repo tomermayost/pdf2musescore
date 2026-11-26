@@ -368,7 +368,7 @@ class App(ttk.Frame):
             page_renderer=self.page_renderer,
             palette=self.palette,
         )
-        self.preview_pane.grid(row=0, column=0, sticky="nw", padx=(0, 12))
+        self.preview_pane.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
 
         right_col = ttk.Frame(workspace, style="App.TFrame")
         right_col.grid(row=0, column=1, sticky="nsew")
@@ -635,6 +635,10 @@ class App(ttk.Frame):
             card, textvariable=self.score_mode_hint_var, style="AccentHint.TLabel"
         )
 
+        # Single divider separating primary Score Mode selection from optional drawers
+        self._drawers_separator = ttk.Separator(card, orient="horizontal", style="Studio.TSeparator")
+        self._drawers_separator.pack(fill="x", pady=(8, 6))
+
         # Optional Single-Part overrides (collapsed by default so beginners aren't confronted with a form)
         self.part_options_section = CollapsibleSection(
             card,
@@ -644,7 +648,7 @@ class App(ttk.Frame):
             card_surface=True,
             on_toggle=self._on_part_options_toggled,
         )
-        self.part_options_section.pack(fill="x", pady=(6, 0))
+        self.part_options_section.pack(fill="x", pady=(0, 6))
 
         grid = ttk.Frame(self.part_options_section.content, style="Card.TFrame")
         grid.pack(fill="x")
@@ -707,8 +711,6 @@ class App(ttk.Frame):
         self._attach_tip("transpose_semitones", self.transpose_entry, tr_lbl)
 
         # Collapsible Advanced AI & Layout Drawer (compact 2-column grid to keep card narrow)
-        self._adv_separator = ttk.Separator(card, orient="horizontal", style="Studio.TSeparator")
-        self._adv_separator.pack(fill="x", pady=(8, 6))
         self.advanced_section = CollapsibleSection(
             card,
             title="Advanced AI & Layout Settings",
@@ -1365,7 +1367,7 @@ class App(ttk.Frame):
             if self.score_mode_hint_lbl.winfo_manager():
                 self.score_mode_hint_lbl.pack_forget()
             if not self.part_options_section.winfo_manager():
-                self.part_options_section.pack(fill="x", pady=(6, 0), before=self._adv_separator)
+                self.part_options_section.pack(fill="x", pady=(0, 6), before=self.advanced_section)
             if self._full_score_width_frame.winfo_manager():
                 self._full_score_width_frame.grid_remove()
 

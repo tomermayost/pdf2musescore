@@ -1221,9 +1221,26 @@ def test_gui_progressive_disclosure_cta_badges_and_resize(root, calls, tmp_path,
     FakePipeline.behaviour = "ok"
     app = make_app(root, calls, tmp_path, page_counter=lambda p: 1 if "single" in p.name else 4)
     try:
-        # 1. Empty state: hero Load File button, hidden pages row, hidden preview nav/pick, hidden progress/abort
+        # 1. Empty state: hero Load File button, flush preview column, divider above drawers, hidden controls
         assert str(app.load_btn.cget("style")) == "CompactPrimary.TButton"
         assert app.load_btn.cget("text") == "Load File..."
+        sticky_val = str(app.preview_pane.grid_info()["sticky"])
+        assert "n" in sticky_val and "s" in sticky_val
+        score_slaves = app._drawers_separator.master.pack_slaves()
+        assert (
+            score_slaves.index(app._drawers_separator)
+            < score_slaves.index(app.part_options_section)
+            < score_slaves.index(app.advanced_section)
+        )
+        app.set_score_mode(True)
+        assert not app.part_options_section.winfo_manager()
+        app.set_score_mode(False)
+        score_slaves_restored = app._drawers_separator.master.pack_slaves()
+        assert (
+            score_slaves_restored.index(app._drawers_separator)
+            < score_slaves_restored.index(app.part_options_section)
+            < score_slaves_restored.index(app.advanced_section)
+        )
         assert not app._pages_row.winfo_manager()
         assert not app.preview_pane._nav_frame.winfo_manager()
         assert not app.preview_pane.pick_btn.winfo_manager()

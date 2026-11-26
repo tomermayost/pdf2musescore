@@ -112,7 +112,9 @@ def test_configure_ttk_style_on_root(root):
         # Selected PresetActive buttons must remain distinct from unselected Preset buttons in both idle and disabled states
         active_bg = style.lookup("PresetActive.TButton", "background")
         inactive_bg = style.lookup("Preset.TButton", "background")
+        primary_bg = style.lookup("Primary.TButton", "background")
         assert active_bg and inactive_bg and active_bg != inactive_bg
+        assert primary_bg and active_bg != primary_bg
         assert style.lookup("PresetActive.TButton", "foreground") != style.lookup("Preset.TButton", "foreground")
 
         active_dis_bg = style.lookup("PresetActive.TButton", "background", state=("disabled",))

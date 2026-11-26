@@ -466,16 +466,28 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
         darkcolor=[("disabled", palette.card_alt), ("active", palette.accent_soft)],
     )
 
-    active_bg = "#2563EB"
-    active_hover_bg = "#3B82F6" if palette.is_dark else "#1D4ED8"
-    active_border = "#60A5FA" if palette.is_dark else "#1D4ED8"
-    active_disabled_bg = "#1E3A8A" if palette.is_dark else "#DBEAFE"
-    active_disabled_fg = "#DBEAFE" if palette.is_dark else "#1E40AF"
-    active_disabled_border = "#60A5FA" if palette.is_dark else "#3B82F6"
+    if palette.is_dark:
+        active_bg = "#1D3B68"
+        active_fg = "#EFF6FF"
+        active_hover_bg = "#23477D"
+        active_hover_fg = "#FFFFFF"
+        active_border = "#60A5FA"
+        active_disabled_bg = "#1B2E4B"
+        active_disabled_fg = "#93C5FD"
+        active_disabled_border = "#3B82F6"
+    else:
+        active_bg = "#DBEAFE"
+        active_fg = "#1D4ED8"
+        active_hover_bg = "#BFDBFE"
+        active_hover_fg = "#1E40AF"
+        active_border = "#3B82F6"
+        active_disabled_bg = "#EFF6FF"
+        active_disabled_fg = "#3B82F6"
+        active_disabled_border = "#93C5FD"
     style.configure(
         "PresetActive.TButton",
         background=active_bg,
-        foreground="#FFFFFF",
+        foreground=active_fg,
         bordercolor=active_border,
         lightcolor=active_bg,
         darkcolor=active_bg,
@@ -487,7 +499,7 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
     style.map(
         "PresetActive.TButton",
         background=[("disabled", active_disabled_bg), ("active", active_hover_bg)],
-        foreground=[("disabled", active_disabled_fg), ("active", "#FFFFFF")],
+        foreground=[("disabled", active_disabled_fg), ("active", active_hover_fg)],
         bordercolor=[("disabled", active_disabled_border), ("active", active_border)],
         lightcolor=[("disabled", active_disabled_bg), ("active", active_hover_bg)],
         darkcolor=[("disabled", active_disabled_bg), ("active", active_hover_bg)],
