@@ -17,6 +17,7 @@ from ..musicxml import (
     TYPE_TO_QUARTERS as _TYPE_TO_QUARTERS,
     MergeError,
     add_courtesy_accidentals,
+    normalize_unpitched_percussion_part,
     read_score,
     repair_spurious_tuplets,
     set_score_part_instrument,
@@ -25,7 +26,7 @@ from ..musicxml import (
 )
 from ..options import ConversionOptions
 from ..rehearsal import PositionedRehearsal, map_range_rehearsal_marks_to_measures
-from ..tempo import TempoMarking, apply_tempo_marking
+from ..tempo import PositionedTempo, TempoMarking, apply_tempo_marking, map_range_tempos_to_measures
 from .instruments import (
     InstrumentLabel,
     InstrumentPlaybackProfile,
@@ -51,6 +52,7 @@ class PageSidecar:
     sys_max_x: int = 0
     crop_x: int = 0
     tempo: Optional[TempoMarking] = None
+    positioned_tempos: tuple[PositionedTempo, ...] = ()
     rehearsal_marks: tuple[PositionedRehearsal, ...] = ()
 
 
@@ -74,6 +76,8 @@ def write_page_sidecar(sidecar: PageSidecar, xml_path: Path) -> Path:
     }
     if sidecar.tempo is not None:
         payload["tempo"] = sidecar.tempo.to_dict()
+    if sidecar.positioned_tempos:
+        payload["positioned_tempos"] = [pt.to_dict() for pt in sidecar.positioned_tempos]
     if sidecar.rehearsal_marks:
         payload["rehearsal_marks"] = [r.to_dict() for r in sidecar.rehearsal_marks]
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -98,6 +102,11 @@ def read_page_sidecar(xml_path: Path) -> Optional[PageSidecar]:
             )
             for item in raw.get("labels", [])
         ]
+        positioned_tempos = tuple(
+            pt
+            for item in raw.get("positioned_tempos", [])
+            if (pt := PositionedTempo.from_dict(item)) is not None
+        )
         rehearsals = tuple(
             pr
             for item in raw.get("rehearsal_marks", [])
@@ -113,6 +122,7 @@ def read_page_sidecar(xml_path: Path) -> Optional[PageSidecar]:
             sys_max_x=int(raw.get("sys_max_x", 0)),
             crop_x=int(raw.get("crop_x", 0)),
             tempo=TempoMarking.from_dict(raw.get("tempo")),
+            positioned_tempos=positioned_tempos,
             rehearsal_marks=rehearsals,
         )
     except Exception as exc:
@@ -1358,6 +1368,9 @@ def reconcile_pages_to_master(
                         sys_min_x=sc.sys_min_x,
                         sys_max_x=sc.sys_max_x,
                         crop_x=sc.crop_x,
+                        tempo=sc.tempo,
+                        positioned_tempos=sc.positioned_tempos,
+                        rehearsal_marks=sc.rehearsal_marks,
                     )
                 cleaned_pages[pidx] = (pno, new_root, new_sc)
                 log.info(
@@ -1875,6 +1888,8 @@ def apply_conductor_metadata(
             clef=initial_clef,
             pitched_channel_index=pitched_i,
         )
+        if is_perc and part_el is not None:
+            normalize_unpitched_percussion_part(sp, part_el, inst_name)
         if not is_perc:
             pitched_i += 1
 
@@ -2042,7 +2057,10 @@ def merge_fullscore_pages(
         for _ in base_parts
     ]
     dedup_removed = 0
-    page_start_measures: list[tuple[int, int, Optional[TempoMarking], tuple[PositionedRehearsal, ...]]] = []
+    suppressed_rest_clefs = 0
+    page_start_measures: list[
+        tuple[int, int, Optional[TempoMarking], tuple[PositionedTempo, ...], tuple[PositionedRehearsal, ...]]
+    ] = []
     for page_idx, (root, (_pno, _aroot, sc)) in enumerate(zip(reconciled_roots, aligned_pages), start=1):
         start_idx = counters[0]
         parts = root.findall("part")
@@ -2052,12 +2070,29 @@ def merge_fullscore_pages(
                 start_idx,
                 page_m_count,
                 sc.tempo if sc is not None else None,
+                sc.positioned_tempos if sc is not None else (),
                 sc.rehearsal_marks if sc is not None else (),
             )
         )
         for pi, part in enumerate(parts):
-            for mi, m in enumerate(part.findall("measure")):
+            part_measures = part.findall("measure")
+            is_perc_part = pi < len(labels) and is_percussion_instrument(labels[pi].full_name)
+            suppress_rest_clef = (
+                page_idx > 1
+                and not is_perc_part
+                and part_states[pi]["clef"] is not None
+                and bool(part_measures)
+                and all(_is_rest_only_measure(pm) for pm in part_measures)
+            )
+            for mi, m in enumerate(part_measures):
                 mc = copy.deepcopy(m)
+                if suppress_rest_clef:
+                    for attrs in list(mc.findall("attributes")):
+                        for old_c in list(attrs.findall("clef")):
+                            attrs.remove(old_c)
+                            suppressed_rest_clefs += 1
+                        if len(attrs) == 0:
+                            mc.remove(attrs)
                 dedup_removed += dedup_boundary_attributes(
                     mc,
                     is_later_page_start=(page_idx > 1 and mi == 0),
@@ -2067,6 +2102,8 @@ def merge_fullscore_pages(
                 mc.set("number", str(counters[pi]))
                 base_parts[pi].append(mc)
 
+    if suppressed_rest_clefs:
+        log.info("Suppressed %d spurious clef change(s) on all-rest pitched pages", suppressed_rest_clefs)
     log.info("Deduplicated %d redundant page-boundary attributes (divisions/key/time/clef)", dedup_removed)
     apply_conductor_metadata(
         merged,
@@ -2077,8 +2114,16 @@ def merge_fullscore_pages(
     )
     add_courtesy_accidentals(merged)
     last_tempo_key: Optional[tuple[str, Optional[int], str, bool]] = None
-    for start_idx, page_m_count, p_tempo, p_marks in page_start_measures:
-        if p_tempo is not None:
+    for start_idx, page_m_count, p_tempo, p_pos_tempos, p_marks in page_start_measures:
+        if p_pos_tempos:
+            _cnt, last_tempo_key = map_range_tempos_to_measures(
+                merged,
+                p_pos_tempos,
+                start_index=start_idx,
+                measure_count=page_m_count,
+                last_tempo_key=last_tempo_key,
+            )
+        elif p_tempo is not None:
             t_key = (p_tempo.text.lower(), p_tempo.bpm, p_tempo.beat_unit, p_tempo.beat_unit_dot)
             if t_key != last_tempo_key and apply_tempo_marking(merged, p_tempo, measure_index=start_idx):
                 last_tempo_key = t_key

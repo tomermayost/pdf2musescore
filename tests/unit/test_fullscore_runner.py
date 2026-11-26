@@ -180,6 +180,7 @@ def test_run_fullscore_homr_success_and_cover_skip(tmp_path):
     sc_t = read_page_sidecar(outs_t[0])
     assert sc_t is not None and sc_t.tempo is not None
     assert sc_t.tempo.text == "Allegro" and sc_t.tempo.bpm == 120
+    assert len(sc_t.positioned_tempos) == 1
     assert len(sc_t.rehearsal_marks) == 1
     assert sc_t.rehearsal_marks[0].mark.label == "A"
     assert sc_t.rehearsal_marks[0].mark.enclosure == "none"

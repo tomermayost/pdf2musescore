@@ -118,6 +118,20 @@ def test_detect_boxed_rehearsal_marks_in_band():
     )
     assert [h.mark.label for h in small_hits] == ["2"]
 
+    # Lone boxed '0' is normalized to 'O'
+    zero_img = _make_boxed_image(width=600, height=120, boxes=[(180, 25, 48, 48, "O")])
+    zero_hits = detect_boxed_rehearsal_marks_in_band(zero_img, 0, 120, ocr_runner=lambda _c: ([], ["0"]))
+    assert [h.mark.label for h in zero_hits] == ["O"]
+
+    # Boxed 'P' whose right border touches adjacent 'Andante' text is recovered via interior hole contour
+    touch_img = _make_boxed_image(width=1200, height=140, boxes=[(140, 30, 56, 56, "P")])
+    cv2.putText(touch_img, "Andante", (195, 76), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 0), 4, cv2.LINE_AA)
+    touch_hits = detect_boxed_rehearsal_marks_in_band(touch_img, 0, 140, ocr_runner=lambda _c: ([], ["P"]))
+    assert len(touch_hits) == 1
+    assert touch_hits[0].mark.label == "P"
+    assert touch_hits[0].mark.enclosure == "square"
+    assert 130.0 <= touch_hits[0].x_left <= 150.0 and 185.0 <= touch_hits[0].x_right <= 205.0
+
     # Boundary snapping in map_range_rehearsal_marks_to_measures + proportional fallback
     rng_root = ET.fromstring(
         "<score-partwise><part id='P1'>"

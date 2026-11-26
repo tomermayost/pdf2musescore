@@ -44,6 +44,13 @@ from pdf2musescore.tempo import (
         ("Andante cantabile", "Andante cantabile", None, "quarter", False),
         ("Largo", "Largo", None, "quarter", False),
         ("Slowly", "Slowly", None, "quarter", False),
+        ("0 d=76", "", 76, "quarter", False),
+        ("₀ = 72", "", 72, "quarter", False),
+        ("Meno mosso • = 69", "Meno mosso", 69, "quarter", False),
+        ("A Tempo • = 76", "A Tempo", 76, "quarter", False),
+        ("E Jig • = 152", "Jig", 152, "quarter", False),
+        ("P Andante appassionato = 76", "Andante appassionato", 76, "quarter", False),
+        ("N A Tempo (in 2)", "A Tempo (in 2)", None, "quarter", False),
     ],
 )
 def test_parse_tempo_text_valid(raw, exp_text, exp_bpm, exp_unit, exp_dot):
@@ -259,6 +266,8 @@ def test_extract_tempo_markings_in_band_and_map_to_measures():
         ("dolce", [("dolce", 0, 5)]),
         ("a tempo", [("a tempo", 0, 7)]),
         ("poco a poco accel.", [("poco a poco accel.", 0, 18)]),
+        ("Rit...", [("rit.", 0, 6)]),
+        ("Poco Rit...", [("poco rit.", 0, 11)]),
     ],
 )
 def test_parse_expression_tokens_valid(raw, exp):
@@ -372,3 +381,58 @@ def test_expression_extraction_barlines_mapping_and_xml():
     # Coexistence + idempotency: expression can be added to a bar that already has tempo, and duplicate expression is skipped
     assert apply_tempo_marking(score_root2, TempoMarking("tranq.", is_expression=True), measure_index=1) is True
     assert apply_tempo_marking(score_root2, TempoMarking("tranq.", is_expression=True), measure_index=1) is False
+
+    # PositionedTempo round-trip + wider note-glyph merge + exclude_boxes + map_range_tempos_to_measures
+    pt_ser = PositionedTempo(TempoMarking("Poco meno mosso", bpm=72), 100.0, 300.0, 20.0, 55.0, u_norm=0.35)
+    assert PositionedTempo.from_dict(pt_ser.to_dict()) == pt_ser
+    assert PositionedTempo.from_dict("bad") is None
+    assert PositionedTempo.from_dict({"tempo": {}}) is None
+    assert PositionedTempo.from_dict({"tempo": {"text": "Largo"}, "x_left": "bad"}) is None
+
+    def _wide_and_excluded_ocr(_c):
+        return (
+            [
+                [[100, 20], [140, 20], [140, 60], [100, 60]],  # inside excluded rehearsal box 'P'
+                [[160, 20], [360, 20], [360, 55], [160, 55]],  # Poco meno mosso (h=35)
+                [[435, 22], [500, 22], [500, 56], [435, 56]],  # =72 across x_gap=75 (~2.1 * 35)
+            ],
+            ["P", "Poco meno mosso", "=72"],
+        )
+
+    wide_pts = extract_tempo_markings_in_band(
+        img,
+        0,
+        100,
+        sys_min_x=50.0,
+        sys_max_x=950.0,
+        ocr_runner=_wide_and_excluded_ocr,
+        exclude_boxes=[(95.0, 15.0, 145.0, 65.0)],
+    )
+    assert len(wide_pts) == 1
+    assert wide_pts[0].tempo.text == "Poco meno mosso" and wide_pts[0].tempo.bpm == 72
+
+    from pdf2musescore.tempo import map_range_tempos_to_measures
+
+    rng_root = ET.fromstring(
+        "<score-partwise><part id='P1'>"
+        "<measure number='1'><note/></measure>"
+        "<measure number='2'><note/></measure>"
+        "<measure number='3'><note/></measure>"
+        "<measure number='4'><note/></measure>"
+        "<measure number='5'><note/></measure>"
+        "</part></score-partwise>"
+    )
+    t_left = PositionedTempo(TempoMarking("Meno mosso", bpm=69), 420.0, 600.0, 10.0, 40.0, u_norm=0.45)
+    t_right = PositionedTempo(TempoMarking("A Tempo", bpm=76), 720.0, 880.0, 10.0, 40.0, u_norm=0.78)
+    t_rit = PositionedTempo(TempoMarking("rit.", is_expression=True), 250.0, 310.0, 10.0, 40.0, u_norm=0.25)
+    cnt, last_k = map_range_tempos_to_measures(
+        rng_root,
+        [t_rit, t_left, t_right],
+        start_index=0,
+        measure_count=5,
+    )
+    assert cnt == 3 and last_k is not None
+    rms = rng_root.findall("./part/measure")
+    assert rms[1].findtext("./direction/direction-type/words") == "rit."
+    assert rms[2].findtext("./direction/direction-type/words") == "Meno mosso "
+    assert rms[3].findtext("./direction/direction-type/words") == "A Tempo "

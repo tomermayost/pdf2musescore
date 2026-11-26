@@ -27,7 +27,7 @@ from pdf2musescore.fullscore.instruments import InstrumentLabel
 from pdf2musescore.musicxml import MergeError, write_musicxml
 from pdf2musescore.options import ConversionOptions
 from pdf2musescore.rehearsal import PositionedRehearsal, RehearsalMark
-from pdf2musescore.tempo import TempoMarking
+from pdf2musescore.tempo import PositionedTempo, TempoMarking
 
 
 def _make_part(
@@ -571,13 +571,15 @@ def test_transposed_score_detection_harmonization_and_metadata_emission():
         "drum.group",
     ]
 
-    # Written keys remain preserved (and P3 outlier repaired to 0 with no spurious M2 key change)
+    # Written keys remain preserved (and P3 outlier repaired to 0 with no spurious M2 key change;
+    # P6 unpitched percussion normalized to fifths=0 and percussion clef)
     assert parts[0].findtext("./measure[@number='1']/attributes/key/fifths") == "-3"
     assert parts[1].findtext("./measure[@number='1']/attributes/key/fifths") == "-1"
     assert parts[2].findtext("./measure[@number='1']/attributes/key/fifths") == "0"
     assert parts[2].find("./measure[@number='2']/attributes") is None
     assert parts[3].findtext("./measure[@number='1']/attributes/key/fifths") == "-2"
-    assert parts[5].findtext("./measure[@number='1']/attributes/key/fifths") == "-1"  # unpitched percussion untouched
+    assert parts[5].findtext("./measure[@number='1']/attributes/key/fifths") == "0"
+    assert parts[5].findtext("./measure[@number='1']/attributes/clef/sign") == "percussion"
 
     # Check P3 M1 notes: note[1] (F without accidental) cleared alter, note[2] (explicit sharp) kept alter=1
     p3_notes = parts[2].findall("./measure[@number='1']/note")
@@ -1106,3 +1108,67 @@ def test_align_ghost_trailing_bar_and_midpage_meter_hardening():
     a37, end37 = align_page_score(_build_score(p16_parts), page_num=37, inherited_time_sig=("4", "4"))
     assert end37 == ("4", "4")
     assert a37.findall("./part[@id='P1']/measure")[1].find("./attributes/time") is None
+
+
+def test_percussion_normalization_all_rest_clef_suppression_and_positioned_tempos(tmp_path):
+    # Multi-page score with:
+    # P1: Flute (plays all 3 pages)
+    # P2: Timpani (plays p1 in F4, all-rest p2 with spurious C3 clef!)
+    # P3: Percussion 1 (p1 in C3 with D4 + accidental, p2 in F4 with D3, p3 in G2 with C5 — ALL are 3rd space!)
+    labels = [
+        InstrumentLabel("Flute", "Fl."),
+        InstrumentLabel("Timpani", "Timp."),
+        InstrumentLabel("Percussion 1", "Perc. 1"),
+    ]
+
+    def _page(p1_clef, p2_clef, p2_rest, p3_clef, p3_note):
+        sp1, pt1 = _make_part("P1", [(False, ("4", "4")), (False, None)], clef=p1_clef, fifths="0")
+        sp2, pt2 = _make_part("P2", [(p2_rest, ("4", "4")), (p2_rest, None)], clef=p2_clef, fifths="0")
+        sp3, pt3 = _make_part("P3", [(False, ("4", "4")), (True, None)], clef=p3_clef, fifths="-2")
+        m3 = pt3.find("measure")
+        for n in list(m3.findall("note")):
+            m3.remove(n)
+        _add_note(m3, p3_note[0], p3_note[1], accidental="flat", duration="16")
+        return _build_score([(sp1, pt1), (sp2, pt2), (sp3, pt3)])
+
+    r1 = _page(("G", "2"), ("F", "4"), False, ("C", "3"), ("D", "4"))  # 3rd space in C3 = D4
+    r2 = _page(("G", "2"), ("C", "3"), True, ("F", "4"), ("E", "3"))   # 3rd space in F4 = E3; Timpani spurious C3 on rest page!
+    r3 = _page(("G", "2"), ("F", "4"), False, ("G", "2"), ("C", "5"))  # 3rd space in G2 = C5
+
+    t_meno = PositionedTempo(TempoMarking("Meno mosso", bpm=69), 500, 700, 10, 40, u_norm=0.45)
+    t_atempo = PositionedTempo(TempoMarking("A Tempo", bpm=76), 800, 950, 10, 40, u_norm=0.75)
+    sc1 = PageSidecar(1, 3, [10.0, 20.0, 30.0], [0.0, 0.5, 1.0], labels, positioned_tempos=(t_meno, t_atempo))
+    sc2 = PageSidecar(2, 3, [10.0, 20.0, 30.0], [0.0, 0.5, 1.0], labels)
+    sc3 = PageSidecar(3, 3, [10.0, 20.0, 30.0], [0.0, 0.5, 1.0], labels)
+
+    # Sidecar JSON round-trip preserves positioned_tempos
+    xml_p = tmp_path / "page_001.musicxml"
+    write_page_sidecar(sc1, xml_p)
+    assert read_page_sidecar(xml_p) == sc1
+
+    merged = merge_fullscore_pages([(1, r1, sc1), (2, r2, sc2), (3, r3, sc3)], title="Perc Test")
+
+    # 1) Percussion 1 has percussion/2 clef ONLY in Measure 1, fifths=0, zero accidentals,
+    #    and ALL 3 notes across C3/F4/G2 mapped to identical <unpitched> C5!
+    perc_p = merged.findall("part")[2]
+    assert perc_p.findtext("./measure[@number='1']/attributes/clef/sign") == "percussion"
+    assert perc_p.findtext("./measure[@number='1']/attributes/clef/line") == "2"
+    assert perc_p.findtext("./measure[@number='1']/attributes/key/fifths") == "0"
+    assert len(perc_p.findall(".//clef")) == 1
+    assert len(perc_p.findall(".//key")) == 1
+    assert perc_p.find(".//accidental") is None
+    assert perc_p.findall(".//note/pitch") == []
+    unpitched = [
+        (u.findtext("display-step"), u.findtext("display-octave"))
+        for u in perc_p.findall(".//note/unpitched")
+    ]
+    assert unpitched == [("C", "5"), ("C", "5"), ("C", "5")]
+
+    # 2) Timpani suppressed spurious C3 clef on rest-only Page 2 -> only F4 clef in M1!
+    timp_p = merged.findall("part")[1]
+    assert [(c.findtext("sign"), c.findtext("line")) for c in timp_p.findall(".//clef")] == [("F", "4")]
+
+    # 3) Positioned tempos placed on their respective measures (M1 and M2) instead of dropping t_atempo!
+    p1_ms = merged.findall("./part[@id='P1']/measure")
+    assert p1_ms[0].findtext("./direction/direction-type/words") == "Meno mosso "
+    assert p1_ms[1].findtext("./direction/direction-type/words") == "A Tempo "

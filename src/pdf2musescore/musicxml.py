@@ -570,6 +570,165 @@ def normalize_default_instruments(root: ET.Element) -> int:
     return normalized
 
 
+_PERC_STEP_IDX: dict[str, int] = {
+    "C": 0,
+    "D": 1,
+    "E": 2,
+    "F": 3,
+    "G": 4,
+    "A": 5,
+    "B": 6,
+}
+_PERC_STEPS: tuple[str, ...] = ("C", "D", "E", "F", "G", "A", "B")
+_CLEF_BOTTOM_DIATONIC: dict[tuple[str, str], int] = {
+    ("G", "2"): 30,  # E4
+    ("F", "4"): 18,  # G2
+    ("C", "3"): 24,  # F3
+    ("C", "4"): 22,  # D3
+    ("C", "1"): 28,  # C4
+    ("C", "2"): 26,  # A3
+}
+
+
+def normalize_unpitched_percussion_part(
+    score_part: Optional[ET.Element],
+    part: Optional[ET.Element],
+    inst_name: str = "",
+) -> int:
+    """Normalize an unpitched percussion part to percussion clef, zero key flats, and ``<unpitched>`` notes.
+
+    Preserves each note's visual staff position (line/space) computed against the raw clef
+    ``homr`` guessed for that measure, then maps it to canonical treble-staff display coordinates
+    (bottom line = E4 = diatonic index 30) under ``<clef><sign>percussion</sign><line>2</line></clef>``.
+    """
+    del score_part  # Metadata/channel-10 handled by set_score_part_instrument
+    if part is None:
+        return 0
+    measures = part.findall("measure")
+    if not measures:
+        return 0
+
+    cur_clef: tuple[str, str] = ("G", "2")
+    converted = 0
+    clef_flips_removed = 0
+
+    for mi, measure in enumerate(measures):
+        # 1. Track raw clef BEFORE normalizing attributes so visual staff positions stay accurate
+        for attrs in measure.findall("attributes"):
+            for c_el in attrs.findall("clef"):
+                if c_el.get("number") in (None, "1"):
+                    sign = (c_el.findtext("sign") or "").strip()
+                    line = (c_el.findtext("line") or "").strip()
+                    if sign and line:
+                        cur_clef = (sign, line)
+
+        bottom_diatonic = (
+            30
+            if cur_clef[0].lower() == "percussion"
+            else _CLEF_BOTTOM_DIATONIC.get(cur_clef, 30)
+        )
+
+        # 2. Convert <pitch> notes to <unpitched> preserving staff line/space, strip <accidental>
+        for note in measure.findall("note"):
+            if note.find("rest") is not None:
+                continue
+            for acc in list(note.findall("accidental")):
+                note.remove(acc)
+            pitch_el = note.find("pitch")
+            if pitch_el is None:
+                continue
+            step = (pitch_el.findtext("step") or "").strip().upper()
+            oct_txt = (pitch_el.findtext("octave") or "").strip()
+            if step not in _PERC_STEP_IDX or not oct_txt.lstrip("+-").isdigit():
+                continue
+            octave = int(oct_txt)
+            pos = max(-4, min(12, (octave * 7 + _PERC_STEP_IDX[step]) - bottom_diatonic))
+            canon = 30 + pos
+            d_oct, d_step_i = divmod(canon, 7)
+            d_step = _PERC_STEPS[d_step_i]
+
+            unpitched = ET.Element("unpitched")
+            ET.SubElement(unpitched, "display-step").text = d_step
+            ET.SubElement(unpitched, "display-octave").text = str(d_oct)
+            p_idx = list(note).index(pitch_el)
+            note.remove(pitch_el)
+            note.insert(p_idx, unpitched)
+            converted += 1
+
+        # 3. Normalize measure attributes: Measure 1 -> fifths=0 + percussion/2; Measure 2..N -> strip key & clef
+        if mi == 0:
+            attrs = measure.find("attributes")
+            if attrs is None:
+                attrs = ET.Element("attributes")
+                ins_m = 0
+                for idx, ch in enumerate(list(measure)):
+                    if ch.tag == "print":
+                        ins_m = idx + 1
+                    else:
+                        break
+                measure.insert(ins_m, attrs)
+
+            keys = list(attrs.findall("key"))
+            if keys:
+                for extra_k in keys[1:]:
+                    attrs.remove(extra_k)
+                f_el = keys[0].find("fifths")
+                if f_el is None:
+                    f_el = ET.SubElement(keys[0], "fifths")
+                f_el.text = "0"
+            else:
+                key_el = ET.Element("key")
+                ET.SubElement(key_el, "fifths").text = "0"
+                k_idx = 0
+                for idx, ch in enumerate(list(attrs)):
+                    if ch.tag in ("footnote", "level", "divisions"):
+                        k_idx = idx + 1
+                attrs.insert(k_idx, key_el)
+
+            clefs = [c for c in attrs.findall("clef") if c.get("number") in (None, "1")]
+            if clefs:
+                for extra_c in clefs[1:]:
+                    attrs.remove(extra_c)
+                c_el = clefs[0]
+                s_el = c_el.find("sign")
+                if s_el is None:
+                    s_el = ET.SubElement(c_el, "sign")
+                s_el.text = "percussion"
+                l_el = c_el.find("line")
+                if l_el is None:
+                    l_el = ET.SubElement(c_el, "line")
+                l_el.text = "2"
+            else:
+                c_el = ET.Element("clef", number="1")
+                ET.SubElement(c_el, "sign").text = "percussion"
+                ET.SubElement(c_el, "line").text = "2"
+                c_idx = len(attrs)
+                for idx, ch in enumerate(list(attrs)):
+                    if ch.tag in ("staff-details", "transpose", "directive", "measure-style"):
+                        c_idx = idx
+                        break
+                attrs.insert(c_idx, c_el)
+        else:
+            for attrs in list(measure.findall("attributes")):
+                for old_k in list(attrs.findall("key")):
+                    attrs.remove(old_k)
+                for old_c in list(attrs.findall("clef")):
+                    attrs.remove(old_c)
+                    clef_flips_removed += 1
+                if len(attrs) == 0:
+                    measure.remove(attrs)
+
+    if converted or clef_flips_removed:
+        log.info(
+            "Normalized unpitched percussion %s (%s): converted %d note(s) to <unpitched>, removed %d spurious clef change(s)",
+            part.get("id", "?"),
+            inst_name or "percussion",
+            converted,
+            clef_flips_removed,
+        )
+    return converted
+
+
 def apply_instrument_override(root: ET.Element, instrument_name: str) -> ET.Element:
     """Set ``<part-name>``, ``<part-abbreviation>``, ``<instrument-name>``, ``<instrument-sound>``, and MIDI."""
     inst = (instrument_name or "auto").strip()
@@ -587,6 +746,8 @@ def apply_instrument_override(root: ET.Element, instrument_name: str) -> ET.Elem
         )
         part_el = root.find(f"./part[@id='{part_id}']")
         sync_part_transpose(part_el, profile)
+        if is_perc and part_el is not None:
+            normalize_unpitched_percussion_part(sp, part_el, inst)
         if not is_perc:
             pitched_i += 1
         log.info(

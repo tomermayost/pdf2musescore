@@ -15,7 +15,7 @@ from ..diagnostics import memory_snapshot
 from ..engines.base import OmrError
 from ..engines.homr_engine import CancelledError, PageFailure, configure_model_cache
 from ..rehearsal import PositionedRehearsal, extract_rehearsal_marks_in_band
-from ..tempo import TempoMarking, extract_tempo_marking
+from ..tempo import PositionedTempo, TempoMarking, extract_tempo_markings_in_band
 from .align import PageSidecar, write_page_sidecar
 from .homr_patch import DEFAULT_TARGET_WIDTH, fullscore_homr_context
 from .instruments import extract_instrument_labels
@@ -61,6 +61,89 @@ def _default_load_homr_modules() -> dict[str, Any]:  # pragma: no cover - integr
         "MultiStaff": MultiStaff,
         "Config": Config,
     }
+
+
+def extract_page_header_markings(
+    img_path: Path,
+    *,
+    top_staff_y: float,
+    median_gap: float,
+    sys_min_x: float = 0.0,
+    sys_max_x: float = 0.0,
+    ocr_reader: Any = None,
+    ocr_dir: Optional[Path] = None,
+) -> tuple[Optional[TempoMarking], list[PositionedTempo], list[PositionedRehearsal]]:
+    """Extract rehearsal marks and positioned tempos/expressions above ``top_staff_y`` in one OCR pass."""
+    if top_staff_y < 25:
+        return None, [], []
+    page_img = cv2.imread(str(img_path))
+    if page_img is None:
+        log.warning("Could not read %s for header OCR", img_path)
+        return None, [], []
+
+    from .instruments import _run_rapidocr_on_crop
+
+    h_px = page_img.shape[0]
+    y_bot = max(1, min(int(top_staff_y) + 8, h_px))
+    header = page_img[:y_bot, :]
+    boxes_raw: Sequence[Any] = []
+    txts_raw: Sequence[str] = []
+    try:
+        boxes_raw, txts_raw = _run_rapidocr_on_crop(
+            header, ocr_reader=ocr_reader, ocr_dir=ocr_dir
+        )
+    except Exception as exc:
+        log.warning("Header OCR failed on %s: %s", Path(img_path).name, exc)
+        return None, [], []
+
+    min_reh_y = max(0, int(top_staff_y) - int(max(170.0, median_gap * 2.2)))
+    max_reh_y = int(top_staff_y - max(15.0, 0.15 * median_gap))
+    rehearsal_marks: list[PositionedRehearsal] = []
+    try:
+        rehearsal_marks = extract_rehearsal_marks_in_band(
+            page_img,
+            0,
+            y_bot,
+            sys_min_x=float(sys_min_x),
+            sys_max_x=float(sys_max_x),
+            unboxed_min_y=min_reh_y,
+            unboxed_max_y=max_reh_y,
+            ocr_reader=ocr_reader,
+            ocr_dir=ocr_dir,
+            precomputed_band_ocr=(boxes_raw, txts_raw),
+            source_name=Path(img_path).name,
+        )
+    except Exception as exc:
+        log.warning("Rehearsal mark OCR failed on %s: %s", Path(img_path).name, exc)
+
+    exclude_boxes = [
+        (r.x_left, r.y_top, r.x_right, r.y_bottom)
+        for r in rehearsal_marks
+    ]
+    positioned_tempos: list[PositionedTempo] = []
+    try:
+        positioned_tempos = extract_tempo_markings_in_band(
+            page_img,
+            0,
+            y_bot,
+            sys_min_x=float(sys_min_x),
+            sys_max_x=float(sys_max_x),
+            ocr_reader=ocr_reader,
+            ocr_dir=ocr_dir,
+            expr_min_y=min_reh_y,
+            precomputed_ocr=(boxes_raw, txts_raw),
+            exclude_boxes=exclude_boxes,
+            source_name=Path(img_path).name,
+        )
+    except Exception as exc:
+        log.warning("Tempo OCR failed on %s: %s", Path(img_path).name, exc)
+
+    primary_tempo: Optional[TempoMarking] = None
+    for pt in positioned_tempos:
+        if not pt.tempo.is_expression:
+            primary_tempo = pt.tempo
+            break
+    return primary_tempo, positioned_tempos, rehearsal_marks
 
 
 def run_fullscore_homr(
@@ -192,39 +275,17 @@ def run_fullscore_homr(
                     ocr_dir=ocr_ver_dir,
                 )
 
-                tempo: Optional[TempoMarking] = None
-                rehearsal_marks: list[PositionedRehearsal] = []
-                try:
-                    tempo = extract_tempo_marking(
-                        img_path,
-                        layout.top_staff_y,
-                        staff_left_x=layout.staff_left_x,
-                        ocr_reader=ocr_reader,
-                        ocr_dir=ocr_ver_dir,
-                    )
-                except Exception as exc:
-                    log.warning("Tempo OCR failed on page %d (%s): %s", pno, img_path.name, exc)
-
-                try:
-                    if layout.top_staff_y >= 25:
-                        page_img = cv2.imread(str(img_path))
-                        if page_img is not None:
-                            min_reh_y = max(0, int(layout.top_staff_y) - int(max(170.0, layout.median_gap * 2.2)))
-                            max_reh_y = int(layout.top_staff_y - max(15.0, 0.15 * layout.median_gap))
-                            rehearsal_marks = extract_rehearsal_marks_in_band(
-                                page_img,
-                                0,
-                                int(layout.top_staff_y) + 8,
-                                sys_min_x=float(layout.sys_min_x),
-                                sys_max_x=float(layout.sys_max_x),
-                                unboxed_min_y=min_reh_y,
-                                unboxed_max_y=max_reh_y,
-                                ocr_reader=ocr_reader,
-                                ocr_dir=ocr_ver_dir,
-                                source_name=img_path.name,
-                            )
-                except Exception as exc:
-                    log.warning("Rehearsal mark OCR failed on page %d (%s): %s", pno, img_path.name, exc)
+                in_sys_min_x, _ = to_input_image((float(layout.sys_min_x), 0.0))
+                in_sys_max_x, _ = to_input_image((float(layout.sys_max_x), 0.0))
+                tempo, positioned_tempos, rehearsal_marks = extract_page_header_markings(
+                    img_path,
+                    top_staff_y=layout.top_staff_y,
+                    median_gap=layout.median_gap,
+                    sys_min_x=float(in_sys_min_x),
+                    sys_max_x=float(in_sys_max_x),
+                    ocr_reader=ocr_reader,
+                    ocr_dir=ocr_ver_dir,
+                )
 
                 active_page["idx"] = idx
                 active_page["staff_count"] = len(layout.kept_staffs)
@@ -254,10 +315,11 @@ def run_fullscore_homr(
                         staff_cys=layout.staff_cys,
                         staff_y_norms=layout.staff_y_norms,
                         labels=labels,
-                        sys_min_x=layout.sys_min_x,
-                        sys_max_x=layout.sys_max_x,
+                        sys_min_x=int(in_sys_min_x),
+                        sys_max_x=int(in_sys_max_x),
                         crop_x=layout.crop_x,
                         tempo=tempo,
+                        positioned_tempos=tuple(positioned_tempos),
                         rehearsal_marks=tuple(rehearsal_marks),
                     ),
                     xml_path,

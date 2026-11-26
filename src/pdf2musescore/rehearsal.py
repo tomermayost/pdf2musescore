@@ -125,6 +125,9 @@ def _clean_boxed_label(raw_txt: str) -> Optional[str]:
     cleaned = re.sub(r"[\s\[\]\(\)\.\,\:\;\|'`\"_~]+", "", raw_txt or "")
     if not cleaned:
         return None
+    # RapidOCR commonly reads a boxed rehearsal letter 'O' as digit '0'; rehearsal numbers never start at 0
+    if cleaned == "0":
+        cleaned = "O"
     # Reject multi-character lowercase noise inside boxes (e.g. dynamics or articulation artifacts)
     if any("a" <= ch <= "z" for ch in cleaned):
         return None
@@ -190,7 +193,7 @@ def detect_boxed_rehearsal_marks_in_band(
     gray_full = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     gray_band = gray_full[y0:y1, :]
     bw = (gray_band < 190).astype(np.uint8)
-    contours, _ = cv2.findContours(bw * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, hierarchy = cv2.findContours(bw * 255, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     min_s = max(20, int(0.011 * w_px))
     max_h = max(48, int(0.055 * w_px))
@@ -199,9 +202,15 @@ def detect_boxed_rehearsal_marks_in_band(
     x_base = float(sys_min_x) if has_sys_span else 0.0
     span = float(sys_max_x - sys_min_x) if has_sys_span else float(max(1, w_px))
 
+    hier_arr = hierarchy[0] if hierarchy is not None and len(contours) > 0 else []
+    ext_items = [
+        (cv2.boundingRect(contours[i]), contours[i])
+        for i in range(len(contours))
+        if len(hier_arr) == 0 or hier_arr[i][3] == -1
+    ]
+
     found: list[PositionedRehearsal] = []
-    for cnt in sorted(contours, key=lambda c: cv2.boundingRect(c)[:2]):
-        x, y, ww, hh = cv2.boundingRect(cnt)
+    for (x, y, ww, hh), _cnt in sorted(ext_items, key=lambda item: item[0][:2]):
         if not (min_s <= ww <= max_w and min_s <= hh <= max_h):
             continue
         aspect = ww / float(hh)
@@ -245,6 +254,87 @@ def detect_boxed_rehearsal_marks_in_band(
                 x_right=float(x + ww),
                 y_top=float(y0 + y),
                 y_bottom=float(y0 + y + hh),
+                u_norm=u_norm,
+            )
+        )
+
+    # Secondary pass: recover boxed marks whose outer edge touches adjacent text (e.g. 'P' touching 'Andante')
+    # via their rectangular interior hole contour.
+    hole_items = [
+        (cv2.boundingRect(contours[i]), contours[i])
+        for i in range(len(contours))
+        if len(hier_arr) > i and hier_arr[i][3] != -1
+    ]
+    band_h = bw.shape[0]
+    for (hx, hy, hw, hh), cnt in sorted(hole_items, key=lambda item: item[0][:2]):
+        if not (int(0.75 * min_s) <= hw <= max_w and int(0.75 * min_s) <= hh <= max_h):
+            continue
+        aspect = hw / float(hh)
+        if not (0.6 <= aspect <= 2.5):
+            continue
+        if cv2.contourArea(cnt) / float(hw * hh) < 0.80:
+            continue
+
+        rim_pad = max(2, int(0.08 * min(hw, hh)))
+        rx0 = max(0, hx - rim_pad)
+        ry0 = max(0, hy - rim_pad)
+        rx1 = min(w_px, hx + hw + rim_pad)
+        ry1 = min(band_h, hy + hh + rim_pad)
+        if hx <= rx0 or hy <= ry0 or hx + hw >= rx1 or hy + hh >= ry1:
+            continue
+
+        top_cov = float((bw[ry0:hy, hx : hx + hw].max(axis=0) > 0).mean())
+        bot_cov = float((bw[hy + hh : ry1, hx : hx + hw].max(axis=0) > 0).mean())
+        lef_cov = float((bw[hy : hy + hh, rx0:hx].max(axis=1) > 0).mean())
+        rig_cov = float((bw[hy : hy + hh, hx + hw : rx1].max(axis=1) > 0).mean())
+        if min(top_cov, bot_cov, lef_cov, rig_cov) < 0.85:
+            continue
+
+        border_px = max(2, int(0.06 * min(hw, hh)))
+        bx0 = float(max(0, hx - border_px))
+        by0 = float(y0 + max(0, hy - border_px))
+        bx1 = float(min(w_px, hx + hw + border_px))
+        by1 = float(y0 + min(band_h, hy + hh + border_px))
+
+        dup = any(
+            max(0.0, min(bx1, ex.x_right) - max(bx0, ex.x_left))
+            * max(0.0, min(by1, ex.y_bottom) - max(by0, ex.y_top))
+            > 0.45 * min((bx1 - bx0) * (by1 - by0), (ex.x_right - ex.x_left) * (ex.y_bottom - ex.y_top))
+            for ex in found
+        )
+        if dup:
+            continue
+
+        hole_inset = max(2, int(0.05 * min(hw, hh)))
+        if 2 * hole_inset >= min(hw, hh) - 4:
+            continue
+        inner_bw = bw[hy + hole_inset : hy + hh - hole_inset, hx + hole_inset : hx + hw - hole_inset]
+        if inner_bw.size == 0:
+            continue
+        fill = float(inner_bw.mean())
+        if not (0.04 <= fill <= 0.60):
+            continue
+
+        in_crop = img[y0 + hy + hole_inset : y0 + hy + hh - hole_inset, hx + hole_inset : hx + hw - hole_inset]
+        label, raw_ocr = _run_interior_ocr(
+            in_crop,
+            ocr_reader=ocr_reader,
+            ocr_dir=ocr_dir,
+            ocr_runner=ocr_runner,
+        )
+        if label is None:
+            continue
+
+        cx = 0.5 * (bx0 + bx1)
+        u_norm = max(0.0, min(1.0, (cx - x_base) / span))
+        log.debug("Recovered touching boxed rehearsal mark %r via interior hole (%dx%d)", label, hw, hh)
+        found.append(
+            PositionedRehearsal(
+                mark=RehearsalMark(label=label, enclosure="square", raw_ocr=raw_ocr),
+                x_left=bx0,
+                x_right=bx1,
+                y_top=by0,
+                y_bottom=by1,
                 u_norm=u_norm,
             )
         )

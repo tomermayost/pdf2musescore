@@ -86,14 +86,14 @@ _SECTION_BAR_STYLES = frozenset({"light-light", "heavy-heavy", "light-heavy"})
 
 _EXPR_MODIFIER_PAT = r"(?:poco\s+a\s+poco|poco|molto|sempre|pi[uù]|meno)"
 _EXPR_TERMS_PAT = (
-    r"tranguillo|tranquillo|trang\.?|tranq\.?|"
-    r"ritardando|ritard\.?|rit\.?|"
-    r"rallentando|rall\.?|"
-    r"accelerando|accel\.?|"
+    r"tranguillo|tranquillo|trang\.{1,3}|tranq\.{1,3}|"
+    r"ritardando|ritard\.{1,3}|rit\.{1,3}|"
+    r"rallentando|rall\.{1,3}|"
+    r"accelerando|accel\.{1,3}|"
     r"a\s+tempo|"
-    r"espressivo|espress\.?|"
+    r"espressivo|espress\.{1,3}|"
     r"cantabile|dolce|stringendo|"
-    r"allargando|allarg\.?|"
+    r"allargando|allarg\.{1,3}|"
     r"calando|morendo|rubato|subito"
 )
 _EXPRESSION_RE = re.compile(
@@ -103,22 +103,38 @@ _EXPRESSION_RE = re.compile(
 _EXPR_CANONICAL_TERMS: dict[str, str] = {
     "trang": "tranq.",
     "trang.": "tranq.",
+    "trang..": "tranq.",
+    "trang...": "tranq.",
     "tranq": "tranq.",
     "tranq.": "tranq.",
+    "tranq..": "tranq.",
+    "tranq...": "tranq.",
     "tranguillo": "tranquillo",
     "tranquillo": "tranquillo",
     "rit": "rit.",
     "rit.": "rit.",
+    "rit..": "rit.",
+    "rit...": "rit.",
     "ritard": "ritard.",
     "ritard.": "ritard.",
+    "ritard..": "ritard.",
+    "ritard...": "ritard.",
     "rall": "rall.",
     "rall.": "rall.",
+    "rall..": "rall.",
+    "rall...": "rall.",
     "accel": "accel.",
     "accel.": "accel.",
+    "accel..": "accel.",
+    "accel...": "accel.",
     "espress": "espress.",
     "espress.": "espress.",
+    "espress..": "espress.",
+    "espress...": "espress.",
     "allarg": "allarg.",
     "allarg.": "allarg.",
+    "allarg..": "allarg.",
+    "allarg...": "allarg.",
 }
 _XML_SPACE_ATTR = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -214,6 +230,23 @@ class TempoMarking:
         )
 
 
+def _clean_tempo_prefix(prefix: str, *, has_bpm: bool = False) -> str:
+    """Strip OCR notehead artifacts (e.g. ``'•'``, ``'₀'``) and glued rehearsal letters from tempo text."""
+    txt = (prefix or "").strip(" \t\r\n([,:;-–—•·°◦○●₀♩♪𝅗𝅥𝅗𝅥♦▪■□")
+    txt = re.sub(r"^\d{1,2}\s+(?=[A-Za-z])", "", txt).strip()
+    txt = re.sub(r"(?:^|\s+)[^A-Za-z0-9()]+(?=\s|$)", " ", txt).strip()
+    txt = re.sub(r"\s+", " ", txt).strip(" \t\r\n([,:;-–—•·°◦○●₀♩♪𝅗𝅥𝅗𝅥♦▪■□")
+    if not re.search(r"[A-Za-z]{2,}", txt):
+        return ""
+    m_reh = re.match(r"^([A-Z])\s+(.+)$", txt)
+    if m_reh is not None:
+        letter, rest = m_reh.group(1), m_reh.group(2).strip()
+        if not (letter == "A" and rest.lower().startswith("tempo")):
+            if _TEMPO_START_RE.match(rest) or (has_bpm and letter != "A" and rest[0].isupper()):
+                txt = rest
+    return txt
+
+
 def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
     """Parse a single OCR line into a ``TempoMarking``, or return ``None`` for non-tempo text."""
     cleaned = re.sub(r"\s+", " ", (raw or "")).strip()
@@ -247,8 +280,7 @@ def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
                 match_start = m_bpm.start()
 
     if bpm is not None:
-        prefix = cleaned[:match_start].strip(" \t\r\n([,:;-–—")
-        prefix = re.sub(r"^\d{1,2}\s+(?=[A-Za-z])", "", prefix).strip()
+        prefix = _clean_tempo_prefix(cleaned[:match_start], has_bpm=True)
         words = prefix.split()
         if prefix and (_TEMPO_HEADWORD_RE.search(prefix) or (len(words) <= 4 and not re.search(r"\d", prefix))):
             text = prefix
@@ -266,7 +298,7 @@ def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
     stripped_paren = _PAREN_METRONOME_RE.sub("", cleaned)
     text_only = stripped_paren.strip(" \t\r\n.,:;-–—")
     text_only = text_only.lstrip("(").rstrip(")") if text_only.count("(") != text_only.count(")") else text_only
-    text_only = text_only.strip()
+    text_only = _clean_tempo_prefix(text_only, has_bpm=False)
     check_str = _PAREN_IN_ONE_RE.sub("", text_only)
     if not text_only or re.search(r"\d|[=≈]", check_str):
         return None
@@ -326,11 +358,14 @@ def _merge_horizontal_ocr_boxes(
     merged: list[list[Any]] = []
     for left, top, right, bottom, text in sorted(items, key=lambda it: (it[0], it[1])):
         cur_h = max(1.0, bottom - top)
+        is_metro = bool(re.match(r"^(?:[=≈(♩♪𝅗𝅥𝅗]|[dqhe]\s*[=≈]|m\.?m\.?|bpm\b)", text, re.IGNORECASE))
+        max_gap_mult = 2.4 if is_metro else 1.2
+        min_ov_mult = 0.35 if is_metro else 0.45
         for prev in merged:
             prev_h = max(1.0, prev[3] - prev[1])
             y_overlap = min(prev[3], bottom) - max(prev[1], top)
             x_gap = left - prev[2]
-            if y_overlap > 0.45 * min(prev_h, cur_h) and -0.3 * min(prev_h, cur_h) <= x_gap <= 1.2 * max(prev_h, cur_h):
+            if y_overlap > min_ov_mult * min(prev_h, cur_h) and -0.3 * min(prev_h, cur_h) <= x_gap <= max_gap_mult * max(prev_h, cur_h):
                 prev[0] = min(prev[0], left)
                 prev[1] = min(prev[1], top)
                 prev[2] = max(prev[2], right)
@@ -354,6 +389,66 @@ class PositionedTempo:
     y_bottom: float
     u_norm: float = 0.0
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-compatible dictionary."""
+        return {
+            "tempo": self.tempo.to_dict(),
+            "x_left": float(self.x_left),
+            "x_right": float(self.x_right),
+            "y_top": float(self.y_top),
+            "y_bottom": float(self.y_bottom),
+            "u_norm": float(self.u_norm),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> Optional["PositionedTempo"]:
+        """Deserialize from a dictionary; return ``None`` if invalid."""
+        if not isinstance(raw, dict):
+            return None
+        tempo = TempoMarking.from_dict(raw.get("tempo"))
+        if tempo is None:
+            return None
+        try:
+            x_left = float(raw.get("x_left", 0.0))
+            x_right = float(raw.get("x_right", 0.0))
+            y_top = float(raw.get("y_top", 0.0))
+            y_bottom = float(raw.get("y_bottom", 0.0))
+            u_norm = float(raw.get("u_norm", 0.0))
+        except (TypeError, ValueError):
+            return None
+        return cls(
+            tempo=tempo,
+            x_left=x_left,
+            x_right=x_right,
+            y_top=y_top,
+            y_bottom=y_bottom,
+            u_norm=max(0.0, min(1.0, u_norm)),
+        )
+
+
+def _overlaps_excluded_box(
+    box: Sequence[Any],
+    y0: int,
+    exclude_boxes: Sequence[tuple[float, float, float, float]],
+) -> bool:
+    if not exclude_boxes:
+        return False
+    xs = [float(pt[0]) for pt in box]
+    ys = [float(pt[1]) + y0 for pt in box]
+    bx0, bx1 = min(xs), max(xs)
+    by0, by1 = min(ys), max(ys)
+    cx = 0.5 * (bx0 + bx1)
+    cy = 0.5 * (by0 + by1)
+    b_area = max(1.0, (bx1 - bx0) * (by1 - by0))
+    for ex0, ey0, ex1, ey1 in exclude_boxes:
+        if (ex0 - 4.0) <= cx <= (ex1 + 4.0) and (ey0 - 4.0) <= cy <= (ey1 + 4.0):
+            return True
+        inter_w = max(0.0, min(bx1, ex1) - max(bx0, ex0))
+        inter_h = max(0.0, min(by1, ey1) - max(by0, ey0))
+        if (inter_w * inter_h) >= 0.50 * b_area:
+            return True
+    return False
+
 
 def extract_tempo_markings_in_band(
     img: np.ndarray,
@@ -369,6 +464,7 @@ def extract_tempo_markings_in_band(
     include_expressions: bool = True,
     expr_min_y: Optional[int] = None,
     precomputed_ocr: Optional[tuple[Sequence[Any], Sequence[str]]] = None,
+    exclude_boxes: Sequence[tuple[float, float, float, float]] = (),
 ) -> list[PositionedTempo]:
     """Extract all tempo and expression markings from band ``[y_top, y_bot)`` sorted left-to-right."""
     h_px, w_px = img.shape[:2]
@@ -388,6 +484,17 @@ def extract_tempo_markings_in_band(
         )
     if not boxes_raw or not txts_raw:
         return []
+
+    if exclude_boxes:
+        filtered = [
+            (b, t)
+            for b, t in zip(boxes_raw, txts_raw)
+            if not _overlaps_excluded_box(b, y0, exclude_boxes)
+        ]
+        boxes_raw = [b for b, _ in filtered]
+        txts_raw = [t for _, t in filtered]
+        if not boxes_raw:
+            return []
 
     merged_boxes = _merge_horizontal_ocr_boxes(boxes_raw, txts_raw)
     has_sys_span = sys_max_x > sys_min_x + 20.0
@@ -609,6 +716,53 @@ def map_system_tempos_to_measures(
             if apply_tempo_marking(root, pt.tempo, measure_index=sys_indices[local_idx]):
                 injected += 1
     return injected
+
+
+def map_range_tempos_to_measures(
+    root: ET.Element,
+    tempos: Sequence[PositionedTempo],
+    *,
+    start_index: int,
+    measure_count: int,
+    last_tempo_key: Optional[tuple[str, Optional[int], str, bool]] = None,
+) -> tuple[int, Optional[tuple[str, Optional[int], str, bool]]]:
+    """Map full-score page tempos/expressions across ``[start_index .. start_index + measure_count)``."""
+    if not tempos or measure_count <= 0:
+        return 0, last_tempo_key
+    first_part = root.find("part")
+    if first_part is None:
+        return 0, last_tempo_key
+    measures = first_part.findall("measure")
+    if start_index < 0 or start_index >= len(measures):
+        return 0, last_tempo_key
+    end_index = min(len(measures), start_index + measure_count)
+    indices = list(range(start_index, end_index))
+    k = len(indices)
+
+    injected = 0
+    for pt in tempos:
+        if pt.tempo.is_expression:
+            local_idx = min(k - 1, max(0, int(pt.u_norm * k)))
+            if apply_tempo_marking(root, pt.tempo, measure_index=indices[local_idx]):
+                injected += 1
+            continue
+
+        t_key = (pt.tempo.text.lower(), pt.tempo.bpm, pt.tempo.beat_unit, pt.tempo.beat_unit_dot)
+        if t_key == last_tempo_key:
+            continue
+
+        if pt.u_norm < 0.12 or k == 1:
+            local_idx = 0
+        else:
+            est_float = pt.u_norm * k
+            est_idx = min(k - 1, max(0, int(est_float)))
+            boundaries = _find_structural_boundary_near(measures, indices, est_idx, radius=2)
+            local_idx = min(boundaries, key=lambda j: abs(j - est_float)) if boundaries else est_idx
+
+        if apply_tempo_marking(root, pt.tempo, measure_index=indices[local_idx]):
+            last_tempo_key = t_key
+            injected += 1
+    return injected, last_tempo_key
 
 
 def extract_tempo_marking(
