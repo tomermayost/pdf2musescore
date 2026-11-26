@@ -411,6 +411,61 @@ def test_reconcile_standard_time_signatures():
     assert reconcile_standard_time_signatures(root_68) == 0
     assert (p68.findtext("./measure[@number='1']/attributes/time/beats"), p68.findtext("./measure[@number='1']/attributes/time/beat-type")) == ("6", "8")
 
+    # Standard mode repairs spurious 3:2 tuplets in underfull compound-meter bars (e.g. 6/8 with 6 triplet eighths -> 6 plain eighths)
+    from pdf2musescore.musicxml import repair_spurious_tuplets
+
+    root_tup = ET.Element("score-partwise")
+    ET.SubElement(ET.SubElement(root_tup, "part-list"), "score-part", id="P1")
+    pt = ET.SubElement(root_tup, "part", id="P1")
+    for m_no in (1, 2, 3):
+        m = ET.SubElement(pt, "measure", number=str(m_no))
+        if m_no == 1:
+            a = ET.SubElement(m, "attributes")
+            ET.SubElement(a, "divisions").text = "12"
+            t = ET.SubElement(a, "time")
+            ET.SubElement(t, "beats").text = "6"
+            ET.SubElement(t, "beat-type").text = "8"
+        if m_no in (1, 2):
+            for _ in range(6):
+                n = ET.SubElement(m, "note")
+                ET.SubElement(ET.SubElement(n, "pitch"), "step").text = "C"
+                ET.SubElement(n, "duration").text = "6"
+                ET.SubElement(n, "voice").text = "1"
+                ET.SubElement(n, "type").text = "eighth"
+        else:
+            # M3 has 6 spurious triplet eighths (dur=4 each -> 24 < 36)
+            for idx in range(6):
+                n = ET.SubElement(m, "note")
+                ET.SubElement(ET.SubElement(n, "pitch"), "step").text = "C"
+                ET.SubElement(n, "duration").text = "4"
+                ET.SubElement(n, "voice").text = "1"
+                ET.SubElement(n, "type").text = "eighth"
+                tm = ET.SubElement(n, "time-modification")
+                ET.SubElement(tm, "actual-notes").text = "3"
+                ET.SubElement(tm, "normal-notes").text = "2"
+                if idx in (0, 2, 3, 5):
+                    ET.SubElement(ET.SubElement(n, "notations"), "tuplet", type="start" if idx in (0, 3) else "stop")
+    reconcile_standard_time_signatures(root_tup)
+    m3_notes = pt.find("./measure[@number='3']").findall("note")
+    assert [n.findtext("duration") for n in m3_notes] == ["6"] * 6
+    assert all(n.find("time-modification") is None and n.find(".//tuplet") is None for n in m3_notes)
+    # Multi-voice <backup> alignment when spurious tuplet is repaired
+    mv_m = ET.fromstring(
+        "<measure number='1'>"
+        "<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>eighth</type>"
+        "<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>"
+        "<note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>eighth</type>"
+        "<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>"
+        "<note><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>eighth</type>"
+        "<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>"
+        "<note><pitch><step>F</step><octave>4</octave></pitch><duration>18</duration><voice>1</voice><type>quarter</type><dot/></note>"
+        "<backup><duration>30</duration></backup>"
+        "<note><pitch><step>C</step><octave>3</octave></pitch><duration>36</duration><voice>2</voice><type>half</type><dot/></note>"
+        "</measure>"
+    )
+    assert repair_spurious_tuplets(mv_m, 36, 12, ("6", "8")) is True
+    assert mv_m.findtext("./backup/duration") == "36"
+
 
 def test_add_courtesy_accidentals_and_transposed():
     xml = """<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">

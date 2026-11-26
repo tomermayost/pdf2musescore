@@ -941,13 +941,168 @@ def test_reconcile_duration_type_mismatch_nonstandard_clamp_and_equivalent_meter
     last_n = aligned2.findall("./part[@id='P1']/measure/note")[-1]
     assert last_n.findtext("duration") == "6" and last_n.findtext("type") == "eighth"
 
-    # 2) Continuation page preserves equivalent meter (12/8 vs minority 6/4; 6/8 vs minority 3/4),
-    #    accepts strong >=60% printed change (6/4), and accepts different-duration changes (4/4 -> 12/8).
+    # 2) Continuation page preserves equivalent /8 compound meter even when all parts emit homr's /4 fallback,
+    #    accepts strong >=60% non-fallback equivalent changes (4/4 -> 2/2, 6/4 -> 12/8),
+    #    and accepts different-duration changes (4/4 -> 12/8).
     def _meter_page(ts_list, inh):
         specs = [_make_part(f"P{i+1}", [(False, ts)], divisions=4) for i, ts in enumerate(ts_list)]
         return align_page_score(_build_score(specs), page_num=15, inherited_time_sig=inh)[1]
 
     assert _meter_page([("6", "4"), ("6", "4"), ("3", "4"), ("4", "4"), ("2", "4")], ("12", "8")) == ("12", "8")
+    assert _meter_page([("6", "4"), ("6", "4"), ("6", "4"), ("6", "4")], ("12", "8")) == ("12", "8")
     assert _meter_page([("3", "4"), ("3", "4"), ("2", "4"), ("4", "4"), ("5", "4")], ("6", "8")) == ("6", "8")
-    assert _meter_page([("6", "4"), ("6", "4"), ("6", "4"), ("3", "4")], ("12", "8")) == ("6", "4")
+    assert _meter_page([("2", "2"), ("2", "2"), ("2", "2"), ("4", "4")], ("4", "4")) == ("2", "2")
     assert _meter_page([("12", "8"), ("12", "8"), ("12", "8"), ("4", "4")], ("4", "4")) == ("12", "8")
+
+
+def _add_tuplet_note(
+    measure: ET.Element,
+    dur: int,
+    note_type: str,
+    *,
+    actual: int = 3,
+    normal: int = 2,
+    tuplet_mark: str | None = None,
+    slur_mark: str | None = None,
+    voice: str = "1",
+    chord: bool = False,
+    beams: Sequence[str] = (),
+) -> ET.Element:
+    n = _add_rhythm_note(measure, dur, note_type, voice=voice, chord=chord, beams=beams)
+    tm = ET.SubElement(n, "time-modification")
+    ET.SubElement(tm, "actual-notes").text = str(actual)
+    ET.SubElement(tm, "normal-notes").text = str(normal)
+    if tuplet_mark is not None or slur_mark is not None:
+        nt = ET.SubElement(n, "notations")
+        if tuplet_mark is not None:
+            ET.SubElement(nt, "tuplet", type=tuplet_mark)
+        if slur_mark is not None:
+            ET.SubElement(nt, "slur", type=slur_mark, number="1")
+    return n
+
+
+def test_repair_spurious_tuplets_and_pairwise_stepdown():
+    # div=12 -> 12/8 expected_dur = 72 ticks; eighth=6 ticks, triplet eighth=4 ticks, 16th=3 ticks, quarter.=18 ticks
+    p1 = _make_part("P1", [(False, ("12", "8"))], divisions=12)
+    p2 = _make_part("P2", [(False, ("12", "8"))], divisions=12)
+    p3 = _make_part("P3", [(False, ("12", "8"))], divisions=12)
+    p4 = _make_part("P4", [(True, ("12", "8"))], divisions=12)
+
+    # P1 M1: 12 spurious triplet eighths (48 < 72) -> restored to 12 plain eighths (72), no tuplets
+    m_all_trip = p1[1].find("measure")
+    for n in list(m_all_trip.findall("note")):
+        m_all_trip.remove(n)
+    for i in range(12):
+        mark = "start" if i % 3 == 0 else ("stop" if i % 3 == 2 else None)
+        _add_tuplet_note(m_all_trip, 4, "eighth", tuplet_mark=mark)
+
+    # P2 M1: Green Hill m.69 pattern -> 12 triplet eighths + 1 plain eighth (54 -> 78 > 72 -> pair step-down to 72)
+    # Mark notes 6 & 7 with a slur so Tier 3a-pair preferentially converts that slurred pair to 16ths!
+    m_13 = p2[1].find("measure")
+    for n in list(m_13.findall("note")):
+        m_13.remove(n)
+    for i in range(12):
+        mark = "start" if i % 3 == 0 else ("stop" if i % 3 == 2 else None)
+        slur = "start" if i == 6 else ("stop" if i == 7 else None)
+        _add_tuplet_note(m_13, 4, "eighth", tuplet_mark=mark, slur_mark=slur, beams=("continue",))
+    _add_rhythm_note(m_13, 6, "eighth")
+
+    # P3 M1: 9 spurious triplet eighths + 1 dotted quarter (36 + 18 = 54 -> 54 + 18 = 72)
+    m_mix = p3[1].find("measure")
+    for n in list(m_mix.findall("note")):
+        m_mix.remove(n)
+    for i in range(9):
+        mark = "start" if i % 3 == 0 else ("stop" if i % 3 == 2 else None)
+        _add_tuplet_note(m_mix, 4, "eighth", tuplet_mark=mark)
+    _add_rhythm_note(m_mix, 18, "quarter", dots=1)
+
+    aligned, _ = align_page_score(_build_score([p1, p2, p3, p4]), page_num=20)
+    parts = aligned.findall("part")
+
+    # P1: all 12 notes untupled to duration 6 (sum=72)
+    p1_notes = parts[0].find("measure").findall("note")
+    assert all(n.find("time-modification") is None and n.find(".//tuplet") is None for n in p1_notes)
+    assert [int(n.findtext("duration")) for n in p1_notes] == [6] * 12
+
+    # P2 (m.69): all 13 notes preserved, 0 tuplets, notes[6..7] stepped down to 16th(3) -> sum=72
+    p2_notes = parts[1].find("measure").findall("note")
+    assert len(p2_notes) == 13
+    assert all(n.find("time-modification") is None and n.find(".//tuplet") is None for n in p2_notes)
+    assert sum(int(n.findtext("duration")) for n in p2_notes) == 72
+    assert p2_notes[6].findtext("type") == "16th" and p2_notes[7].findtext("type") == "16th"
+
+    # P3: 9 eighths + quarter. = 72, 0 tuplets
+    p3_notes = parts[2].find("measure").findall("note")
+    assert all(n.find("time-modification") is None for n in p3_notes)
+    assert [int(n.findtext("duration")) for n in p3_notes] == [6] * 9 + [18]
+
+    # Genuine full-measure 4/4 triplet (Trumpets m.32/m.40): 12+12 + 8+8+8 = 48 at div=12 -> untouched!
+    t1 = _make_part("P1", [(False, ("4", "4"))], divisions=12)
+    t2 = _make_part("P2", [(True, ("4", "4"))], divisions=12)
+    tm_m = t1[1].find("measure")
+    for n in list(tm_m.findall("note")):
+        tm_m.remove(n)
+    _add_rhythm_note(tm_m, 12, "quarter")
+    _add_rhythm_note(tm_m, 12, "quarter")
+    for mk in ("start", None, "stop"):
+        _add_tuplet_note(tm_m, 8, "quarter", tuplet_mark=mk)
+    aligned_44, _ = align_page_score(_build_score([t1, t2]), page_num=10)
+    assert len(aligned_44.findall("./part[@id='P1']/measure/note/time-modification")) == 3
+
+
+def test_align_ghost_trailing_bar_and_midpage_meter_hardening():
+    # 1) Ghost trailing empty measure (Page 13 pattern: 4 parts, 2 have 6 bars where bar 6 is all-rest, 2 have 5 bars)
+    g_parts = [
+        _make_part("P1", [(False, ("4", "4")), (False, None), (False, None), (False, None), (False, None), (True, None)]),
+        _make_part("P2", [(False, ("4", "4")), (False, None), (False, None), (False, None), (False, None), (True, None)]),
+        _make_part("P3", [(False, ("4", "4")), (False, None), (False, None), (False, None), (False, None)]),
+        _make_part("P4", [(True, ("4", "4")), (True, None), (True, None), (True, None), (True, None)]),
+    ]
+    g_aligned, _ = align_page_score(_build_score(g_parts), page_num=13, inherited_time_sig=("4", "4"))
+    assert [len(p.findall("measure")) for p in g_aligned.findall("part")] == [5, 5, 5, 5]
+
+    # 2) Continuation page M1 minority 5/4 guess before 6-quarter bars preserves inherited 12/8 (Page 31 pattern)
+    m31_parts = []
+    for i in range(6):
+        m1_ts = ("5", "4") if i < 2 else None
+        sp, part = _make_part(f"P{i+1}", [(i >= 2, m1_ts), (i >= 4, None), (i >= 4, None)], divisions=4)
+        ms = part.findall("measure")
+        if i < 2:
+            _set_measure_dur(ms[0], 20)
+        if i < 4:
+            _set_measure_dur(ms[1], 24)
+            _set_measure_dur(ms[2], 24)
+        m31_parts.append((sp, part))
+    a31, end31 = align_page_score(_build_score(m31_parts), page_num=31, inherited_time_sig=("12", "8"))
+    assert end31 == ("12", "8")
+    assert (a31.findtext("./part/measure/attributes/time/beats"), a31.findtext("./part/measure/attributes/time/beat-type")) == ("12", "8")
+    assert len(a31.findall("./part[@id='P1']/measure/attributes/time")) == 1
+
+    # 3) Mid-page rest-only 10/8 noise vs pitched 12/8 (Page 32) and 2-part 16/16 noise (Page 37)
+    n_parts = []
+    for i in range(8):
+        if i < 3:
+            # Pitched parts stay in 12/8
+            sp, part = _make_part(f"P{i+1}", [(False, ("12", "8")), (False, None)], divisions=4)
+            for m in part.findall("measure"):
+                _set_measure_dur(m, 24)
+        else:
+            # 5 rest-only parts wrongly guess 10/8 on bar 2
+            sp, part = _make_part(f"P{i+1}", [(True, ("12", "8")), (True, ("10", "8"))], divisions=4)
+        n_parts.append((sp, part))
+    a32, end32 = align_page_score(_build_score(n_parts), page_num=32, inherited_time_sig=("12", "8"))
+    assert end32 == ("12", "8")
+    assert a32.findall("./part[@id='P1']/measure")[1].find("./attributes/time") is None
+
+    # 29 parts in 4/4, 2 pitched parts say 16/16 on bar 2 -> rejected!
+    p16_parts = []
+    for i in range(10):
+        ts2 = ("16", "16") if i < 2 else None
+        sp, part = _make_part(f"P{i+1}", [(i >= 3, ("4", "4")), (i >= 3, ts2)], divisions=4)
+        if i < 3:
+            for m in part.findall("measure"):
+                _set_measure_dur(m, 16)
+        p16_parts.append((sp, part))
+    a37, end37 = align_page_score(_build_score(p16_parts), page_num=37, inherited_time_sig=("4", "4"))
+    assert end37 == ("4", "4")
+    assert a37.findall("./part[@id='P1']/measure")[1].find("./attributes/time") is None

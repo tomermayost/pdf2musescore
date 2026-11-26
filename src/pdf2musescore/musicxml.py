@@ -61,6 +61,16 @@ _NOTE_AFTER_ACCIDENTAL = frozenset(
 _ATTR_BEFORE_TIME = frozenset({"footnote", "level", "divisions", "key"})
 _ATTR_AFTER_TRANSPOSE = frozenset({"directive", "measure-style"})
 _SECTION_BAR_STYLES = frozenset({"light-light", "heavy-heavy", "light-heavy"})
+TYPE_TO_QUARTERS: dict[str, Fraction] = {
+    "breve": Fraction(8),
+    "whole": Fraction(4),
+    "half": Fraction(2),
+    "quarter": Fraction(1),
+    "eighth": Fraction(1, 2),
+    "16th": Fraction(1, 4),
+    "32nd": Fraction(1, 8),
+    "64th": Fraction(1, 16),
+}
 _STANDARD_DYNAMIC_TAGS = frozenset(
     {
         "p", "pp", "ppp", "pppp", "ppppp", "pppppp",
@@ -657,6 +667,162 @@ def add_courtesy_accidentals(root: ET.Element) -> int:
     return added
 
 
+def _plain_visual_ticks(note: ET.Element, div: int) -> Optional[int]:
+    """Compute untupled tick duration from explicit ``<type>`` and ``<dot>`` elements."""
+    note_type = (note.findtext("type") or "").strip()
+    base_q = TYPE_TO_QUARTERS.get(note_type)
+    if base_q is None:
+        return None
+    dots = len(note.findall("dot"))
+    if dots == 0:
+        dot_mult = Fraction(1)
+    elif dots == 1:
+        dot_mult = Fraction(3, 2)
+    elif dots == 2:
+        dot_mult = Fraction(7, 4)
+    else:
+        return None
+    vis_frac = base_q * dot_mult * max(1, div)
+    if vis_frac.denominator != 1 or vis_frac <= 0:
+        return None
+    return int(vis_frac)
+
+
+def repair_spurious_tuplets(
+    measure: ET.Element,
+    expected_dur: int,
+    div: int,
+    time_sig: tuple[str, str],
+) -> bool:
+    """Remove spurious OMR ``3:2`` tuplets when un-tupling brings an underfull voice to bar length.
+
+    Legitimate full-measure tuplets (``cur_span >= expected_dur``) are never modified.
+    """
+    if expected_dur <= 0:
+        return False
+    notes = measure.findall("note")
+    if not notes or all(n.find("rest") is not None for n in notes):
+        return False
+    if not any(n.find("time-modification") is not None for n in notes):
+        return False
+
+    b_str, bt_str = time_sig
+    is_compound = (
+        b_str.isdigit()
+        and bt_str.isdigit()
+        and int(bt_str) == 8
+        and int(b_str) >= 6
+        and int(b_str) % 3 == 0
+    )
+
+    voice_groups: dict[str, list[list[ET.Element]]] = {}
+    for note in notes:
+        if note.find("grace") is not None:
+            continue
+        voice = (note.findtext("voice") or "1").strip() or "1"
+        if note.find("chord") is not None:
+            groups = voice_groups.get(voice)
+            if groups:
+                groups[-1].append(note)
+        else:
+            voice_groups.setdefault(voice, []).append([note])
+
+    changed = False
+    old_span_by_voice: dict[str, int] = {}
+    delta_by_voice: dict[str, int] = {}
+    m_num = measure.get("number", "?")
+
+    for voice, groups in voice_groups.items():
+        cur_span = 0
+        untupled_span = 0
+        candidates: list[tuple[list[ET.Element], int]] = []
+
+        for grp in groups:
+            prim = grp[0]
+            dur_txt = (prim.findtext("duration") or "").strip()
+            cur_dur = int(dur_txt) if dur_txt.isdigit() else 0
+            cur_span += cur_dur
+
+            tm = prim.find("time-modification")
+            new_dur: Optional[int] = None
+            if tm is not None:
+                an_txt = (tm.findtext("actual-notes") or "").strip()
+                nn_txt = (tm.findtext("normal-notes") or "").strip()
+                if an_txt.isdigit() and nn_txt.isdigit():
+                    actual, normal = int(an_txt), int(nn_txt)
+                    if actual > normal > 0:
+                        vis = _plain_visual_ticks(prim, div)
+                        if vis is not None and vis > cur_dur:
+                            new_dur = vis
+                        elif cur_dur > 0 and (cur_dur * actual) % normal == 0:
+                            scaled = (cur_dur * actual) // normal
+                            if scaled > cur_dur:
+                                new_dur = scaled
+            if new_dur is not None:
+                untupled_span += new_dur
+                candidates.append((grp, new_dur))
+            else:
+                untupled_span += cur_dur
+
+        old_span_by_voice[voice] = cur_span
+        if not candidates or cur_span >= expected_dur:
+            continue
+
+        case_a = cur_span < untupled_span <= expected_dur
+        case_b = (
+            is_compound
+            and untupled_span > expected_dur
+            and abs(untupled_span - expected_dur) < abs(cur_span - expected_dur)
+            and (untupled_span - expected_dur) <= max(1, div)
+        )
+        if not (case_a or case_b):
+            continue
+
+        repaired_notes = 0
+        for grp, new_dur in candidates:
+            for n in grp:
+                for tm in list(n.findall("time-modification")):
+                    n.remove(tm)
+                for nt in list(n.findall("notations")):
+                    for tup in list(nt.findall("tuplet")):
+                        nt.remove(tup)
+                    if len(nt) == 0:
+                        n.remove(nt)
+                dur_el = n.find("duration")
+                if dur_el is not None:
+                    dur_el.text = str(new_dur)
+                repaired_notes += 1
+
+        delta_by_voice[voice] = untupled_span - cur_span
+        changed = True
+        log.debug(
+            "Repaired %d spurious tuplet note(s) in measure %s voice %s (%d -> %d ticks, expected=%d, ts=%s/%s)",
+            repaired_notes,
+            m_num,
+            voice,
+            cur_span,
+            untupled_span,
+            expected_dur,
+            b_str,
+            bt_str,
+        )
+
+    if changed and delta_by_voice and measure.find("backup") is not None:
+        # Keep a <backup> element aligned if it backs up directly over a repaired voice span
+        last_voice: Optional[str] = None
+        for ch in measure:
+            if ch.tag == "note" and ch.find("grace") is None:
+                last_voice = (ch.findtext("voice") or "1").strip() or "1"
+            elif ch.tag == "backup" and last_voice in delta_by_voice:
+                b_dur_el = ch.find("duration")
+                if b_dur_el is not None and (b_dur_el.text or "").strip().isdigit():
+                    b_val = int(b_dur_el.text.strip())
+                    if b_val == old_span_by_voice[last_voice]:
+                        b_dur_el.text = str(b_val + delta_by_voice[last_voice])
+
+    return changed
+
+
 def _quarter_duration_to_time_sig(
     q: Fraction,
     preferred_beat_type: Optional[str] = None,
@@ -812,57 +978,71 @@ def reconcile_standard_time_signatures(root: ET.Element) -> int:
             if ts is not None:
                 cur_ts_decl = ts
             existing_timeline.append(cur_ts_decl)
-        if existing_timeline == list(inferred):
-            continue
 
+        if existing_timeline != list(inferred):
+            for mi, m in enumerate(measures):
+                b, bt = inferred[mi]
+                need_time = (mi == 0) or (inferred[mi] != inferred[mi - 1])
+                for attrs in m.findall("attributes"):
+                    for old_t in list(attrs.findall("time")):
+                        attrs.remove(old_t)
+                if need_time:
+                    attrs = m.find("attributes")
+                    if attrs is None:
+                        attrs = ET.Element("attributes")
+                        m.insert(0, attrs)
+                    t_el = ET.Element("time")
+                    ET.SubElement(t_el, "beats").text = b
+                    ET.SubElement(t_el, "beat-type").text = bt
+                    ins_idx = 0
+                    for idx, ch in enumerate(list(attrs)):
+                        if ch.tag in _ATTR_BEFORE_TIME:
+                            ins_idx = idx + 1
+                    attrs.insert(ins_idx, t_el)
+
+                if is_rest[mi]:
+                    mr_note = None
+                    for n in m.findall("note"):
+                        r_el = n.find("rest")
+                        if r_el is not None and r_el.get("measure") == "yes":
+                            mr_note = n
+                            break
+                    if mr_note is not None:
+                        expected_dur = max(1, int(round(divs[mi] * int(b) * 4 / max(1, int(bt)))))
+                        dur_el = mr_note.find("duration")
+                        if dur_el is not None and dur_el.text != str(expected_dur):
+                            dur_el.text = str(expected_dur)
+                            for stale_tag in ("type", "dot"):
+                                for stale in list(mr_note.findall(stale_tag)):
+                                    mr_note.remove(stale)
+
+            transitions = [
+                f"M{mi + 1}={b}/{bt}"
+                for mi, (b, bt) in enumerate(inferred)
+                if mi == 0 or inferred[mi] != inferred[mi - 1]
+            ]
+            log.info(
+                "Reconciled time signatures on %s (%d bars): %s",
+                part.get("id", "P1"),
+                n_bars,
+                ", ".join(transitions),
+            )
+            changed_parts += 1
+
+        repaired_tup_bars = 0
         for mi, m in enumerate(measures):
-            b, bt = inferred[mi]
-            need_time = (mi == 0) or (inferred[mi] != inferred[mi - 1])
-            for attrs in m.findall("attributes"):
-                for old_t in list(attrs.findall("time")):
-                    attrs.remove(old_t)
-            if need_time:
-                attrs = m.find("attributes")
-                if attrs is None:
-                    attrs = ET.Element("attributes")
-                    m.insert(0, attrs)
-                t_el = ET.Element("time")
-                ET.SubElement(t_el, "beats").text = b
-                ET.SubElement(t_el, "beat-type").text = bt
-                ins_idx = 0
-                for idx, ch in enumerate(list(attrs)):
-                    if ch.tag in _ATTR_BEFORE_TIME:
-                        ins_idx = idx + 1
-                attrs.insert(ins_idx, t_el)
-
             if is_rest[mi]:
-                mr_note = None
-                for n in m.findall("note"):
-                    r_el = n.find("rest")
-                    if r_el is not None and r_el.get("measure") == "yes":
-                        mr_note = n
-                        break
-                if mr_note is not None:
-                    expected_dur = max(1, int(round(divs[mi] * int(b) * 4 / max(1, int(bt)))))
-                    dur_el = mr_note.find("duration")
-                    if dur_el is not None and dur_el.text != str(expected_dur):
-                        dur_el.text = str(expected_dur)
-                        for stale_tag in ("type", "dot"):
-                            for stale in list(mr_note.findall(stale_tag)):
-                                mr_note.remove(stale)
-
-        transitions = [
-            f"M{mi + 1}={b}/{bt}"
-            for mi, (b, bt) in enumerate(inferred)
-            if mi == 0 or inferred[mi] != inferred[mi - 1]
-        ]
-        log.info(
-            "Reconciled time signatures on %s (%d bars): %s",
-            part.get("id", "P1"),
-            n_bars,
-            ", ".join(transitions),
-        )
-        changed_parts += 1
+                continue
+            b, bt = inferred[mi]
+            expected_dur = max(1, int(round(divs[mi] * int(b) * 4 / max(1, int(bt)))))
+            if repair_spurious_tuplets(m, expected_dur, divs[mi], (b, bt)):
+                repaired_tup_bars += 1
+        if repaired_tup_bars:
+            log.info(
+                "Repaired spurious tuplets in %d measure(s) on %s",
+                repaired_tup_bars,
+                part.get("id", "P1"),
+            )
     return changed_parts
 
 

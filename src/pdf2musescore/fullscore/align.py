@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from ..musicxml import (
+    TYPE_TO_QUARTERS as _TYPE_TO_QUARTERS,
     MergeError,
     add_courtesy_accidentals,
     read_score,
+    repair_spurious_tuplets,
     set_score_part_instrument,
     strip_layout_breaks,
     write_musicxml,
@@ -190,17 +192,6 @@ def _fraction_to_time_sig(q: Fraction) -> Optional[tuple[str, str]]:
         return (str(q.numerator), "8")
     return None
 
-
-_TYPE_TO_QUARTERS: dict[str, Fraction] = {
-    "breve": Fraction(8),
-    "whole": Fraction(4),
-    "half": Fraction(2),
-    "quarter": Fraction(1),
-    "eighth": Fraction(1, 2),
-    "16th": Fraction(1, 4),
-    "32nd": Fraction(1, 8),
-    "64th": Fraction(1, 16),
-}
 
 _STEP_DOWN_TYPE: dict[str, str] = {
     "breve": "whole",
@@ -540,6 +531,43 @@ def _normalize_group_sequence(
                 )
                 break
 
+    # Tier 3a-pair: Step down an adjacent pair of identical undotted notes (e.g. 2 eighths -> 2 sixteenths)
+    # when halving both equals exact excess, preferring slurred or beamed pairs.
+    if excess > 0:
+        pair_candidates: list[tuple[int, int, str, int]] = []
+        for idx in range(len(groups) - 1):
+            a = groups[idx][2][0]
+            b = groups[idx + 1][2][0]
+            if (
+                a.find("rest") is not None
+                or b.find("rest") is not None
+                or a.find("time-modification") is not None
+                or b.find("time-modification") is not None
+            ):
+                continue
+            if len(a.findall("dot")) != 0 or len(b.findall("dot")) != 0:
+                continue
+            a_type = (a.findtext("type") or "").strip()
+            b_type = (b.findtext("type") or "").strip()
+            a_dur = int(groups[idx][1])
+            b_dur = int(groups[idx + 1][1])
+            if a_type != b_type or a_type not in _STEP_DOWN_TYPE or a_dur != b_dur or a_dur % 2 != 0:
+                continue
+            if a_dur == excess:
+                has_slur_pair = (
+                    a.find("./notations/slur[@type='start']") is not None
+                    and b.find("./notations/slur[@type='stop']") is not None
+                )
+                has_beam = _primary_beam_text(groups[idx][2]) is not None
+                priority = 2 if has_slur_pair else (1 if has_beam else 0)
+                pair_candidates.append((priority, idx, a_type, a_dur))
+        if pair_candidates:
+            _prio, best_idx, p_type, p_dur = max(pair_candidates, key=lambda item: (item[0], item[1]))
+            half_dur = p_dur // 2
+            stepped_type = _STEP_DOWN_TYPE[p_type]
+            _apply_group(best_idx, half_dur, stepped_type, 0, clear_beam=True)
+            _apply_group(best_idx + 1, half_dur, stepped_type, 0, clear_beam=True)
+
     # Tier 3b: Guaranteed barline clamp for any remaining trailing overflow
     if excess <= 0:
         return groups
@@ -772,6 +800,31 @@ def align_page_score(
         count_freq.keys(),
         key=lambda c: (count_freq[c], pitched_by_count[c], c),
     )
+    if target_measures >= 2:
+        min_shorter_parts = max(2, int(0.25 * len(parts)))
+        shorter_count = sum(1 for c in counts if c < target_measures)
+        last_idx = target_measures - 1
+        last_all_rest = all(
+            _is_rest_only_measure(ms[last_idx])
+            for ms in part_measures_list
+            if len(ms) >= target_measures
+        )
+        prev_has_notes = any(
+            not _is_rest_only_measure(ms[last_idx - 1])
+            for ms in part_measures_list
+            if len(ms) >= target_measures
+        )
+        if last_all_rest and shorter_count >= min_shorter_parts and prev_has_notes:
+            log.info(
+                "Page %d: trimmed ghost all-rest trailing measure %d (%d/%d parts shorter, dist=%s)",
+                page_num,
+                target_measures,
+                shorter_count,
+                len(parts),
+                dict(sorted(count_freq.items())),
+            )
+            target_measures -= 1
+
     log.info("Aligning page %d: part_measures_dist=%s, target_measures=%d", page_num, dict(sorted(count_freq.items())), target_measures)
     if target_measures == 0:
         return root, fallback_ts
@@ -787,6 +840,23 @@ def align_page_score(
                     cur_div = max(1, int(d_txt.strip()))
             divs_for_part.append(cur_div)
         part_divs.append(divs_for_part)
+
+    # Precompute per-measure playing-part quarter durations so Measure 1 can guard against
+    # isolated OMR continuation duration-fallback misreads (e.g. 5/4 before 6q bars).
+    later_q_votes: Counter[Fraction] = Counter()
+    later_explicit_inh = False
+    inh_q_val = _time_sig_quarters(inherited_time_sig) if inherited_time_sig is not None else None
+    for later_mi in range(1, target_measures):
+        for ms, divs in zip(part_measures_list, part_divs):
+            if later_mi >= len(ms):
+                continue
+            lm = ms[later_mi]
+            lq = _measure_quarter_duration(lm, divs[later_mi])
+            if lq is not None:
+                later_q_votes[lq] += 1
+            lts = _extract_last_time(lm)
+            if lts is not None and inherited_time_sig is not None and lts == inherited_time_sig:
+                later_explicit_inh = True
 
     global_ts: list[tuple[str, str]] = []
     active_global_ts: tuple[str, str] = fallback_ts
@@ -823,10 +893,13 @@ def align_page_score(
                     ),
                 )
                 if inherited_time_sig is not None and chosen_ts != inherited_time_sig:
-                    inh_q = _time_sig_quarters(inherited_time_sig)
+                    inh_q = inh_q_val
                     ch_q = _time_sig_quarters(chosen_ts)
                     strong_explicit = all_votes.get(chosen_ts, 0) >= 0.60 * len(parts)
-                    if inh_q is not None and ch_q is not None and ch_q == inh_q and not strong_explicit:
+                    is_homr_quarter_fallback = (
+                        inherited_time_sig[1] == "8" and chosen_ts[1] == "4"
+                    )
+                    if inh_q is not None and ch_q is not None and ch_q == inh_q and (is_homr_quarter_fallback or not strong_explicit):
                         log.info(
                             "Page %d measure 1: preserved inherited equivalent meter %s/%s over unprinted OMR guess %s/%s (votes=%d/%d)",
                             page_num,
@@ -838,18 +911,86 @@ def align_page_score(
                             len(parts),
                         )
                         chosen_ts = inherited_time_sig
+                    elif (
+                        inh_q is not None
+                        and ch_q is not None
+                        and ch_q != inh_q
+                        and chosen_ts[1] == "4"
+                        and not strong_explicit
+                        and not later_explicit_inh
+                        and later_q_votes.get(inh_q, 0) > later_q_votes.get(ch_q, 0)
+                        and later_q_votes.get(inh_q, 0) >= min_playing
+                        and pitched_q_votes.get(ch_q, 0) < max(3, int(0.70 * max(1, sum(pitched_q_votes.values()))))
+                    ):
+                        log.info(
+                            "Page %d measure 1: preserved inherited meter %s/%s over minority OMR guess %s/%s (m1 votes=%d/%d, later %sq consensus=%d)",
+                            page_num,
+                            inherited_time_sig[0],
+                            inherited_time_sig[1],
+                            chosen_ts[0],
+                            chosen_ts[1],
+                            all_votes.get(chosen_ts, 0),
+                            len(parts),
+                            inh_q,
+                            later_q_votes.get(inh_q, 0),
+                        )
+                        chosen_ts = inherited_time_sig
                 active_global_ts = chosen_ts
             else:
                 active_global_ts = fallback_ts
         else:
             explicit_accepted = False
-            if all_votes:
-                top_ts, top_all = all_votes.most_common(1)[0]
-                pitched_total_ts = sum(pitched_votes.values())
-                top_pitched = pitched_votes.get(top_ts, 0)
-                quorum = top_all >= max(2, int(0.25 * len(parts))) or (
-                    pitched_total_ts >= 3 and top_pitched >= 0.4 * pitched_total_ts
+            playing_parts = sum(pitched_q_votes.values())
+            filtered_all = {
+                ts: cnt
+                for ts, cnt in all_votes.items()
+                if (
+                    (ts[0].isdigit() and ts[1].isdigit() and int(ts[1]) < 16 and int(ts[0]) <= 12)
+                    or cnt >= 0.50 * len(parts)
                 )
+            }
+            filtered_pitched = {ts: cnt for ts, cnt in pitched_votes.items() if ts in filtered_all}
+            if filtered_all:
+                cand_votes = filtered_pitched if filtered_pitched else filtered_all
+                top_ts = max(
+                    cand_votes.keys(),
+                    key=lambda ts: (
+                        cand_votes[ts],
+                        filtered_all[ts],
+                        pitched_q_votes.get(_time_sig_quarters(ts), 0)
+                        if _time_sig_quarters(ts) is not None
+                        else 0,
+                    ),
+                )
+                top_all = filtered_all[top_ts]
+                top_pitched = filtered_pitched.get(top_ts, 0)
+                active_q = _time_sig_quarters(active_global_ts)
+                top_q = _time_sig_quarters(top_ts)
+                same_span = active_q is not None and top_q is not None and active_q == top_q
+                is_compound_to_quarter_fallback = same_span and active_global_ts[1] == "8" and top_ts[1] == "4"
+                if same_span:
+                    quorum = (not is_compound_to_quarter_fallback) and (top_all >= max(3, int(0.50 * len(parts))))
+                elif playing_parts >= 2 and top_pitched == 0:
+                    quorum = False
+                else:
+                    quorum = (
+                        top_all >= max(2, int(0.25 * len(parts)))
+                        and (top_pitched >= 2 or playing_parts < 2)
+                    ) or (
+                        playing_parts >= 3
+                        and top_pitched >= max(3, int(0.40 * playing_parts))
+                    )
+                if (
+                    quorum
+                    and active_q is not None
+                    and top_q is not None
+                    and top_q != active_q
+                    and playing_parts >= 3
+                    and pitched_q_votes.get(active_q, 0) > pitched_q_votes.get(top_q, 0)
+                    and top_all < 0.60 * len(parts)
+                ):
+                    quorum = False
+
                 if quorum:
                     active_global_ts = top_ts
                     explicit_accepted = True
@@ -864,7 +1005,7 @@ def align_page_score(
                     )
                 else:
                     log.debug(
-                        "Page %d measure %d: ignored minority time-sig noise %s (kept %s/%s)",
+                        "Page %d measure %d: ignored minority/noisy time-sig votes %s (kept %s/%s)",
                         page_num,
                         mi + 1,
                         dict(all_votes),
@@ -885,6 +1026,14 @@ def align_page_score(
                     and top_q_cnt >= 0.65 * pitched_total_q
                     and pitched_q_votes.get(active_q, 0) <= 0.25 * pitched_total_q
                 ):
+                    # Preserve compound /8 meter (e.g. 12/8) when duration consensus reverts to its quarter length
+                    if inherited_time_sig is not None and _time_sig_quarters(inherited_time_sig) == top_q:
+                        cand_ts = inherited_time_sig
+                    else:
+                        for prev_ts in reversed(global_ts):
+                            if _time_sig_quarters(prev_ts) == top_q:
+                                cand_ts = prev_ts
+                                break
                     active_global_ts = cand_ts
                     log.info(
                         "Page %d measure %d: inferred global time-sig change -> %s/%s from playing-part duration consensus (%d/%d parts = %s quarters)",
@@ -901,6 +1050,7 @@ def align_page_score(
     log.info("Page %d global_ts timeline: %s", page_num, [f"{b}/{bt}" for b, bt in global_ts])
 
     updated_rest_measures = 0
+    repaired_tuplets = 0
     normalized_overfull = 0
     padded_count = 0
     trimmed_count = 0
@@ -932,8 +1082,11 @@ def align_page_score(
             if _is_rest_only_measure(m):
                 _replace_measure_notes_with_rest(m, expected_dur)
                 updated_rest_measures += 1
-            elif _normalize_overfull_measure(m, expected_dur, div):
-                normalized_overfull += 1
+            else:
+                if repair_spurious_tuplets(m, expected_dur, div, (b, bt)):
+                    repaired_tuplets += 1
+                if _normalize_overfull_measure(m, expected_dur, div):
+                    normalized_overfull += 1
 
         while len(p.findall("measure")) < target_measures:
             mi = len(p.findall("measure"))
@@ -947,9 +1100,10 @@ def align_page_score(
             padded_count += 1
 
     log.info(
-        "Page %d alignment complete: updated_rest_measures=%d, normalized_overfull=%d, padded=%d, trimmed=%d",
+        "Page %d alignment complete: updated_rest_measures=%d, repaired_tuplets=%d, normalized_overfull=%d, padded=%d, trimmed=%d",
         page_num,
         updated_rest_measures,
+        repaired_tuplets,
         normalized_overfull,
         padded_count,
         trimmed_count,
