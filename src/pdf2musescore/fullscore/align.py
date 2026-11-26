@@ -22,6 +22,7 @@ from ..musicxml import (
     write_musicxml,
 )
 from ..options import ConversionOptions
+from ..rehearsal import PositionedRehearsal, map_range_rehearsal_marks_to_measures
 from ..tempo import TempoMarking, apply_tempo_marking
 from .instruments import (
     InstrumentLabel,
@@ -48,6 +49,7 @@ class PageSidecar:
     sys_max_x: int = 0
     crop_x: int = 0
     tempo: Optional[TempoMarking] = None
+    rehearsal_marks: tuple[PositionedRehearsal, ...] = ()
 
 
 def sidecar_path_for(xml_path: Path) -> Path:
@@ -70,6 +72,8 @@ def write_page_sidecar(sidecar: PageSidecar, xml_path: Path) -> Path:
     }
     if sidecar.tempo is not None:
         payload["tempo"] = sidecar.tempo.to_dict()
+    if sidecar.rehearsal_marks:
+        payload["rehearsal_marks"] = [r.to_dict() for r in sidecar.rehearsal_marks]
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     log.debug("Wrote full-score sidecar %s (%d staves)", path.name, sidecar.staff_count)
     return path
@@ -92,6 +96,11 @@ def read_page_sidecar(xml_path: Path) -> Optional[PageSidecar]:
             )
             for item in raw.get("labels", [])
         ]
+        rehearsals = tuple(
+            pr
+            for item in raw.get("rehearsal_marks", [])
+            if (pr := PositionedRehearsal.from_dict(item)) is not None
+        )
         return PageSidecar(
             page_number=int(raw["page_number"]),
             staff_count=int(raw["staff_count"]),
@@ -102,6 +111,7 @@ def read_page_sidecar(xml_path: Path) -> Optional[PageSidecar]:
             sys_max_x=int(raw.get("sys_max_x", 0)),
             crop_x=int(raw.get("crop_x", 0)),
             tempo=TempoMarking.from_dict(raw.get("tempo")),
+            rehearsal_marks=rehearsals,
         )
     except Exception as exc:
         log.warning("Could not read full-score sidecar %s (%s: %s) — falling back", path.name, type(exc).__name__, exc)
@@ -1878,11 +1888,19 @@ def merge_fullscore_pages(
         for _ in base_parts
     ]
     dedup_removed = 0
-    page_start_measures: list[tuple[int, Optional[TempoMarking]]] = []
+    page_start_measures: list[tuple[int, int, Optional[TempoMarking], tuple[PositionedRehearsal, ...]]] = []
     for page_idx, (root, (_pno, _aroot, sc)) in enumerate(zip(reconciled_roots, aligned_pages), start=1):
         start_idx = counters[0]
-        page_start_measures.append((start_idx, sc.tempo if sc is not None else None))
         parts = root.findall("part")
+        page_m_count = len(parts[0].findall("measure")) if parts else 0
+        page_start_measures.append(
+            (
+                start_idx,
+                page_m_count,
+                sc.tempo if sc is not None else None,
+                sc.rehearsal_marks if sc is not None else (),
+            )
+        )
         for pi, part in enumerate(parts):
             for mi, m in enumerate(part.findall("measure")):
                 mc = copy.deepcopy(m)
@@ -1905,14 +1923,18 @@ def merge_fullscore_pages(
     )
     add_courtesy_accidentals(merged)
     last_tempo_key: Optional[tuple[str, Optional[int], str, bool]] = None
-    for start_idx, p_tempo in page_start_measures:
-        if p_tempo is None:
-            continue
-        t_key = (p_tempo.text.lower(), p_tempo.bpm, p_tempo.beat_unit, p_tempo.beat_unit_dot)
-        if t_key == last_tempo_key:
-            continue
-        if apply_tempo_marking(merged, p_tempo, measure_index=start_idx):
-            last_tempo_key = t_key
+    for start_idx, page_m_count, p_tempo, p_marks in page_start_measures:
+        if p_tempo is not None:
+            t_key = (p_tempo.text.lower(), p_tempo.bpm, p_tempo.beat_unit, p_tempo.beat_unit_dot)
+            if t_key != last_tempo_key and apply_tempo_marking(merged, p_tempo, measure_index=start_idx):
+                last_tempo_key = t_key
+        if p_marks:
+            map_range_rehearsal_marks_to_measures(
+                merged,
+                p_marks,
+                start_index=start_idx,
+                measure_count=page_m_count,
+            )
     verify_fullscore_invariants(merged)
     return merged
 

@@ -41,11 +41,15 @@ def test_west_side_story_baritone_time_sigs_tempos_and_courtesy_sharp():
     assert staged_jobs
     xml_root = ET.parse(staged_jobs[-1]).getroot()
 
-    # 1) Instrument must be BARITONE (not Voice)
+    # 1) Instrument must be BARITONE (not Voice) with Bb treble-clef (-14) transposition in M1 only
     sp = xml_root.find("./part-list/score-part")
     assert sp is not None
     assert "baritone" in (sp.findtext("part-name") or "").lower()
     assert sp.findtext("./score-instrument/instrument-sound") == "brass.euphonium"
+    assert len(xml_root.findall(".//transpose")) == 1
+    assert xml_root.findtext("./part/measure[@number='1']/attributes/transpose/diatonic") == "-1"
+    assert xml_root.findtext("./part/measure[@number='1']/attributes/transpose/chromatic") == "-2"
+    assert xml_root.findtext("./part/measure[@number='1']/attributes/transpose/octave-change") == "-1"
 
     # 2) Time signatures: 4/4 at M1 -> 3/4 at rehearsal [1] -> 4/4 at rehearsal [5]
     xml_ms = xml_root.findall("./part/measure")
@@ -94,13 +98,30 @@ def test_west_side_story_baritone_time_sigs_tempos_and_courtesy_sharp():
     assert "tranq." in bar76_words
     assert "rit." in bar77_words
 
+    # 4c) Boxed rehearsal marks [1]..[5] on Page 1 mapped cleanly and zero false-positive unboxed marks
+    reh_bars = [
+        (i + 1, (r.text or "").strip(), r.get("enclosure"))
+        for i, m in enumerate(xml_ms)
+        for r in m.findall("./direction/direction-type/rehearsal")
+    ]
+    assert all(enc == "square" for _, _, enc in reh_bars), f"Unexpected unboxed marks: {reh_bars}"
+    reh_labels = {lbl: (bar, enc) for bar, lbl, enc in reh_bars}
+    for expected_bar, expected_lbl in ((6, "1"), (25, "2"), (41, "3"), (57, "4"), (74, "5")):
+        assert expected_lbl in reh_labels, f"Missing rehearsal mark {expected_lbl} (found: {reh_bars})"
+        assert reh_labels[expected_lbl][0] == expected_bar
+        assert reh_labels[expected_lbl][1] == "square"
+
     # 5) MuseScore 4 (.mscx) verification
     with zipfile.ZipFile(out_mscz) as z:
         mscx_name = next(n for n in z.namelist() if n.endswith(".mscx"))
         mscx_root = ET.fromstring(z.read(mscx_name))
 
     assert mscx_root.findtext("./Score/Part/Instrument/instrumentId") != "voice.vocals"
+    assert mscx_root.findtext("./Score/Part/Instrument/transposeDiatonic") == "-8"
+    assert mscx_root.findtext("./Score/Part/Instrument/transposeChromatic") == "-14"
     mscx_ms = mscx_root.findall("./Score/Staff/Measure")
+    page1_pitches = [int(n.findtext("pitch") or "0") for m in mscx_ms[:77] for n in m.findall(".//Note")]
+    assert all(40 <= p <= 70 for p in page1_pitches), f"Out-of-range pitches on p1: {[p for p in page1_pitches if not (40 <= p <= 70)]}"
     # Bars 1-5 and final 4 bars must have no overfull len mismatch
     for idx in (0, 1, 2, 3, 4, len(mscx_ms) - 4, len(mscx_ms) - 3, len(mscx_ms) - 2, len(mscx_ms) - 1):
         assert mscx_ms[idx].get("len") is None, f"Measure {idx + 1} still has overfull len={mscx_ms[idx].get('len')}"
@@ -127,3 +148,8 @@ def test_west_side_story_baritone_time_sigs_tempos_and_courtesy_sharp():
     assert any("andante moderato" in t for t in mscx_tempo_texts)
     moderato_xml = ET.tostring(next(t for t in mscx_tempos if "andante moderato" in "".join(t.itertext()).lower()), encoding="unicode")
     assert "Andante moderato " in moderato_xml
+
+    # Rehearsal marks [1]..[5] imported as real MuseScore <RehearsalMark> elements
+    mscx_reh = ["".join(r.itertext()).strip() for r in mscx_root.findall(".//RehearsalMark/text")]
+    for lbl in ("1", "2", "3", "4", "5"):
+        assert lbl in mscx_reh, f"Expected RehearsalMark {lbl!r} in .mscx (found {mscx_reh})"

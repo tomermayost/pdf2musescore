@@ -9,9 +9,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
+import cv2
+
 from ..diagnostics import memory_snapshot
 from ..engines.base import OmrError
 from ..engines.homr_engine import CancelledError, PageFailure, configure_model_cache
+from ..rehearsal import PositionedRehearsal, extract_rehearsal_marks_in_band
 from ..tempo import TempoMarking, extract_tempo_marking
 from .align import PageSidecar, write_page_sidecar
 from .homr_patch import DEFAULT_TARGET_WIDTH, fullscore_homr_context
@@ -190,6 +193,7 @@ def run_fullscore_homr(
                 )
 
                 tempo: Optional[TempoMarking] = None
+                rehearsal_marks: list[PositionedRehearsal] = []
                 try:
                     tempo = extract_tempo_marking(
                         img_path,
@@ -200,6 +204,27 @@ def run_fullscore_homr(
                     )
                 except Exception as exc:
                     log.warning("Tempo OCR failed on page %d (%s): %s", pno, img_path.name, exc)
+
+                try:
+                    if layout.top_staff_y >= 25:
+                        page_img = cv2.imread(str(img_path))
+                        if page_img is not None:
+                            min_reh_y = max(0, int(layout.top_staff_y) - int(max(170.0, layout.median_gap * 2.2)))
+                            max_reh_y = int(layout.top_staff_y - max(15.0, 0.15 * layout.median_gap))
+                            rehearsal_marks = extract_rehearsal_marks_in_band(
+                                page_img,
+                                0,
+                                int(layout.top_staff_y) + 8,
+                                sys_min_x=float(layout.sys_min_x),
+                                sys_max_x=float(layout.sys_max_x),
+                                unboxed_min_y=min_reh_y,
+                                unboxed_max_y=max_reh_y,
+                                ocr_reader=ocr_reader,
+                                ocr_dir=ocr_ver_dir,
+                                source_name=img_path.name,
+                            )
+                except Exception as exc:
+                    log.warning("Rehearsal mark OCR failed on page %d (%s): %s", pno, img_path.name, exc)
 
                 active_page["idx"] = idx
                 active_page["staff_count"] = len(layout.kept_staffs)
@@ -233,6 +258,7 @@ def run_fullscore_homr(
                         sys_max_x=layout.sys_max_x,
                         crop_x=layout.crop_x,
                         tempo=tempo,
+                        rehearsal_marks=tuple(rehearsal_marks),
                     ),
                     xml_path,
                 )

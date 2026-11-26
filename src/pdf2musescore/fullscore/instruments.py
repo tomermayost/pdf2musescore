@@ -431,7 +431,13 @@ def _infer_brass_profile(txt: str, clef: Optional[tuple[str, str]]) -> Optional[
             return InstrumentPlaybackProfile("brass.trombone", -1, -2, -1, 2, midi_program=58)
         return InstrumentPlaybackProfile("brass.trombone", midi_program=58)
     if re.search(r"\b(?:baritone|euphonium|bar|euph)\b", txt):
-        if explicit_bb_treble:
+        explicit_c = bool(
+            re.search(
+                r"\bc\s+(?:baritone|euphonium|bar|euph)\b|\b(?:baritone|euphonium|bar|euph)\s+in\s+c\b|\bb\.?\s*c\.?\b",
+                txt,
+            )
+        )
+        if clef == ("G", "2") and not explicit_c:
             return InstrumentPlaybackProfile("brass.euphonium", -1, -2, -1, 2, midi_program=58)
         return InstrumentPlaybackProfile("brass.euphonium", midi_program=58)
     if re.search(r"\b(?:tuba|tba|basses)\b", txt):

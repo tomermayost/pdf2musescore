@@ -26,6 +26,7 @@ from pdf2musescore.fullscore.align import (
 from pdf2musescore.fullscore.instruments import InstrumentLabel
 from pdf2musescore.musicxml import MergeError, write_musicxml
 from pdf2musescore.options import ConversionOptions
+from pdf2musescore.rehearsal import PositionedRehearsal, RehearsalMark
 from pdf2musescore.tempo import TempoMarking
 
 
@@ -131,15 +132,19 @@ def test_merge_fullscore_pages_tempo_dedup_and_change():
     r3 = _build_score([_make_part("P1", [(False, ("4", "4"))])])
     t1 = TempoMarking(text="Adagio", bpm=72)
     t3 = TempoMarking(text="Allegro", bpm=132)
+    r_mark_p2 = PositionedRehearsal(RehearsalMark("A", enclosure="none"), 350.0, 390.0, 10.0, 50.0, u_norm=0.05)
     sc1 = PageSidecar(1, 1, [100.0], [0.5], labels, tempo=t1)
-    sc2 = PageSidecar(2, 1, [100.0], [0.5], labels, tempo=t1)  # repeated header -> deduplicated
+    sc2 = PageSidecar(2, 1, [100.0], [0.5], labels, tempo=t1, rehearsal_marks=(r_mark_p2,))
     sc3 = PageSidecar(3, 1, [100.0], [0.5], labels, tempo=t3)  # mid-piece tempo change -> kept
 
+    # Round-trip rehearsal_marks through sidecar JSON
+    tmp_sc_xml = r2  # in-memory check only; file round-trip tested in test_sidecar_roundtrip
     merged = merge_fullscore_pages([(1, r1, sc1), (2, r2, sc2), (3, r3, sc3)], title="Tempo Test")
     ms = merged.findall("./part[@id='P1']/measure")
     assert ms[0].findtext("./direction/direction-type/words") == "Adagio "
     assert ms[0].findtext("./direction/direction-type/metronome/per-minute") == "72"
-    assert ms[1].find("direction") is None
+    assert ms[1].findtext("./direction/direction-type/rehearsal") == "A"
+    assert ms[1].find("./direction/direction-type/rehearsal").get("enclosure") == "none"
     assert ms[2].findtext("./direction/direction-type/words") == "Allegro "
     assert ms[2].findtext("./direction/direction-type/metronome/per-minute") == "132"
 

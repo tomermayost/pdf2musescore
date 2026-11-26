@@ -565,10 +565,13 @@ def annotate_standard_page_instruments(
     header_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
     detect_tempo: bool = True,
     tempo_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
+    detect_rehearsal: bool = True,
+    rehearsal_ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
 ) -> list[str]:
-    """Detect written instrument names & tempo in Standard Mode or replace default ``Voice`` with ``Piano``."""
+    """Detect written instrument names, tempo/expressions, and rehearsal marks in Standard Mode."""
     from ..fullscore.instruments import (
         InstrumentLabel,
+        _run_rapidocr_on_crop,
         extract_header_instrument_label,
         extract_instrument_labels,
         is_percussion_instrument,
@@ -578,6 +581,12 @@ def annotate_standard_page_instruments(
         extract_part_initial_clef,
         is_homr_default_voice,
         set_score_part_instrument,
+        sync_part_transpose,
+    )
+    from ..rehearsal import (
+        assign_boxed_rehearsal_marks_to_systems,
+        detect_unboxed_rehearsal_marks_in_band,
+        map_system_rehearsal_marks_to_measures,
     )
     from ..tempo import (
         detect_staff_barlines,
@@ -643,24 +652,26 @@ def annotate_standard_page_instruments(
         clef = extract_part_initial_clef(part_el)
         lbl = detected[idx]
         if lbl is not None:
-            _prof, is_perc = set_score_part_instrument(
+            prof, is_perc = set_score_part_instrument(
                 sp,
                 lbl.full_name,
                 abbreviation=lbl.abbreviation,
                 clef=clef,
                 pitched_channel_index=pitched_i,
             )
+            sync_part_transpose(part_el, prof)
             if not is_perc:
                 pitched_i += 1
             resolved_names.append(lbl.full_name)
         elif is_homr_default_voice(sp):
-            set_score_part_instrument(
+            prof, _ = set_score_part_instrument(
                 sp,
                 "Piano",
                 abbreviation="Pno.",
                 clef=clef,
                 pitched_channel_index=pitched_i,
             )
+            sync_part_transpose(part_el, prof)
             pitched_i += 1
             resolved_names.append("Piano")
         else:
@@ -669,50 +680,119 @@ def annotate_standard_page_instruments(
                 pitched_i += 1
             resolved_names.append(pname)
 
-    if detect_tempo and multi_staffs:
+    if (detect_tempo or detect_rehearsal) and multi_staffs:
         sys_boxes = _resolve_all_systems_boxes(multi_staffs, to_input_image)
         if sys_boxes:
             img = cv2.imread(str(img_path))
             if img is not None:
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
                 all_sys_tempos = []
+                all_sys_rehearsals = []
                 all_sys_barlines: list[list[int]] = []
                 all_sys_x_bounds: list[tuple[float, float]] = []
+                share_band_ocr = (
+                    detect_tempo
+                    and detect_rehearsal
+                    and tempo_ocr_runner is None
+                    and rehearsal_ocr_runner is None
+                )
+                boxed_by_sys = (
+                    assign_boxed_rehearsal_marks_to_systems(
+                        img,
+                        sys_boxes,
+                        avg_h=avg_h,
+                        ocr_reader=ocr_reader,
+                        ocr_dir=ocr_dir,
+                        ocr_runner=rehearsal_ocr_runner,
+                        source_name=Path(img_path).name,
+                    )
+                    if detect_rehearsal
+                    else [[] for _ in sys_boxes]
+                )
+                has_any_boxed = any(boxed_by_sys)
                 for s_idx, (sx0, sx1, sy0, sy1) in enumerate(sys_boxes):
                     expr_min_y = max(0, int(sy0) - int(max(95.0, avg_h * 2.4)))
+                    unboxed_max_y = int(sy0 - max(18.0, 0.28 * max(20.0, sy1 - sy0)))
                     if s_idx == 0:
                         if sy0 < 25:
                             all_sys_tempos.append([])
+                            all_sys_rehearsals.append(list(boxed_by_sys[s_idx]))
                             all_sys_barlines.append([])
                             all_sys_x_bounds.append((sx0, sx1))
                             continue
                         band_top, band_bot = 0, int(sy0) + 8
                     else:
                         prev_bot = sys_boxes[s_idx - 1][3]
-                        band_top = max(int(prev_bot) - 4, int(sy0) - int(max(105.0, avg_h * 2.6)))
+                        band_top = max(int(prev_bot) - 4, int(sy0) - int(max(110.0, avg_h * 2.6)))
                         band_bot = int(sy0) + 6
-                    all_sys_tempos.append(
-                        extract_tempo_markings_in_band(
-                            img,
-                            band_top,
-                            band_bot,
-                            sys_min_x=sx0,
-                            sys_max_x=sx1,
+
+                    shared_ocr = (
+                        _run_rapidocr_on_crop(
+                            img[max(0, band_top) : min(img.shape[0], band_bot), :],
                             ocr_reader=ocr_reader,
                             ocr_dir=ocr_dir,
-                            ocr_runner=tempo_ocr_runner,
-                            source_name=Path(img_path).name,
-                            expr_min_y=expr_min_y,
                         )
+                        if share_band_ocr and not has_any_boxed and (min(img.shape[0], band_bot) - max(0, band_top)) >= 15
+                        else None
                     )
+                    if detect_tempo:
+                        all_sys_tempos.append(
+                            extract_tempo_markings_in_band(
+                                img,
+                                band_top,
+                                band_bot,
+                                sys_min_x=sx0,
+                                sys_max_x=sx1,
+                                ocr_reader=ocr_reader,
+                                ocr_dir=ocr_dir,
+                                ocr_runner=tempo_ocr_runner,
+                                source_name=Path(img_path).name,
+                                expr_min_y=expr_min_y,
+                                precomputed_ocr=shared_ocr,
+                            )
+                        )
+                    if detect_rehearsal:
+                        if has_any_boxed:
+                            all_sys_rehearsals.append(list(boxed_by_sys[s_idx]))
+                        else:
+                            unboxed = detect_unboxed_rehearsal_marks_in_band(
+                                img,
+                                band_top,
+                                band_bot,
+                                sys_min_x=sx0,
+                                sys_max_x=sx1,
+                                min_y=expr_min_y,
+                                max_y=unboxed_max_y,
+                                ocr_reader=ocr_reader,
+                                ocr_dir=ocr_dir,
+                                ocr_runner=rehearsal_ocr_runner,
+                                precomputed_ocr=shared_ocr,
+                            )
+                            for ub in unboxed:
+                                log.info(
+                                    "Unboxed rehearsal mark OCR on %s sys=%d detected %r (u=%.2f)",
+                                    Path(img_path).name,
+                                    s_idx,
+                                    ub.mark.label,
+                                    ub.u_norm,
+                                )
+                            all_sys_rehearsals.append(unboxed)
                     all_sys_barlines.append(detect_staff_barlines(gray, int(sy0), int(sy1), int(sx0), int(sx1)))
                     all_sys_x_bounds.append((sx0, sx1))
-                map_system_tempos_to_measures(
-                    root,
-                    all_sys_tempos,
-                    system_barlines=all_sys_barlines,
-                    system_x_bounds=all_sys_x_bounds,
-                )
+                if detect_tempo:
+                    map_system_tempos_to_measures(
+                        root,
+                        all_sys_tempos,
+                        system_barlines=all_sys_barlines,
+                        system_x_bounds=all_sys_x_bounds,
+                    )
+                if detect_rehearsal:
+                    map_system_rehearsal_marks_to_measures(
+                        root,
+                        all_sys_rehearsals,
+                        system_barlines=all_sys_barlines,
+                        system_x_bounds=all_sys_x_bounds,
+                    )
 
     ET.indent(root)
     ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)

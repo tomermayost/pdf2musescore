@@ -160,13 +160,13 @@ def test_run_fullscore_homr_success_and_cover_skip(tmp_path):
     assert [l.full_name for l in sc.labels] == ["Flute", "Timpani"]
     assert sc.tempo is None
 
-    # Tempo OCR hit on header crop is stored in sidecar, and tempo OCR failure does not crash page
+    # Tempo & Rehearsal OCR hits on header crop are stored in sidecar, and failures do not crash page
     def _ocr_with_tempo(_ocr_dir):
         def _read(crop):
             if crop.shape[1] > 400:
                 return SimpleNamespace(
-                    boxes=[[[180, 40], [360, 40], [360, 70], [180, 70]]],
-                    txts=["Allegro = 120"],
+                    boxes=[[[180, 40], [360, 40], [360, 70], [180, 70]], [[420, 40], [452, 40], [452, 76], [420, 76]]],
+                    txts=["Allegro = 120", "A"],
                 )
             return SimpleNamespace(
                 boxes=[[[0, 120], [50, 120], [50, 140], [0, 140]], [[0, 280], [50, 280], [50, 300], [0, 300]]],
@@ -180,6 +180,9 @@ def test_run_fullscore_homr_success_and_cover_skip(tmp_path):
     sc_t = read_page_sidecar(outs_t[0])
     assert sc_t is not None and sc_t.tempo is not None
     assert sc_t.tempo.text == "Allegro" and sc_t.tempo.bpm == 120
+    assert len(sc_t.rehearsal_marks) == 1
+    assert sc_t.rehearsal_marks[0].mark.label == "A"
+    assert sc_t.rehearsal_marks[0].mark.enclosure == "none"
 
     def _ocr_tempo_boom(_ocr_dir):
         def _read(crop):
@@ -192,6 +195,7 @@ def test_run_fullscore_homr_success_and_cover_skip(tmp_path):
     outs_boom_t = run_fullscore_homr([p2], homr_modules=mods_t, ocr_reader_factory=_ocr_tempo_boom)
     assert len(outs_boom_t) == 1
     assert read_page_sidecar(outs_boom_t[0]).tempo is None
+    assert read_page_sidecar(outs_boom_t[0]).rehearsal_marks == ()
 
 
 def test_run_fullscore_homr_empty_staves_partial_fail_all_fail_and_cancel(tmp_path):

@@ -460,6 +460,7 @@ def test_annotate_standard_page_instruments(tmp_path):
     r2 = ET.parse(x2).getroot()
     assert r2.findtext("./part-list/score-part/score-instrument/instrument-sound") == "wind.reed.clarinet.bflat"
     assert r2.findtext("./part-list/score-part/midi-instrument/midi-program") == "72"
+    assert r2.findtext("./part/measure/attributes/transpose/chromatic") == "-2"
     assert r2.findtext("./part/measure/direction/direction-type/words") == "Andante "
     assert r2.findtext("./part/measure/direction/direction-type/metronome/per-minute") == "88"
 
@@ -543,7 +544,7 @@ def test_annotate_standard_page_instruments(tmp_path):
         "<score-instrument id='P1-I1'><instrument-name>Voice</instrument-name><instrument-sound>voice</instrument-sound></score-instrument>"
         "<midi-instrument id='P1-I1'><midi-channel>1</midi-channel><midi-program>54</midi-program></midi-instrument>"
         "</score-part></part-list><part id='P1'>"
-        "<measure number='1'><attributes><key><fifths>2</fifths></key></attributes><note/></measure>"
+        "<measure number='1'><attributes><key><fifths>2</fifths></key><clef><sign>G</sign><line>2</line></clef></attributes><note/></measure>"
         "<measure number='2'><note/><barline location='right'><bar-style>light-light</bar-style></barline></measure>"
         "<measure number='3'><attributes><key><fifths>-2</fifths></key></attributes><note/></measure>"
         "<measure number='4'><print new-system='yes'/><note/></measure>"
@@ -577,11 +578,15 @@ def test_annotate_standard_page_instruments(tmp_path):
         margin_ocr_runner=lambda _m: ([], []),
         header_ocr_runner=lambda _h: ([[[40, 60], [180, 60], [180, 90], [40, 90]]], ["BARITONE"]),
         tempo_ocr_runner=_multi_tempo_ocr,
+        rehearsal_ocr_runner=lambda _c: ([[[620, 115], [652, 115], [652, 152], [620, 152]]], ["A"]),
     )
     r7 = ET.parse(x7).getroot()
     ms7 = r7.findall("./part/measure")
+    assert r7.findtext("./part/measure[@number='1']/attributes/transpose/chromatic") == "-2"
+    assert r7.findtext("./part/measure[@number='1']/attributes/transpose/octave-change") == "-1"
     assert ms7[0].findtext("./direction/direction-type/words") == "Andante maestoso "
     assert ms7[2].findtext("./direction/direction-type/words") == "Allegro (in 1) alla Spagnola"
+    assert ms7[2].findtext("./direction/direction-type/rehearsal") == "A"
     assert ms7[5].findtext("./direction/direction-type/words") == "Andante moderato "
     assert ms7[5].find("./direction/sound").get("tempo") == "84"
     expr_words = [w.text for w in r7.findall(".//direction/direction-type/words[@font-style='italic']")]

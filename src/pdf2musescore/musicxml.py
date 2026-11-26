@@ -59,6 +59,7 @@ _NOTE_AFTER_ACCIDENTAL = frozenset(
     {"time-modification", "stem", "notehead", "notehead-text", "staff", "beam", "notations", "lyric", "play"}
 )
 _ATTR_BEFORE_TIME = frozenset({"footnote", "level", "divisions", "key"})
+_ATTR_AFTER_TRANSPOSE = frozenset({"directive", "measure-style"})
 _SECTION_BAR_STYLES = frozenset({"light-light", "heavy-heavy", "light-heavy"})
 _STANDARD_DYNAMIC_TAGS = frozenset(
     {
@@ -478,6 +479,57 @@ def is_homr_default_voice(score_part: ET.Element) -> bool:
     return sound_id in ("", "voice") and midi_prog in ("", "54")
 
 
+def sync_part_transpose(
+    part: Optional[ET.Element],
+    profile: InstrumentPlaybackProfile,
+) -> bool:
+    """Write or clear ``<transpose>`` in ``part``'s first measure ``<attributes>`` for playback."""
+    if part is None:
+        return False
+    m1 = part.find("measure")
+    if m1 is None:
+        return False
+
+    for attrs in list(m1.findall("attributes")):
+        for old_tr in list(attrs.findall("transpose")):
+            attrs.remove(old_tr)
+
+    if profile.diatonic == 0 and profile.chromatic == 0 and profile.octave_change == 0:
+        return False
+
+    attrs = m1.find("attributes")
+    if attrs is None:
+        attrs = ET.Element("attributes")
+        ins_idx = 0
+        for idx, ch in enumerate(list(m1)):
+            if ch.tag == "print":
+                ins_idx = idx + 1
+            else:
+                break
+        m1.insert(ins_idx, attrs)
+
+    tr = ET.Element("transpose")
+    ET.SubElement(tr, "diatonic").text = str(profile.diatonic)
+    ET.SubElement(tr, "chromatic").text = str(profile.chromatic)
+    if profile.octave_change != 0:
+        ET.SubElement(tr, "octave-change").text = str(profile.octave_change)
+
+    pos = len(attrs)
+    for idx, ch in enumerate(list(attrs)):
+        if ch.tag in _ATTR_AFTER_TRANSPOSE:
+            pos = idx
+            break
+    attrs.insert(pos, tr)
+    log.debug(
+        "Synced <transpose> on %s: diatonic=%d chromatic=%d octave=%d",
+        part.get("id", "P1"),
+        profile.diatonic,
+        profile.chromatic,
+        profile.octave_change,
+    )
+    return True
+
+
 def normalize_default_instruments(root: ET.Element) -> int:
     """Replace any uncustomized homr ``Voice`` placeholder parts with ``Piano`` (program 1)."""
     from .fullscore.instruments import is_percussion_instrument
@@ -488,13 +540,15 @@ def normalize_default_instruments(root: ET.Element) -> int:
         part_id = sp.get("id", "")
         if is_homr_default_voice(sp):
             clef = _extract_first_clef(root, part_id) if part_id else None
-            set_score_part_instrument(
+            profile, _ = set_score_part_instrument(
                 sp,
                 "Piano",
                 abbreviation="Pno.",
                 clef=clef,
                 pitched_channel_index=pitched_i,
             )
+            if part_id:
+                sync_part_transpose(root.find(f"./part[@id='{part_id}']"), profile)
             normalized += 1
             pitched_i += 1
         else:
@@ -521,6 +575,8 @@ def apply_instrument_override(root: ET.Element, instrument_name: str) -> ET.Elem
             clef=clef,
             pitched_channel_index=pitched_i,
         )
+        part_el = root.find(f"./part[@id='{part_id}']")
+        sync_part_transpose(part_el, profile)
         if not is_perc:
             pitched_i += 1
         log.info(
@@ -861,6 +917,12 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
             measures = part.findall("measure")
             for mi, m in enumerate(measures):
                 m = copy.deepcopy(m)
+                if idx > 1 and mi == 0:
+                    for attrs in list(m.findall("attributes")):
+                        for dup_tr in list(attrs.findall("transpose")):
+                            attrs.remove(dup_tr)
+                        if len(attrs) == 0:
+                            m.remove(attrs)
                 counters[pi] += 1
                 m.set("number", str(counters[pi]))
                 if len(roots) > 1 and mi == 0 and pi == 0:

@@ -28,14 +28,10 @@ ROOT = Path(__file__).resolve().parents[2]
 GREEN_HILL_PDF = Path(r"C:\Users\tmayo\Desktop\תווים\green hill\the-green-hill-b-appermont.pdf")
 LOCAL_MODELS = Path(r"C:\Users\tmayo\AppData\Local\pdf2musescore\models")
 OUT = ROOT / "tmp" / "integration" / "fullscore"
-_OMR_CACHE_ROOT = OUT / "_omr_cache"
+_OMR_CACHE_ROOT = ROOT / "tmp" / "integration" / "_raw_omr_cache" / "fullscore"
 _OMR_SOURCE_FILES: tuple[Path, ...] = (
-    ROOT / "src" / "pdf2musescore" / "fullscore" / "runner.py",
     ROOT / "src" / "pdf2musescore" / "fullscore" / "staves.py",
     ROOT / "src" / "pdf2musescore" / "fullscore" / "homr_patch.py",
-    ROOT / "src" / "pdf2musescore" / "fullscore" / "instruments.py",
-    ROOT / "src" / "pdf2musescore" / "engines" / "homr_engine.py",
-    ROOT / "src" / "pdf2musescore" / "tempo.py",
 )
 
 pytestmark = pytest.mark.integration
@@ -65,20 +61,27 @@ def _omr_cache_fingerprint(
 
 
 @pytest.fixture(autouse=True)
-def _cached_fullscore_omr(monkeypatch):
-    """Reuse per-page OMR XML/sidecar outputs when OMR code & inputs are unchanged.
+def _cached_fullscore_omr(monkeypatch, shared_rapidocr_reader):
+    """Cache raw Full Score neural-net OMR & staff layout while running OCR, sidecar, align, and MuseScore 4 LIVE.
 
-    Keeps full ``Pipeline``, ``align.py`` merge/normalization, and ``MuseScore4.exe`` export live
-    while cutting warm integration runtime from ~7 minutes down to seconds.
+    Changing OCR, tempo, rehearsal, or alignment code never invalidates the 29-staff OMR cache.
     Set ``PDF2MUSESCORE_NO_OMR_CACHE=1`` to force live CPU OMR on every page.
     """
     real_run = fs_runner_mod.run_fullscore_homr
+    real_flatten = fs_runner_mod.flatten_filter_and_extend_staves
 
     def _run_with_cache(image_paths, **kwargs):
         no_cache = os.environ.get("PDF2MUSESCORE_NO_OMR_CACHE", "").strip().lower() in ("1", "true", "yes")
         if no_cache:
             return real_run(image_paths, **kwargs)
 
+        import cv2
+        from pdf2musescore.fullscore.align import PageSidecar, write_page_sidecar
+        from pdf2musescore.fullscore.instruments import extract_instrument_labels
+        from pdf2musescore.rehearsal import extract_rehearsal_marks_in_band
+        from pdf2musescore.tempo import extract_tempo_marking
+
+        ocr_reader, ocr_ver_dir = shared_rapidocr_reader
         fp = _omr_cache_fingerprint(
             GREEN_HILL_PDF,
             render_dpi=500,
@@ -98,25 +101,87 @@ def _cached_fullscore_omr(monkeypatch):
         for idx, img in enumerate(image_paths, start=1):
             img_path = Path(img)
             pno = fs_runner_mod._parse_page_number(img_path, idx)
-            c_xml = cache_dir / f"page_{pno:03d}.musicxml"
-            c_sc = cache_dir / f"page_{pno:03d}.fullscore.json"
-            if c_xml.is_file() and c_sc.is_file():
-                dst_xml = img_path.with_suffix(".musicxml")
-                dst_sc = img_path.with_suffix(".fullscore.json")
-                shutil.copy2(c_xml, dst_xml)
-                shutil.copy2(c_sc, dst_sc)
+            c_skipped = cache_dir / f"page_{pno:03d}.skipped.json"
+            c_raw = cache_dir / f"page_{pno:03d}.raw.musicxml"
+            c_layout = cache_dir / f"page_{pno:03d}.layout.json"
+
+            if c_skipped.is_file():
                 if page_cb is not None:
                     page_cb(idx, total)
-                if staff_cb is not None:
-                    sc_data = json.loads(c_sc.read_text(encoding="utf-8"))
-                    n_staves = int(sc_data.get("staff_count", 0))
-                    if n_staves > 0:
-                        staff_cb(idx, total, n_staves, n_staves)
+                continue
+            if c_raw.is_file() and c_layout.is_file():
+                dst_xml = img_path.with_suffix(".musicxml")
+                shutil.copy2(c_raw, dst_xml)
+                ld = json.loads(c_layout.read_text(encoding="utf-8"))
+                labels = extract_instrument_labels(
+                    img_path,
+                    ld["staff_cys"],
+                    int(ld["crop_x"]),
+                    float(ld["median_gap"]),
+                    float(ld["y_lo"]),
+                    float(ld["y_hi"]),
+                    ocr_reader=ocr_reader,
+                    ocr_dir=ocr_ver_dir,
+                )
+                tempo = extract_tempo_marking(
+                    img_path,
+                    float(ld["top_staff_y"]),
+                    staff_left_x=float(ld["staff_left_x"]),
+                    ocr_reader=ocr_reader,
+                    ocr_dir=ocr_ver_dir,
+                )
+                rehearsal_marks = []
+                if float(ld["top_staff_y"]) >= 25:
+                    page_img = cv2.imread(str(img_path))
+                    if page_img is not None:
+                        min_reh_y = max(0, int(ld["top_staff_y"]) - int(max(170.0, float(ld["median_gap"]) * 2.2)))
+                        max_reh_y = int(float(ld["top_staff_y"]) - max(15.0, 0.15 * float(ld["median_gap"])))
+                        rehearsal_marks = extract_rehearsal_marks_in_band(
+                            page_img,
+                            0,
+                            int(ld["top_staff_y"]) + 8,
+                            sys_min_x=float(ld["sys_min_x"]),
+                            sys_max_x=float(ld["sys_max_x"]),
+                            unboxed_min_y=min_reh_y,
+                            unboxed_max_y=max_reh_y,
+                            ocr_reader=ocr_reader,
+                            ocr_dir=ocr_ver_dir,
+                            source_name=img_path.name,
+                        )
+                write_page_sidecar(
+                    PageSidecar(
+                        page_number=pno,
+                        staff_count=len(ld["staff_cys"]),
+                        staff_cys=list(ld["staff_cys"]),
+                        staff_y_norms=list(ld["staff_y_norms"]),
+                        labels=labels,
+                        sys_min_x=int(ld["sys_min_x"]),
+                        sys_max_x=int(ld["sys_max_x"]),
+                        crop_x=int(ld["crop_x"]),
+                        tempo=tempo,
+                        rehearsal_marks=tuple(rehearsal_marks),
+                    ),
+                    dst_xml,
+                )
+                if page_cb is not None:
+                    page_cb(idx, total)
+                n_staves = len(ld["staff_cys"])
+                if staff_cb is not None and n_staves > 0:
+                    staff_cb(idx, total, n_staves, n_staves)
                 outputs.append(dst_xml)
             else:
                 missing.append(img_path)
 
         if missing:
+            captured_layouts: list[Any] = []
+
+            def _capturing_flatten(multi_staffs, to_input_image):
+                res = real_flatten(multi_staffs, to_input_image)
+                if res.kept_staffs:
+                    captured_layouts.append(res)
+                return res
+
+            monkeypatch.setattr(fs_runner_mod, "flatten_filter_and_extend_staves", _capturing_flatten)
             try:
                 fresh = real_run(missing, **kwargs)
             except OmrError as exc:
@@ -124,16 +189,40 @@ def _cached_fullscore_omr(monkeypatch):
                     fresh = []
                 else:
                     raise
-            if fresh:
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                for f_idx, f_xml in enumerate(fresh, start=1):
-                    pno = fs_runner_mod._parse_page_number(f_xml, f_idx)
-                    shutil.copy2(f_xml, cache_dir / f"page_{pno:03d}.musicxml")
-                    f_sc = f_xml.with_suffix(".fullscore.json")
-                    if f_sc.is_file():
-                        shutil.copy2(f_sc, cache_dir / f"page_{pno:03d}.fullscore.json")
-                    outputs.append(f_xml)
+            finally:
+                monkeypatch.setattr(fs_runner_mod, "flatten_filter_and_extend_staves", real_flatten)
 
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            fresh_by_pno = {fs_runner_mod._parse_page_number(f_xml, fi): f_xml for fi, f_xml in enumerate(fresh, start=1)}
+            for mp in missing:
+                pno = fs_runner_mod._parse_page_number(mp, 0)
+                if pno not in fresh_by_pno:
+                    (cache_dir / f"page_{pno:03d}.skipped.json").write_text("{\"skipped\": true}\n", encoding="utf-8")
+
+            for layout_idx, f_xml in enumerate(fresh):
+                pno = fs_runner_mod._parse_page_number(f_xml, layout_idx + 1)
+                shutil.copy2(f_xml, cache_dir / f"page_{pno:03d}.raw.musicxml")
+                if layout_idx < len(captured_layouts):
+                    ld_obj = captured_layouts[layout_idx]
+                    layout_payload = {
+                        "staff_cys": list(ld_obj.staff_cys),
+                        "staff_y_norms": list(ld_obj.staff_y_norms),
+                        "sys_min_x": int(ld_obj.sys_min_x),
+                        "sys_max_x": int(ld_obj.sys_max_x),
+                        "crop_x": int(ld_obj.crop_x),
+                        "median_gap": float(ld_obj.median_gap),
+                        "y_lo": float(ld_obj.y_lo),
+                        "y_hi": float(ld_obj.y_hi),
+                        "top_staff_y": float(ld_obj.top_staff_y),
+                        "staff_left_x": float(ld_obj.staff_left_x),
+                    }
+                    (cache_dir / f"page_{pno:03d}.layout.json").write_text(
+                        json.dumps(layout_payload, indent=2) + "\n", encoding="utf-8"
+                    )
+                outputs.append(f_xml)
+
+        if not outputs:
+            raise OmrError(f"No music staves found across {total} selected full-score page(s).")
         return sorted(outputs)
 
     monkeypatch.setattr(fs_runner_mod, "run_fullscore_homr", _run_with_cache)
@@ -334,6 +423,17 @@ def test_fullscore_green_hill_opening_pages():
     mscx_tempos = mscx_root.findall(".//Tempo")
     assert mscx_tempos, "Expected MuseScore 4 to import <Tempo> element"
     assert any(abs(float(t.findtext("tempo") or "0") - 1.2) < 0.05 for t in mscx_tempos)
+
+    # Unboxed rehearsal letter 'A' on Page 6 (Measure 13) with zero false positives on pages 4-5
+    early_rehs = [
+        r.text
+        for m in p1_ms[:12]
+        for r in m.findall("./direction/direction-type/rehearsal")
+    ]
+    assert early_rehs == []
+    assert p1_ms[12].findtext("./direction/direction-type/rehearsal") == "A"
+    mscx_rehs = ["".join(r.itertext()).strip() for r in mscx_root.findall(".//RehearsalMark/text")]
+    assert "A" in mscx_rehs
 
 
 def test_fullscore_green_hill_midscore_and_meter_change():

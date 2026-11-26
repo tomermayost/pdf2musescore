@@ -20,6 +20,7 @@ from pdf2musescore.musicxml import (
     sanitize_slurs,
     set_score_part_instrument,
     strip_layout_breaks,
+    sync_part_transpose,
     transpose_score,
     write_musicxml,
 )
@@ -509,3 +510,51 @@ def test_sanitize_dynamics_colliding_and_same_beat_duplicates():
     </measure></part></score-partwise>"""
     r2 = sanitize_dynamics(ET.fromstring(xml2))
     assert [el.findtext(".//other-dynamics") for el in r2.findall(".//measure/direction")] == ["subito"]
+
+
+def test_sync_part_transpose_and_multi_page_merge_dedup():
+    from pdf2musescore.fullscore.instruments import InstrumentPlaybackProfile
+
+    assert sync_part_transpose(None, InstrumentPlaybackProfile("brass.euphonium", -1, -2, -1, 2, 58)) is False
+    empty_part = ET.Element("part", id="P1")
+    assert sync_part_transpose(empty_part, InstrumentPlaybackProfile("brass.euphonium", -1, -2, -1, 2, 58)) is False
+
+    # Creates <attributes> after <print> when missing and inserts <transpose> before <directive>
+    xml = """<score-partwise>
+      <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+      <part id="P1">
+        <measure number="1">
+          <attributes><divisions>4</divisions><clef><sign>G</sign><line>2</line></clef><directive>Solo</directive></attributes>
+          <note><pitch><step>C</step><octave>4</octave></pitch><duration>16</duration></note>
+        </measure>
+      </part>
+    </score-partwise>"""
+    root = ET.fromstring(xml)
+    apply_instrument_override(root, "BARITONE")
+    m1_attrs = root.find("./part/measure[@number='1']/attributes")
+    tags = [ch.tag for ch in m1_attrs]
+    assert tags.index("transpose") < tags.index("directive")
+    assert (
+        m1_attrs.findtext("transpose/diatonic"),
+        m1_attrs.findtext("transpose/chromatic"),
+        m1_attrs.findtext("transpose/octave-change"),
+    ) == ("-1", "-2", "-1")
+
+    # Switching back to concert instrument removes <transpose>
+    apply_instrument_override(root, "Piano")
+    assert root.find(".//transpose") is None
+
+    # Measure without <attributes> still gets <attributes><transpose> after <print>
+    no_attr_part = ET.fromstring("<part id='P1'><measure number='1'><print/><note/></measure></part>")
+    assert sync_part_transpose(no_attr_part, InstrumentPlaybackProfile("brass.euphonium", -1, -2, -1, 2, 58)) is True
+    assert [c.tag for c in no_attr_part.find("measure")] == ["print", "attributes", "note"]
+
+    # Multi-page merge strips duplicate <transpose> from page 2 measure 1
+    p1 = copy_score = ET.fromstring(xml)
+    p2 = ET.fromstring(xml)
+    apply_instrument_override(p1, "BARITONE")
+    apply_instrument_override(p2, "BARITONE")
+    merged = merge_scores([p1, p2], title="Baritone Part")
+    assert len(merged.findall(".//transpose")) == 1
+    assert merged.find("./part/measure[@number='1']/attributes/transpose") is not None
+    assert merged.find("./part/measure[@number='2']/attributes/transpose") is None
