@@ -76,10 +76,9 @@ def _cached_fullscore_omr(monkeypatch, shared_rapidocr_reader):
             return real_run(image_paths, **kwargs)
 
         import cv2
+        from PIL import Image
         from pdf2musescore.fullscore.align import PageSidecar, write_page_sidecar
         from pdf2musescore.fullscore.instruments import extract_instrument_labels
-        from pdf2musescore.rehearsal import extract_rehearsal_marks_in_band
-        from pdf2musescore.tempo import extract_tempo_marking
 
         ocr_reader, ocr_ver_dir = shared_rapidocr_reader
         fp = _omr_cache_fingerprint(
@@ -123,31 +122,20 @@ def _cached_fullscore_omr(monkeypatch, shared_rapidocr_reader):
                     ocr_reader=ocr_reader,
                     ocr_dir=ocr_ver_dir,
                 )
-                tempo = extract_tempo_marking(
+                with Image.open(img_path) as im_sz:
+                    img_w = float(im_sz.width)
+                scale_x = img_w / float(kwargs.get("target_width", 3840))
+                in_sys_min_x = float(ld["sys_min_x"]) * scale_x
+                in_sys_max_x = float(ld["sys_max_x"]) * scale_x
+                tempo, positioned_tempos, rehearsal_marks = fs_runner_mod.extract_page_header_markings(
                     img_path,
-                    float(ld["top_staff_y"]),
-                    staff_left_x=float(ld["staff_left_x"]),
+                    top_staff_y=float(ld["top_staff_y"]),
+                    median_gap=float(ld["median_gap"]),
+                    sys_min_x=in_sys_min_x,
+                    sys_max_x=in_sys_max_x,
                     ocr_reader=ocr_reader,
                     ocr_dir=ocr_ver_dir,
                 )
-                rehearsal_marks = []
-                if float(ld["top_staff_y"]) >= 25:
-                    page_img = cv2.imread(str(img_path))
-                    if page_img is not None:
-                        min_reh_y = max(0, int(ld["top_staff_y"]) - int(max(170.0, float(ld["median_gap"]) * 2.2)))
-                        max_reh_y = int(float(ld["top_staff_y"]) - max(15.0, 0.15 * float(ld["median_gap"])))
-                        rehearsal_marks = extract_rehearsal_marks_in_band(
-                            page_img,
-                            0,
-                            int(ld["top_staff_y"]) + 8,
-                            sys_min_x=float(ld["sys_min_x"]),
-                            sys_max_x=float(ld["sys_max_x"]),
-                            unboxed_min_y=min_reh_y,
-                            unboxed_max_y=max_reh_y,
-                            ocr_reader=ocr_reader,
-                            ocr_dir=ocr_ver_dir,
-                            source_name=img_path.name,
-                        )
                 write_page_sidecar(
                     PageSidecar(
                         page_number=pno,
@@ -155,10 +143,11 @@ def _cached_fullscore_omr(monkeypatch, shared_rapidocr_reader):
                         staff_cys=list(ld["staff_cys"]),
                         staff_y_norms=list(ld["staff_y_norms"]),
                         labels=labels,
-                        sys_min_x=int(ld["sys_min_x"]),
-                        sys_max_x=int(ld["sys_max_x"]),
+                        sys_min_x=int(in_sys_min_x),
+                        sys_max_x=int(in_sys_max_x),
                         crop_x=int(ld["crop_x"]),
                         tempo=tempo,
+                        positioned_tempos=tuple(positioned_tempos),
                         rehearsal_marks=tuple(rehearsal_marks),
                     ),
                     dst_xml,
@@ -486,3 +475,254 @@ def test_fullscore_cover_page_skipped_cleanly():
     summary = verify_fullscore_invariants(root)
     assert summary["parts"] == 29
     assert summary["measures"] == 6
+
+
+def test_fullscore_green_hill_tuplets_meter_rehearsal_and_percussion():
+    _require_prereqs()
+    cfg = _make_config("regression_pages")
+    out_mscz = OUT / "regression_pages" / "green_hill_reg.mscz"
+    out_mscz.parent.mkdir(parents=True, exist_ok=True)
+
+    result = Pipeline(cfg).convert(
+        GREEN_HILL_PDF,
+        out_mscz,
+        pages_spec="13, 14, 17, 29, 35",
+        options=ConversionOptions(render_dpi=500, full_score=True),
+    )
+    assert result == out_mscz and zipfile.is_zipfile(out_mscz)
+
+    staged_xml = _newest_staged_xml(cfg.work_dir)
+    root = ET.parse(staged_xml).getroot()
+    summary = verify_fullscore_invariants(root)
+    assert summary["parts"] == 29
+    # p.13 (5, ghost m.51 trimmed!) + p.14 (5) + p.17 (5) + p.29 (5) + p.35 (4) = 24
+    assert summary["measures"] == 24
+    _assert_no_overfull_measures(root)
+
+    p1_ms = root.findall("./part[@id='P1']/measure")
+    # p.13: 5 bars, Poco meno mosso bpm=72 (no garbled '₀')
+    p13_tempos = [
+        (w.text or "", m.findtext("./direction/direction-type/metronome/per-minute"))
+        for m in p1_ms[:5]
+        for w in m.findall("./direction/direction-type/words")
+    ]
+    assert any("Poco meno mosso" in t and bpm == "72" for t, bpm in p13_tempos)
+    assert not any("₀" in t for t, _ in p13_tempos)
+
+    # p.14 (M6): switches to 12/8, boxed 'E', clean tempo without 'E ' or '•'
+    assert (p1_ms[5].findtext("./attributes/time/beats"), p1_ms[5].findtext("./attributes/time/beat-type")) == ("12", "8")
+    assert p1_ms[5].findtext("./direction/direction-type/rehearsal") == "E"
+    assert p1_ms[5].find("./direction/direction-type/rehearsal").get("enclosure") == "square"
+    m6_words = " ".join((w.text or "") for w in p1_ms[5].findall("./direction/direction-type/words"))
+    assert "E " not in m6_words and "•" not in m6_words
+
+    # p.17 (M11..M15, Bar. Solo): ZERO spurious tuplets! M13 (5th bar after F) preserves all 13 notes cleanly
+    for mi in range(10, 15):
+        assert p1_ms[mi].find(".//time-modification") is None, f"Unexpected spurious tuplet in M{mi + 1}"
+    m13_notes = [n for n in p1_ms[12].findall("note") if n.find("chord") is None and n.find("rest") is None]
+    assert len(m13_notes) == 13
+
+    # p.29 (M16..M20): inherited 12/8 is preserved (does NOT flip to 6/4)
+    for mi in range(10, 20):
+        assert p1_ms[mi].find("./attributes/time") is None
+
+    # p.35 (M21): switches to 4/4, boxed 'P' (enclosure="square"), 'Andante appassionato' without 'P '
+    assert (p1_ms[20].findtext("./attributes/time/beats"), p1_ms[20].findtext("./attributes/time/beat-type")) == ("4", "4")
+    assert p1_ms[20].findtext("./direction/direction-type/rehearsal") == "P"
+    assert p1_ms[20].find("./direction/direction-type/rehearsal").get("enclosure") == "square"
+    m21_words = [w.text or "" for w in p1_ms[20].findall("./direction/direction-type/words")]
+    assert any("Andante appassionato" in w and not w.startswith("P ") for w in m21_words)
+
+    with zipfile.ZipFile(out_mscz) as z:
+        mscx = [n for n in z.namelist() if n.endswith(".mscx")][0]
+        mscx_root = ET.fromstring(z.read(mscx))
+
+    mscx_staves = mscx_root.findall("./Score/Staff")
+    # Bar. Solo has 0 <Tuplet> elements across p.17 bars (M11..M15)
+    solo_ms = mscx_staves[0].findall("Measure")
+    assert all(len(solo_ms[mi].findall(".//Tuplet")) == 0 for mi in range(10, 15))
+
+    # Percussion 1 & 2 (staves 27, 28) have PERC clef only in M1, zero key flats, and no erratic heads
+    for perc_idx in (27, 28):
+        p_st = mscx_staves[perc_idx]
+        clefs = [(c.findtext("concertClefType"), c.findtext("transposingClefType")) for c in p_st.findall(".//Clef")]
+        assert clefs == [("PERC", "PERC")]
+        assert p_st.findall(".//KeySig") == []
+        bad_heads = {
+            n.findtext("head")
+            for n in p_st.findall(".//Note")
+            if n.findtext("head") in ("ti", "diamond", "slashed2", "triangle-down", "custom")
+        }
+        assert not bad_heads
+
+
+def test_fullscore_green_hill_header_ocr_fast(shared_rapidocr_reader):
+    if not GREEN_HILL_PDF.is_file():
+        pytest.skip(f"Test score PDF missing: {GREEN_HILL_PDF}")
+    import cv2
+    import numpy as np
+    import pypdfium2 as pdfium
+    from pdf2musescore.rehearsal import extract_rehearsal_marks_in_band
+    from pdf2musescore.tempo import extract_tempo_markings_in_band
+
+    ocr_reader, ocr_ver_dir = shared_rapidocr_reader
+    doc = pdfium.PdfDocument(str(GREEN_HILL_PDF))
+    try:
+        results = {}
+        for pno in (12, 13, 14, 30, 33, 35, 36):
+            bm = doc[pno - 1].render(scale=500 / 72.0)
+            img = cv2.cvtColor(np.array(bm.to_pil()), cv2.COLOR_RGB2BGR)
+            h_px = img.shape[0]
+            y_bot = int(h_px * 0.16)
+            rehs = extract_rehearsal_marks_in_band(
+                img, 0, y_bot, ocr_reader=ocr_reader, ocr_dir=ocr_ver_dir, source_name=f"p{pno}"
+            )
+            excl = [(r.x_left, r.y_top, r.x_right, r.y_bottom) for r in rehs]
+            tempos = extract_tempo_markings_in_band(
+                img, 0, y_bot, ocr_reader=ocr_reader, ocr_dir=ocr_ver_dir, exclude_boxes=excl, source_name=f"p{pno}"
+            )
+            results[pno] = (rehs, tempos)
+    finally:
+        doc.close()
+
+    # p.12: Meno mosso = 69, A Tempo = 76, rit.
+    p12_t = [(t.tempo.text, t.tempo.bpm, t.tempo.is_expression) for t in results[12][1]]
+    assert ("Meno mosso", 69, False) in p12_t
+    assert ("A Tempo", 76, False) in p12_t
+    assert any(txt == "rit." and is_e for txt, _, is_e in p12_t)
+
+    # p.13: Poco meno mosso = 72
+    p13_t = [(t.tempo.text, t.tempo.bpm) for t in results[13][1] if not t.tempo.is_expression]
+    assert ("Poco meno mosso", 72) in p13_t
+
+    # p.14: boxed 'E', clean tempo without 'E ' or '•'
+    assert [(r.mark.label, r.mark.enclosure) for r in results[14][0]] == [("E", "square")]
+    assert all(not t.tempo.text.startswith("E ") and "•" not in t.tempo.text for t in results[14][1])
+
+    # p.30: boxed 'N', 'A Tempo (in 2)' without 'N '
+    assert [(r.mark.label, r.mark.enclosure) for r in results[30][0]] == [("N", "square")]
+    assert any(t.tempo.text == "A Tempo (in 2)" for t in results[30][1])
+
+    # p.33: boxed 'O' (not dropped as '0')
+    assert [(r.mark.label, r.mark.enclosure) for r in results[33][0]] == [("O", "square")]
+
+    # p.35: boxed 'P', 'Andante appassionato' bpm=76 without 'P '
+    assert [(r.mark.label, r.mark.enclosure) for r in results[35][0]] == [("P", "square")]
+    assert any(t.tempo.text == "Andante appassionato" and t.tempo.bpm == 76 for t in results[35][1])
+
+    # p.36: Meno mosso = 65, rit.
+    p36_t = [(t.tempo.text, t.tempo.bpm, t.tempo.is_expression) for t in results[36][1]]
+    assert ("Meno mosso", 65, False) in p36_t
+    assert any(txt == "rit." and is_e for txt, _, is_e in p36_t)
+
+
+def test_fullscore_musescore_percussion_and_meter_edge_cases():
+    ms_exe = find_tool(MUSESCORE)
+    if not ms_exe:
+        pytest.skip("MuseScore required")
+
+    from pdf2musescore.exporters.musescore import MuseScoreExporter
+    from pdf2musescore.fullscore.align import PageSidecar, merge_fullscore_pages
+    from pdf2musescore.fullscore.instruments import InstrumentLabel
+    from pdf2musescore.musicxml import write_musicxml
+
+    edge_dir = OUT / "edge_cases"
+    shutil.rmtree(edge_dir, ignore_errors=True)
+    edge_dir.mkdir(parents=True, exist_ok=True)
+
+    labels = [
+        InstrumentLabel("Baritone Solo", "Bar. Solo"),
+        InstrumentLabel("Flute 1", "Fl. 1"),
+        InstrumentLabel("Oboe 1", "Ob. 1"),
+        InstrumentLabel("Bassoon", "Bsn."),
+        InstrumentLabel("Percussion 1", "Perc. 1"),
+    ]
+
+    def _build_page(m_specs, perc_clef, perc_note):
+        # m_specs: list of (ts_or_none, q_len_or_none_for_rest)
+        root = ET.Element("score-partwise", version="4.0")
+        ET.SubElement(root, "identification")
+        pl = ET.SubElement(root, "part-list")
+        for idx in range(5):
+            pid = f"P{idx + 1}"
+            sp = ET.SubElement(pl, "score-part", id=pid)
+            ET.SubElement(sp, "part-name").text = labels[idx].full_name
+            part = ET.SubElement(root, "part", id=pid)
+            for mi, (ts, q_len) in enumerate(m_specs):
+                m = ET.SubElement(part, "measure", number=str(mi + 1))
+                this_ts = ts
+                if idx == 4 and mi == 0 and this_ts is None:
+                    this_ts = ("6", "4")
+                if mi == 0 or this_ts is not None:
+                    a = ET.SubElement(m, "attributes")
+                    if mi == 0:
+                        ET.SubElement(a, "divisions").text = "4"
+                        ET.SubElement(ET.SubElement(a, "key"), "fifths").text = "-2"
+                        c = ET.SubElement(a, "clef", number="1")
+                        cl = perc_clef if idx == 4 else ("F", "4")
+                        ET.SubElement(c, "sign").text = cl[0]
+                        ET.SubElement(c, "line").text = cl[1]
+                    if this_ts is not None:
+                        t = ET.SubElement(a, "time")
+                        ET.SubElement(t, "beats").text = this_ts[0]
+                        ET.SubElement(t, "beat-type").text = this_ts[1]
+                n = ET.SubElement(m, "note")
+                if idx == 4 and mi == 0 and perc_note is not None:
+                    p = ET.SubElement(n, "pitch")
+                    ET.SubElement(p, "step").text = perc_note[0]
+                    ET.SubElement(p, "octave").text = perc_note[1]
+                    ET.SubElement(n, "duration").text = str(int(round((q_len or 6) * 4)))
+                elif q_len is None or idx >= 3:
+                    ET.SubElement(n, "rest")
+                    ET.SubElement(n, "duration").text = str(int(round((q_len or 6) * 4)))
+                else:
+                    p = ET.SubElement(n, "pitch")
+                    ET.SubElement(p, "step").text = "C"
+                    ET.SubElement(p, "octave").text = "4"
+                    ET.SubElement(n, "duration").text = str(int(round(q_len * 4)))
+                ET.SubElement(n, "voice").text = "1"
+                ET.SubElement(n, "staff").text = "1"
+        return root
+
+    # Page 1: explicit 12/8 (Perc in C3, D4 = 3rd space)
+    p1 = _build_page([(("12", "8"), 6), (None, 6)], ("C", "3"), ("D", "4"))
+    # Page 2: p.21 pattern (all parts emit 6/4 fallback, Perc in F4, E3 = 3rd space) -> preserves 12/8!
+    p2 = _build_page([(("6", "4"), 6), (None, 6)], ("F", "4"), ("E", "3"))
+    # Page 3: p.31/p.32 pattern (m1 minority 5/4, m2 rest-only 10/8 while pitched play 6q; Perc in G2, C5 = 3rd space) -> stays 12/8!
+    p3 = _build_page([(("5", "4"), 6), (("10", "8"), 6)], ("G", "2"), ("C", "5"))
+    # Adjust P3 so only 1 pitched part says 5/4 on m1 and only rest parts say 10/8 on m2
+    for idx, part in enumerate(p3.findall("part")):
+        ms = part.findall("measure")
+        if idx >= 1:
+            t1 = ms[0].find("./attributes/time")
+            if t1 is not None:
+                ms[0].find("attributes").remove(t1)
+        if idx < 3:
+            t2 = ms[1].find("./attributes/time")
+            if t2 is not None:
+                ms[1].remove(ms[1].find("attributes"))
+
+    sc = lambda n: PageSidecar(n, 5, [10.0 * i for i in range(5)], [i / 4.0 for i in range(5)], labels)
+    merged = merge_fullscore_pages([(1, p1, sc(1)), (2, p2, sc(2)), (3, p3, sc(3))], title="Edge Cases")
+    verify_fullscore_invariants(merged)
+    _assert_no_overfull_measures(merged)
+
+    # All 6 bars stay 12/8
+    assert [
+        (t.findtext("beats"), t.findtext("beat-type"))
+        for t in merged.findall("./part[@id='P1']/measure/attributes/time")
+    ] == [("12", "8")]
+
+    xml_out = write_musicxml(merged, edge_dir / "edges.musicxml")
+    mscz_out = MuseScoreExporter(ms_exe).export(xml_out, edge_dir / "edges.mscz")
+    with zipfile.ZipFile(mscz_out) as z:
+        mscx = [n for n in z.namelist() if n.endswith(".mscx")][0]
+        mscx_root = ET.fromstring(z.read(mscx))
+
+    perc_staff = mscx_root.findall("./Score/Staff")[4]
+    assert [(c.findtext("concertClefType"), c.findtext("transposingClefType")) for c in perc_staff.findall(".//Clef")] == [
+        ("PERC", "PERC")
+    ]
+    assert perc_staff.findall(".//KeySig") == []
+    perc_notes = [(n.findtext("pitch"), n.findtext("head")) for n in perc_staff.findall(".//Note")]
+    assert perc_notes == [("38", None), ("38", None), ("38", None)]

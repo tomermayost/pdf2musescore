@@ -51,6 +51,7 @@ from pdf2musescore.tempo import (
         ("E Jig • = 152", "Jig", 152, "quarter", False),
         ("P Andante appassionato = 76", "Andante appassionato", 76, "quarter", False),
         ("N A Tempo (in 2)", "A Tempo (in 2)", None, "quarter", False),
+        ("Poco meno mosso ₀ d=72", "Poco meno mosso", 72, "quarter", False),
     ],
 )
 def test_parse_tempo_text_valid(raw, exp_text, exp_bpm, exp_unit, exp_dot):
@@ -393,10 +394,10 @@ def test_expression_extraction_barlines_mapping_and_xml():
         return (
             [
                 [[100, 20], [140, 20], [140, 60], [100, 60]],  # inside excluded rehearsal box 'P'
-                [[160, 20], [360, 20], [360, 55], [160, 55]],  # Poco meno mosso (h=35)
-                [[435, 22], [500, 22], [500, 56], [435, 56]],  # =72 across x_gap=75 (~2.1 * 35)
+                [[160, 20], [420, 20], [420, 55], [160, 55]],  # Poco meno mosso (h=35)
+                [[395, 16], [510, 16], [510, 58], [395, 58]],  # ₀ d=72 overlapping slightly (-25px)
             ],
-            ["P", "Poco meno mosso", "=72"],
+            ["P", "Poco meno mosso", "₀ d=72"],
         )
 
     wide_pts = extract_tempo_markings_in_band(

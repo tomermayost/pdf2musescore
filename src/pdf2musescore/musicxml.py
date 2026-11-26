@@ -657,8 +657,18 @@ def normalize_unpitched_percussion_part(
 
         # 3. Normalize measure attributes: Measure 1 -> fifths=0 + percussion/2; Measure 2..N -> strip key & clef
         if mi == 0:
-            attrs = measure.find("attributes")
-            if attrs is None:
+            all_attrs = list(measure.findall("attributes"))
+            if all_attrs:
+                attrs = all_attrs[0]
+                for extra_attr in all_attrs[1:]:
+                    for old_k in list(extra_attr.findall("key")):
+                        extra_attr.remove(old_k)
+                    for old_c in list(extra_attr.findall("clef")):
+                        extra_attr.remove(old_c)
+                        clef_flips_removed += 1
+                    if len(extra_attr) == 0:
+                        measure.remove(extra_attr)
+            else:
                 attrs = ET.Element("attributes")
                 ins_m = 0
                 for idx, ch in enumerate(list(measure)):

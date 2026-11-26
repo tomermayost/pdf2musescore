@@ -613,3 +613,19 @@ def test_sync_part_transpose_and_multi_page_merge_dedup():
     assert len(merged.findall(".//transpose")) == 1
     assert merged.find("./part/measure[@number='1']/attributes/transpose") is not None
     assert merged.find("./part/measure[@number='2']/attributes/transpose") is None
+
+    # Percussion normalization cleans multiple <attributes> inside Measure 1 (e.g. homr split attributes/clef)
+    perc_multi_attr = ET.fromstring(
+        "<score-partwise><part-list><score-part id='P1'><part-name>Percussion 1</part-name></score-part></part-list>"
+        "<part id='P1'><measure number='1'>"
+        "<attributes><divisions>4</divisions><key><fifths>-2</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time></attributes>"
+        "<attributes><clef number='1'><sign>F</sign><line>4</line></clef></attributes>"
+        "<note><pitch><step>E</step><octave>3</octave></pitch><duration>16</duration></note>"
+        "</measure></part></score-partwise>"
+    )
+    apply_instrument_override(perc_multi_attr, "Percussion 1")
+    m1_p = perc_multi_attr.find("./part/measure[@number='1']")
+    assert [(c.findtext("sign"), c.findtext("line")) for c in m1_p.findall(".//clef")] == [("percussion", "2")]
+    assert [k.findtext("fifths") for k in m1_p.findall(".//key")] == ["0"]
+    assert m1_p.findtext("./note/unpitched/display-step") == "C"
+    assert m1_p.findtext("./note/unpitched/display-octave") == "5"

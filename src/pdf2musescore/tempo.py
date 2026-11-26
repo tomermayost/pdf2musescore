@@ -52,7 +52,8 @@ _UNIT_FACTORS: dict[str, float] = {
 
 _TEMPO_HEADWORDS_PAT = (
     r"tempo\s+di\s+(?:menuetto|minuetto|valse|waltz|marcia|march|\w+)|"
-    r"alla\s+marcia|meno\s+mosso|pi[uù]\s+mosso|a\s+tempo|"
+    r"(?:(?:poco|molto|sempre)\s+)?(?:meno|pi[uù])\s+mosso|"
+    r"alla\s+marcia|a\s+tempo|"
     r"prestissimo|larghetto|adagietto|andantino|allegretto|moderately|"
     r"moderato|maestoso|brightly|quickly|allegro|andante|adagio|"
     r"vivace|presto|slowly|lively|freely|grave|largo|lento|vivo|fast"
@@ -358,14 +359,19 @@ def _merge_horizontal_ocr_boxes(
     merged: list[list[Any]] = []
     for left, top, right, bottom, text in sorted(items, key=lambda it: (it[0], it[1])):
         cur_h = max(1.0, bottom - top)
-        is_metro = bool(re.match(r"^(?:[=≈(♩♪𝅗𝅥𝅗]|[dqhe]\s*[=≈]|m\.?m\.?|bpm\b)", text, re.IGNORECASE))
+        is_metro = bool(re.match(r"^(?:[=≈(♩♪𝅗𝅥𝅗₀•·°◦○●]|[0-9]?\s*[dqhe]\s*[=≈]|m\.?m\.?|bpm\b)", text, re.IGNORECASE))
         max_gap_mult = 2.4 if is_metro else 1.2
         min_ov_mult = 0.35 if is_metro else 0.45
         for prev in merged:
             prev_h = max(1.0, prev[3] - prev[1])
             y_overlap = min(prev[3], bottom) - max(prev[1], top)
             x_gap = left - prev[2]
-            if y_overlap > min_ov_mult * min(prev_h, cur_h) and -0.3 * min(prev_h, cur_h) <= x_gap <= max_gap_mult * max(prev_h, cur_h):
+            min_gap = (-0.8 * min(prev_h, cur_h)) if is_metro else (-0.3 * min(prev_h, cur_h))
+            if (
+                y_overlap > min_ov_mult * min(prev_h, cur_h)
+                and min_gap <= x_gap <= max_gap_mult * max(prev_h, cur_h)
+                and (not is_metro or left >= prev[0] + 0.3 * (prev[2] - prev[0]))
+            ):
                 prev[0] = min(prev[0], left)
                 prev[1] = min(prev[1], top)
                 prev[2] = max(prev[2], right)

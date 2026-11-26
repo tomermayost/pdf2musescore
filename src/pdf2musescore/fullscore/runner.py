@@ -85,7 +85,9 @@ def extract_page_header_markings(
 
     h_px = page_img.shape[0]
     y_bot = max(1, min(int(top_staff_y) + 8, h_px))
-    header = page_img[:y_bot, :]
+    header = cv2.copyMakeBorder(
+        page_img[:y_bot, :], 0, 32, 0, 0, cv2.BORDER_CONSTANT, value=(255, 255, 255)
+    )
     boxes_raw: Sequence[Any] = []
     txts_raw: Sequence[str] = []
     try:
