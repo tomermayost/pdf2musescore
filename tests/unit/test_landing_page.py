@@ -173,11 +173,16 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert "browser_download_url" in js_text
     assert (DOCS / "assets" / "ui-dark.png").is_file()
     assert (DOCS / "assets" / "ui-light.png").is_file()
+    for ui_name in ("ui-dark.png", "ui-light.png"):
+        with Image.open(DOCS / "assets" / ui_name) as ui_img:
+            assert ui_img.width >= 600 and ui_img.height >= 350
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "https://tomermayost.github.io/pdf2musescore/" in readme
     assert "What are the minimum system requirements?" in html_text
     assert "AVX2" in html_text
+    assert "Full Score (Conductor)" in html_text
+    assert "Instrument, Clef &amp; Transpose" in html_text
     assert "preparing a Microsoft-signed" not in html_text
     assert "submitted for Store review" not in html_text
     assert "drag and drop" in html_text.lower()

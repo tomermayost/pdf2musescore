@@ -13,12 +13,12 @@ Convert sheet music PDFs and photos (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) in
 
 > 👉 **[Get it from Microsoft Store (Recommended — Signed, Zero SmartScreen)](https://apps.microsoft.com/detail/9N6NCBWM3BHT)** · **[Standalone `.exe` Installer (Latest Release)](https://github.com/tomermayost/pdf2musescore/releases/latest)** · 🌐 **[Website](https://tomermayost.github.io/pdf2musescore/)** · **[All Releases & Checksums](https://github.com/tomermayost/pdf2musescore/releases)** · **[Ask Questions in Discussions](https://github.com/tomermayost/pdf2musescore/discussions)**
 
-![PDF to MuseScore Light Studio Interface](docs/assets/ui-light.png)
+![PDF to MuseScore Dark Studio Interface](docs/assets/ui-dark.png)
 
 <details>
-<summary>Preview Dark Studio Theme &amp; Advanced AI Settings Drawer</summary>
+<summary>Preview Light Studio Theme &amp; Optional Instrument / Clef / Transpose Drawer</summary>
 
-![PDF to MuseScore Dark Studio Interface with Advanced Settings](docs/assets/ui-dark.png)
+![PDF to MuseScore Light Studio Interface with Instrument, Clef and Transpose options](docs/assets/ui-light.png)
 
 </details>
 
@@ -51,9 +51,10 @@ Notice how `pdf2musescore` preserves the **bass clef, D minor key signature (B�
 ## Key Features
 
 - **Direct Image Input & Drag-and-Drop:** Drop a PDF or sheet-music photo (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) straight onto the window — smartphone EXIF rotation and transparent PNGs are handled automatically.
-- **Live Sheet-Music Preview & Interactive Page Picker:** Flip through PDF pages (`◀` / `▶` or `←` / `→`) inside the app and click **Pick / Include page** (or type ranges like `2-3, 5`) to convert only the movements or pages you need.
+- **Live Sheet-Music Preview & Context-Aware Page Picker:** For multi-page PDFs, page navigation (`◀` / `▶` or `←` / `→`) and **Pick / Include page** controls appear automatically (or type ranges like `2-3, 5`), staying tucked away for single-page photos and scores.
 - **One-Click Scan Presets:** Choose **Clean PDF**, **Faded Scan** (enhances light photocopies + auto-deskews), or **Phone Photo** (adaptive shadow removal + auto-deskew) — no guesswork required.
-- **Musician-First Score Setup:** Pick **Instrument**, override **Clef**, or **Transpose** (`−` / `+` half-steps with live musical hints like `+2 (Up M2 · B♭)` for trumpet/clarinet/tenor sax) before opening in MuseScore.
+- **Single Part & Full Score (Conductor) Modes:** Switch between solo/individual parts and multi-staff conductor scores (auto-detecting instruments, playback transpositions, and tempo markings).
+- **Clean, Progressive Score Setup:** Optional **Instrument**, **Clef**, and **Transpose** (`−` / `+` half-steps with live musical hints like `+2 (Up M2 · B♭)`) live in a collapsible **Instrument, Clef & Transpose** drawer with a live summary badge, while **Advanced AI & Layout Settings** and **Activity Log** stay collapsed until needed.
 - **MuseScore 4 Sanitization & Unicode Path Safety:** Cleans unclosed slurs, malformed tuplets, and problematic tremolos from raw OMR output, sets the score title from your saved filename, and handles non-ASCII folders reliably.
 - **Powered by `homr` 0.7+ Deep-Learning AI:** Runs ONNX Runtime locally on CPU — recognizing notes, slurs, ties, dynamics, expression text (`dolce`, `a tempo`, etc.), beams, and multi-page scores.
 
@@ -82,8 +83,8 @@ Optical music recognition (OMR) has come a long way, and setting clear expectati
 
 ### Quick Start
 1. Launch **PDF to MuseScore** from the Start Menu (or Desktop shortcut).
-2. **Load & Preview:** Drag and drop a sheet music PDF or photo directly onto the window, or click the preview pane / **Load File...** (`Ctrl+O`). Flip through PDF pages (`←` / `→`), optionally click **Pick / Include page** or type a range (e.g. `2-3`), and select **Clean PDF**, **Faded Scan**, or **Phone Photo**.
-3. **Score Setup & Convert:** Set **Instrument**, **Clef**, **Transpose**, or expand **Advanced AI & Layout Settings** (hover any control for defaults & examples), then click **Convert & Save** (`Ctrl+Enter`). When finished, click **Open in MuseScore** or **Show Folder** in the completion banner. Toggle **🌙 Dark / ☀ Light** anytime in the top right.
+2. **Load & Preview:** Drag and drop a sheet music PDF or photo directly onto the window, or click the preview pane / **Load File...** (`Ctrl+O`, becomes **Change File...** once loaded). For multi-page PDFs, flip through pages (`←` / `→`) and optionally click **Pick / Include page** or type a range (e.g. `2-3`), then select **Clean PDF**, **Faded Scan**, or **Phone Photo**.
+3. **Score Setup & Convert:** Choose **Single Part** or **Full Score (Conductor)**, optionally expand **Instrument, Clef & Transpose** or **Advanced AI & Layout Settings** (both show live summary badges when customized), then click **Convert & Save** (`Ctrl+Enter`). When finished, click **Open in MuseScore** or **Show Folder** in the completion popup or inline banner. Toggle **🌙 Dark / ☀ Light** anytime in the top right.
 
 ### System Requirements
 
@@ -108,23 +109,25 @@ gh attestation verify .\pdf2musescore-<version>-setup-x64.exe --repo tomermayost
 
 ## Engine & Score Parameters
 
-All parameters are available directly in **Score Setup** and the collapsible **Advanced AI & Layout Settings** drawer in the GUI (hover over any label or input box for tooltips with defaults and examples, or click **Reset**):
+All parameters are available directly in **Score Setup** (choosing **Score Mode**, expanding **Instrument, Clef & Transpose**, or expanding **Advanced AI & Layout Settings** — hover over any label or input box for tooltips with defaults and examples, or click **Reset**):
 
 ### PDF Rendering, Image Preprocessing & AI Engine
 | Parameter | Default | Examples | Description & When to Adjust |
 |---|---|---|---|
-| **Scan Quality (DPI)** (`render_dpi`) | `300` | `200` (faster), `300` (normal), `400` (tiny or crowded notes) | Controls how closely the app zooms in on each PDF page (`100`–`600`). Keep at `300` for normal sheet music. Try `400` if the notes are very small or crowded together, or `200` if you want a faster conversion. |
+| **Scan Quality (DPI)** (`render_dpi`) | `300` | `200` (faster), `300` (normal), `400` (tiny or crowded notes) | Controls how closely the app zooms in on each PDF page (`100`–`600`; automatically bumped to `500` in **Full Score (Conductor)** mode). Keep at `300` for normal sheet music, `400` if notes are crowded, or `200` for faster conversion. |
 | **Page Cleanup** (`preprocess_mode`) | `auto` | `auto`, `faded`, `binarize`, `none` | Helps the app read difficult scans:<br>• **`auto`** *(default)*: Best for normal, clean PDFs.<br>• **`faded`**: Darkens light or washed-out ink (great for old photocopies or faded scans).<br>• **`binarize`**: Turns the page pure black & white (great for phone camera photos with shadows).<br>• **`none`**: Uses the page picture as-is without any cleanup. |
 | **Straighten Tilted Page** (`deskew`) | `False` | `Off` (normal), `On` (straighten crooked scans) | Check this box if the sheet music was scanned or photographed slightly crooked. The app will automatically straighten the staff lines before reading the notes. |
 | **Reading Thoroughness (px)** (`segnet_step_size`) | `320` | `320` (normal speed), `240` (more careful), `160` (most careful, slower) | The app reads the page in overlapping squares (`80`–`320`). Lower numbers (`240` or `160`) make the squares overlap more so notes near the edges aren't missed — helpful on crowded pages, though it takes a little longer. |
 | **Smallest Note Size (px)** (`min_notehead_size`) | `4` | `3` (keep tiny grace notes), `4` (normal), `6` (ignore paper dust/specks) | Controls the smallest black dot (`2`–`12`) the app treats as a musical note. Lower to `3` if small grace notes are being missed; raise to `6` if dusty spots on the paper are turning into extra fake notes. |
+| **Full Score Width (px)** (`full_score_target_width`) | `3840` | `3840` (4K wide), `2560`–`4800` | Shown when **Full Score (Conductor)** mode is selected. Controls the horizontal target resolution used when rendering dense multi-staff conductor pages. |
 
 ### Score Post-Processing (MusicXML / MuseScore)
 | Parameter | Default | Examples | Description & When to Adjust |
 |---|---|---|---|
-| **Transpose (Half-Steps)** (`transpose_semitones`) | `0` | `0` (keep original), `+2` (for B♭ Trumpet/Clarinet/Tenor Sax), `-12` (down 1 octave), `+12` (up 1 octave) | Moves every note and the key signature up or down by the number of half-steps (semitones, `-24` to `+24`) you enter. |
-| **Clef** (`clef_override`) | `auto` | `auto`, `treble`, `bass`, `alto`, `tenor` | Keep at `auto` to use whatever clef is printed on the page, or pick a clef (`bass` or `tenor` for Trombone/Cello, `treble` for Violin/Flute, `alto` for Viola) if the scan misread the clef sign. |
-| **Instrument** (`instrument_name`) | `auto` | `auto`, `Piano`, `Trombone`, `Violin`, `Flute`, `Trumpet`, `Cello` | Sets the instrument name and playback sound in MuseScore. Pick one from the list or type any instrument name you like. *(Note: the score title is set automatically from the filename you choose when saving.)* |
+| **Score Mode** (`full_score`) | `Single Part` | `Single Part`, `Full Score (Conductor)` | Keep **Single Part** for solo/monophonic/piano parts. Switch to **Full Score (Conductor)** for multi-staff ensemble or orchestral scores to align staves and auto-detect instruments & playback transpositions. |
+| **Transpose (Half-Steps)** (`transpose_semitones`) | `0` | `0` (keep original), `+2` (for B♭ Trumpet/Clarinet/Tenor Sax), `-12` (down 1 octave), `+12` (up 1 octave) | Available in **Single Part** mode inside **Instrument, Clef & Transpose**. Moves every note and the key signature up or down by the number of half-steps (`-24` to `+24`) you enter. |
+| **Clef** (`clef_override`) | `auto` | `auto`, `treble`, `bass`, `alto`, `tenor` | Available in **Single Part** mode inside **Instrument, Clef & Transpose**. Keep at `auto` to use whatever clef is printed on the page, or pick a clef if the scan misread the clef sign. |
+| **Instrument** (`instrument_name`) | `auto` | `auto`, `Piano`, `Trombone`, `Violin`, `Flute`, `Trumpet`, `Cello` | Available in **Single Part** mode inside **Instrument, Clef & Transpose**. Sets the instrument name and playback sound in MuseScore. *(Note: the score title is set automatically from the filename you choose when saving.)* |
 | **Keep Original Line Breaks** (`keep_line_breaks`) | `False` | `Off` (auto-flow), `On` (lock breaks to PDF) | When turned off *(recommended)*, removes forced system and page breaks so MuseScore flows measures neatly across lines and pages. Turn on only if you want every line and page to break in the exact same places as the original PDF. |
 
 ---

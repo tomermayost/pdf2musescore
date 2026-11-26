@@ -12,13 +12,13 @@
   var PREVIEW_META = {
     dark: {
       src: "assets/ui-dark.png",
-      alt: "PDF to MuseScore Dark Studio interface with Advanced AI settings drawer",
-      caption: "Dark Studio + Advanced AI Settings"
+      alt: "PDF to MuseScore Dark Studio interface with live sheet-music preview and Open in MuseScore completion banner",
+      caption: "Dark Studio · Live Preview & Completion Banner"
     },
     light: {
       src: "assets/ui-light.png",
-      alt: "PDF to MuseScore Light Studio interface with live sheet-music preview and Open in MuseScore banner",
-      caption: "Light Studio + Completion Actions"
+      alt: "PDF to MuseScore Light Studio interface with expanded Instrument, Clef, and Transpose drawer",
+      caption: "Light Studio · Instrument, Clef & Transpose"
     }
   };
 

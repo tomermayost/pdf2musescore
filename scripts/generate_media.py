@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+from ctypes import wintypes
 import logging
 import subprocess
+import sys
+from tempfile import TemporaryDirectory
+import time
+import tkinter as tk
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageGrab, ImageOps
 
 log = logging.getLogger("pdf2musescore.generate_media")
 
@@ -17,6 +23,8 @@ DEFAULT_PDF = ROOT / "tests" / "fixtures" / "bach_cello_suite_2.pdf"
 DEFAULT_MSCZ = ROOT / "tests" / "fixtures" / "bach_cello_suite_2.mscz"
 DEFAULT_ICON = ROOT / "src" / "pdf2musescore" / "assets" / "icon.png"
 DEFAULT_SCREENSHOT = ROOT / "docs" / "assets" / "ui-dark.png"
+DEFAULT_UI_DARK_OUT = ROOT / "docs" / "assets" / "ui-dark.png"
+DEFAULT_UI_LIGHT_OUT = ROOT / "docs" / "assets" / "ui-light.png"
 DEFAULT_BEFORE_AFTER_OUT = ROOT / "docs" / "assets" / "before-after-bach.png"
 DEFAULT_SOCIAL_OUT = ROOT / "docs" / "assets" / "social-preview.png"
 DEFAULT_MEDIA_TMP = ROOT / "tmp" / "media"
@@ -352,7 +360,7 @@ def generate_social_preview(
     draw.text((60, 268), "Free, Offline AI Sheet Music Converter", font=sub_font, fill=(226, 232, 240))
     draw.text(
         (60, 314),
-        "Turn printed or scanned PDFs into editable\nMuseScore 4 (.mscz) and MusicXML scores.",
+        "Turn sheet music PDFs & photos into editable\nMuseScore 4 (.mscz) and MusicXML scores.",
         font=desc_font,
         fill=(148, 163, 184),
         spacing=7,
@@ -386,17 +394,281 @@ def generate_social_preview(
     return out_path
 
 
+def _capture_window_printwindow(hwnd: int) -> Optional[Image.Image]:
+    """Capture a window off-screen via Win32 PrintWindow + DWM extended-frame crop."""
+    if sys.platform != "win32":
+        return None
+    windll = getattr(ctypes, "windll", None)
+    if windll is None or not hasattr(windll, "user32") or not hasattr(windll, "gdi32"):
+        return None
+
+    user32 = windll.user32
+    gdi32 = windll.gdi32
+    win_rect = wintypes.RECT()
+    if not user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(win_rect)):
+        return None
+    win_w = int(win_rect.right - win_rect.left)
+    win_h = int(win_rect.bottom - win_rect.top)
+    if win_w <= 0 or win_h <= 0:
+        return None
+
+    class _BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD),
+            ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG),
+            ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    class _BITMAPINFO(ctypes.Structure):
+        _fields_ = [("bmiHeader", _BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
+
+    hwnd_dc = user32.GetWindowDC(wintypes.HWND(hwnd))
+    if not hwnd_dc:
+        return None
+    mem_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+    if not mem_dc:
+        user32.ReleaseDC(wintypes.HWND(hwnd), hwnd_dc)
+        return None
+
+    bmi = _BITMAPINFO()
+    bmi.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+    bmi.bmiHeader.biWidth = win_w
+    bmi.bmiHeader.biHeight = -win_h  # top-down DIB
+    bmi.bmiHeader.biPlanes = 1
+    bmi.bmiHeader.biBitCount = 32
+    bmi.bmiHeader.biCompression = 0  # BI_RGB
+
+    bits_ptr = ctypes.c_void_p()
+    dib = gdi32.CreateDIBSection(mem_dc, ctypes.byref(bmi), 0, ctypes.byref(bits_ptr), None, 0)
+    if not dib or not bits_ptr.value:
+        if dib:
+            gdi32.DeleteObject(dib)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(wintypes.HWND(hwnd), hwnd_dc)
+        return None
+
+    old_obj = gdi32.SelectObject(mem_dc, dib)
+    try:
+        # PW_RENDERFULLCONTENT = 2 captures DWM client + non-client area cleanly
+        ok = user32.PrintWindow(wintypes.HWND(hwnd), mem_dc, 2)
+        if not ok:
+            ok = user32.PrintWindow(wintypes.HWND(hwnd), mem_dc, 0)
+        if not ok:
+            return None
+
+        raw_bytes = ctypes.string_at(bits_ptr.value, win_w * win_h * 4)
+        img = Image.frombuffer("RGBA", (win_w, win_h), raw_bytes, "raw", "BGRA", 0, 1).convert("RGB")
+
+        # Crop invisible Win10/11 drop-shadow margins via DWMWA_EXTENDED_FRAME_BOUNDS (9)
+        if hasattr(windll, "dwmapi"):
+            vis_rect = wintypes.RECT()
+            res = windll.dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(hwnd),
+                9,
+                ctypes.byref(vis_rect),
+                ctypes.sizeof(vis_rect),
+            )
+            if res == 0:
+                cl = max(0, int(vis_rect.left - win_rect.left))
+                ct = max(0, int(vis_rect.top - win_rect.top))
+                cr = min(win_w, int(vis_rect.right - win_rect.left))
+                cb = min(win_h, int(vis_rect.bottom - win_rect.top))
+                if cr > cl and cb > ct:
+                    img = img.crop((cl, ct, cr, cb))
+        return img
+    finally:
+        gdi32.SelectObject(mem_dc, old_obj)
+        gdi32.DeleteObject(dib)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(wintypes.HWND(hwnd), hwnd_dc)
+
+
+def _capture_window_image(window: tk.Tk) -> Image.Image:
+    """Capture the exact visible bounds of a Tk window (including Windows DWM titlebar)."""
+    window.update_idletasks()
+    window.update()
+    time.sleep(0.35)
+    window.update()
+
+    if sys.platform == "win32":
+        try:
+            windll = getattr(ctypes, "windll", None)
+            if windll is not None and hasattr(windll, "user32"):
+                hwnd = int(windll.user32.GetParent(window.winfo_id()) or window.winfo_id())
+                pw_img = _capture_window_printwindow(hwnd)
+                if pw_img is not None:
+                    return pw_img
+        except Exception as exc:
+            log.debug("PrintWindow capture fallback: %s", exc)
+
+    x0 = window.winfo_rootx()
+    y0 = window.winfo_rooty()
+    x1 = x0 + window.winfo_width()
+    y1 = y0 + window.winfo_height()
+    return ImageGrab.grab(bbox=(x0, y0, x1, y1), all_screens=True).convert("RGB")
+
+
+def _configure_showcase_window(
+    root: tk.Tk,
+    theme: str,
+    dark_titlebar: bool,
+) -> None:
+    from pdf2musescore.ui_theme import apply_windows_titlebar_theme, get_assets_dir
+
+    assets = get_assets_dir()
+    ico_path = assets / "icon.ico"
+    png_path = assets / "icon.png"
+    try:
+        if ico_path.is_file():
+            root.iconbitmap(str(ico_path))
+        if png_path.is_file():
+            from PIL import ImageTk
+
+            icon_photo = ImageTk.PhotoImage(Image.open(png_path), master=root)
+            root.iconphoto(True, icon_photo)
+            root._app_icon_ref = icon_photo  # type: ignore[attr-defined]
+    except Exception as exc:
+        log.debug("Showcase window icon setup skipped: %s", exc)
+
+    root.update_idletasks()
+    scr_w = max(1024, root.winfo_screenwidth())
+    scr_h = max(720, root.winfo_screenheight())
+    req_w = root.winfo_reqwidth()
+    req_h = root.winfo_reqheight()
+    width = min(max(860, req_w + 12), max(820, scr_w - 60))
+    height = min(max(420, req_h + 8), max(420, scr_h - 80))
+    x = max(20, (scr_w - width) // 2)
+    y = max(20, (scr_h - height) // 2 - 20)
+    root.geometry(f"{width}x{height}+{x}+{y}")
+    root.deiconify()
+    apply_windows_titlebar_theme(root, dark_titlebar)
+    try:
+        root.attributes("-topmost", True)
+        root.lift()
+        root.focus_force()
+    except Exception:
+        pass
+    root.update()
+
+
+def capture_ui_screenshots(
+    pdf_path: Path,
+    dark_out: Path,
+    light_out: Path,
+    *,
+    capture_fn: Optional[Callable[[tk.Tk], Image.Image]] = None,
+) -> tuple[Path, Path]:
+    """Render and capture fresh Dark and Light Studio screenshots for README & docs."""
+    pdf_path = Path(pdf_path)
+    dark_out = Path(dark_out)
+    light_out = Path(light_out)
+    if not pdf_path.is_file():
+        raise FileNotFoundError(f"Sample PDF not found: {pdf_path}")
+
+    if str(ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(ROOT / "src"))
+
+    from pdf2musescore.config import AppConfig
+    from pdf2musescore.gui import App
+    from pdf2musescore.ui_theme import enable_high_dpi
+
+    enable_high_dpi()
+    grab = _capture_window_image if capture_fn is None else capture_fn
+    dark_out.parent.mkdir(parents=True, exist_ok=True)
+    light_out.parent.mkdir(parents=True, exist_ok=True)
+
+    with TemporaryDirectory() as td:
+        tmp_dir = Path(td)
+
+        # 1. Dark Studio: loaded PDF, collapsed optional drawers with live summary badge, completion banner
+        root_dark = tk.Tk()
+        root_dark.withdraw()
+        app_dark = App(
+            root_dark,
+            AppConfig(log_dir=tmp_dir / "logs_d", work_dir=tmp_dir / "work_d", check_updates=False),
+            musescore_available=lambda: True,
+            theme="dark",
+            prefs_path=tmp_dir / "prefs_dark.json",
+            enable_dnd=False,
+            prefetch_models=False,
+            dual_install_checker=lambda: None,
+        )
+        try:
+            app_dark.load_source(pdf_path)
+            app_dark.file_meta_var.set(r"C:\Scores\Bach")
+            app_dark.pages_var.set("1")
+            app_dark.preview_pane.goto_page(1)
+            app_dark.instrument_var.set("Cello")
+            app_dark.clef_var.set("bass")
+            app_dark._set_progress_visible(True)
+            app_dark.progress["value"] = 100
+            app_dark.pct_var.set("100%")
+            app_dark.elapsed_var.set("0:18")
+            app_dark.status_var.set("Done! Saved bach_cello_suite_2.mscz")
+            app_dark._show_result_banner(Path(r"C:\Scores\Bach\bach_cello_suite_2.mscz"))
+            _configure_showcase_window(root_dark, "dark", True)
+            img_dark = grab(root_dark)
+            img_dark.save(dark_out, format="PNG")
+            log.info("Saved Dark Studio UI screenshot to %s (%dx%d)", dark_out, img_dark.width, img_dark.height)
+        finally:
+            app_dark.destroy()
+            root_dark.destroy()
+
+        # 2. Light Studio: loaded PDF, expanded Instrument/Clef/Transpose drawer with live interval hint
+        root_light = tk.Tk()
+        root_light.withdraw()
+        app_light = App(
+            root_light,
+            AppConfig(log_dir=tmp_dir / "logs_l", work_dir=tmp_dir / "work_l", check_updates=False),
+            musescore_available=lambda: True,
+            theme="light",
+            prefs_path=tmp_dir / "prefs_light.json",
+            enable_dnd=False,
+            prefetch_models=False,
+            dual_install_checker=lambda: None,
+        )
+        try:
+            app_light.load_source(pdf_path)
+            app_light.file_meta_var.set(r"C:\Scores\Bach")
+            app_light.pages_var.set("1-2")
+            app_light.preview_pane.goto_page(1)
+            app_light.part_options_section.set_expanded(True)
+            app_light.instrument_var.set("Trumpet")
+            app_light.clef_var.set("treble")
+            app_light.transpose_var.set("+2")
+            _configure_showcase_window(root_light, "light", False)
+            img_light = grab(root_light)
+            img_light.save(light_out, format="PNG")
+            log.info("Saved Light Studio UI screenshot to %s (%dx%d)", light_out, img_light.width, img_light.height)
+        finally:
+            app_light.destroy()
+            root_light.destroy()
+
+    return dark_out, light_out
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate README and GitHub social media assets.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--before-after", action="store_true", help="Generate before/after Bach comparison PNG.")
     parser.add_argument("--social-preview", action="store_true", help="Generate 1280x640 GitHub social preview PNG.")
+    parser.add_argument("--ui-screenshots", action="store_true", help="Capture refreshed Dark & Light UI PNGs.")
     parser.add_argument("--all", action="store_true", help="Generate all media assets.")
     parser.add_argument("--pdf", type=Path, default=DEFAULT_PDF)
     parser.add_argument("--mscz", type=Path, default=DEFAULT_MSCZ)
     parser.add_argument("--musescore", type=Path, default=DEFAULT_MUSESCORE)
     parser.add_argument("--icon", type=Path, default=DEFAULT_ICON)
     parser.add_argument("--screenshot", type=Path, default=DEFAULT_SCREENSHOT)
+    parser.add_argument("--ui-dark-out", type=Path, default=DEFAULT_UI_DARK_OUT)
+    parser.add_argument("--ui-light-out", type=Path, default=DEFAULT_UI_LIGHT_OUT)
     parser.add_argument("--tmp-dir", type=Path, default=DEFAULT_MEDIA_TMP)
     parser.add_argument("--before-after-out", type=Path, default=DEFAULT_BEFORE_AFTER_OUT)
     parser.add_argument("--social-out", type=Path, default=DEFAULT_SOCIAL_OUT)
@@ -411,8 +683,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
-    run_ba = args.all or args.before_after or not (args.before_after or args.social_preview)
-    run_social = args.all or args.social_preview or not (args.before_after or args.social_preview)
+    explicit = args.before_after or args.social_preview or args.ui_screenshots
+    run_ba = args.all or args.before_after or not explicit
+    run_social = args.all or args.social_preview or not explicit
+
+    if args.ui_screenshots:
+        capture_ui_screenshots(args.pdf, args.ui_dark_out, args.ui_light_out)
 
     if run_ba:
         before_png = render_pdf_first_page(args.pdf, args.tmp_dir / "before.png")
@@ -421,7 +697,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             compose_before_after(b_img, a_img, args.before_after_out)
 
     if run_social:
-        generate_social_preview(args.icon, args.screenshot, args.social_out)
+        shot = args.ui_dark_out if args.ui_screenshots else args.screenshot
+        generate_social_preview(args.icon, shot, args.social_out)
 
     return 0
 

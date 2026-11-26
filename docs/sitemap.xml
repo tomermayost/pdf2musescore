@@ -4,7 +4,7 @@
   xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://tomermayost.github.io/pdf2musescore/</loc>
-    <lastmod>2026-11-25</lastmod>
+    <lastmod>2026-11-26</lastmod>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
     <image:image>
@@ -17,11 +17,11 @@
     </image:image>
     <image:image>
       <image:loc>https://tomermayost.github.io/pdf2musescore/assets/ui-dark.png</image:loc>
-      <image:title>PDF to MuseScore Dark Studio interface with Advanced AI Settings</image:title>
+      <image:title>PDF to MuseScore Dark Studio interface with live sheet-music preview and completion banner</image:title>
     </image:image>
     <image:image>
       <image:loc>https://tomermayost.github.io/pdf2musescore/assets/ui-light.png</image:loc>
-      <image:title>PDF to MuseScore Light Studio interface with live preview</image:title>
+      <image:title>PDF to MuseScore Light Studio interface with Instrument, Clef, and Transpose options</image:title>
     </image:image>
   </url>
 </urlset>

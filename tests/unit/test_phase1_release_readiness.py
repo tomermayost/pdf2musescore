@@ -93,6 +93,44 @@ def test_render_pdf_first_page_and_cli_social_preview(tmp_path: Path) -> None:
         assert banner.size == (1280, 640)
 
 
+def test_capture_ui_screenshots_helper_and_cli_with_stub(tmp_path: Path, monkeypatch) -> None:
+    gm = _load_generate_media()
+    dark_out = tmp_path / "ui-dark.png"
+    light_out = tmp_path / "ui-light.png"
+    social_out = tmp_path / "social.png"
+
+    captured_titles: list[str] = []
+
+    def fake_grab(win):
+        captured_titles.append(win.title())
+        return Image.new("RGB", (860, 520), (22, 32, 50))
+
+    with pytest.raises(FileNotFoundError):
+        gm.capture_ui_screenshots(tmp_path / "missing.pdf", dark_out, light_out, capture_fn=fake_grab)
+
+    fixture_pdf = ROOT / "tests" / "fixtures" / "bach_cello_suite_2.pdf"
+    res_dark, res_light = gm.capture_ui_screenshots(
+        fixture_pdf,
+        dark_out,
+        light_out,
+        capture_fn=fake_grab,
+    )
+    assert res_dark == dark_out and res_light == light_out
+    assert dark_out.is_file() and light_out.is_file()
+    assert len(captured_titles) == 2
+
+    monkeypatch.setattr(gm, "_capture_window_image", fake_grab)
+    rc = gm.main([
+        "--ui-screenshots",
+        "--social-preview",
+        "--ui-dark-out", str(dark_out),
+        "--ui-light-out", str(light_out),
+        "--social-out", str(social_out),
+    ])
+    assert rc == 0
+    assert social_out.is_file()
+
+
 def test_render_mscz_first_page_validation_and_mocked_cli(tmp_path: Path, monkeypatch) -> None:
     gm = _load_generate_media()
     fake_mscz = tmp_path / "score.mscz"
@@ -163,6 +201,8 @@ def test_readme_assets_and_trust_statements() -> None:
     assert "RapidOCR" in readme
     assert "System Requirements" in readme
     assert "AVX2" in readme
+    assert "Full Score (Conductor)" in readme
+    assert "Instrument, Clef & Transpose" in readme
     assert not re.search(r"\]\([^)]+\.pdf\)", readme, re.IGNORECASE)
 
     asset_refs = re.findall(r"docs/assets/[A-Za-z0-9_.-]+\.png", readme)

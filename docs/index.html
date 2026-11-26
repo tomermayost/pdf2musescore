@@ -53,7 +53,7 @@
       "100% local offline AI music recognition powered by homr ONNX models",
       "Converts PDFs and sheet music photos (.png, .jpg, .webp, .bmp, .tif) with drag and drop",
       "Direct .mscz and MusicXML (.musicxml) export with MuseScore 4 sanitization",
-      "Built-in interactive page picker, scan presets, clef override, and semitone transposition"
+      "Single Part and Full Score (Conductor) modes with page picker, scan presets, clef override, and semitone transposition"
     ],
     "sameAs": [
       "https://github.com/tomermayost/pdf2musescore",
@@ -202,10 +202,10 @@
               <button id="tabDark" class="tab-btn" type="button" role="tab" aria-selected="true">Dark Studio</button>
               <button id="tabLight" class="tab-btn" type="button" role="tab" aria-selected="false">Light Studio</button>
             </div>
-            <span id="heroPreviewCaption" class="showcase-caption">Dark Studio + Advanced AI Settings</span>
+            <span id="heroPreviewCaption" class="showcase-caption">Dark Studio · Live Preview &amp; Completion Banner</span>
           </div>
           <div class="showcase-frame">
-            <img id="heroPreviewImg" src="assets/ui-dark.png" alt="PDF to MuseScore Dark Studio interface with Advanced AI settings drawer">
+            <img id="heroPreviewImg" src="assets/ui-dark.png" alt="PDF to MuseScore Dark Studio interface with live sheet-music preview and Open in MuseScore completion banner">
           </div>
         </div>
       </div>
@@ -248,17 +248,17 @@
             <div class="step-num">1</div>
             <h3>Drop PDF or Photo &amp; Pick Pages</h3>
             <p>
-              Drag and drop a sheet music PDF or photo (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>, <code>.bmp</code>, <code>.tif</code>),
-              preview pages inside the studio window (<code>←</code> / <code>→</code>), and click <strong>Pick page</strong> or enter ranges like <code>2-3, 5</code>.
+              Drag and drop a sheet music PDF or photo (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>, <code>.bmp</code>, <code>.tif</code>);
+              for multi-page PDFs, preview controls appear automatically (<code>←</code> / <code>→</code>) so you can click <strong>Pick page</strong> or enter ranges like <code>2-3, 5</code>.
             </p>
           </article>
 
           <article class="card">
             <div class="step-num">2</div>
-            <h3>Choose Scan Type &amp; Setup</h3>
+            <h3>Choose Scan Type &amp; Mode</h3>
             <p>
-              Select <strong>Clean PDF</strong>, <strong>Faded Scan</strong>, or <strong>Phone Photo</strong>,
-              then set <strong>Instrument</strong>, <strong>Clef</strong>, or <strong>Transpose</strong> (e.g. <code>+2</code> for B♭ instruments).
+              Select <strong>Clean PDF</strong>, <strong>Faded Scan</strong>, or <strong>Phone Photo</strong>, pick <strong>Single Part</strong> or <strong>Full Score (Conductor)</strong>,
+              and optionally expand <strong>Instrument, Clef &amp; Transpose</strong> (e.g. <code>+2</code> for B♭ instruments).
             </p>
           </article>
 
@@ -291,8 +291,8 @@
             <p>Switch cleanly between <strong>Clean PDF</strong>, <strong>Faded Scan</strong> (contrast boost + deskew), and <strong>Phone Photo</strong> (shadow cleanup).</p>
           </article>
           <article class="card">
-            <h3>Transpose &amp; Clef Override</h3>
-            <p>Shift parts by semitones with live interval hints like <code>+2 (Up M2 · B♭)</code>, or override clef &amp; playback instrument before export.</p>
+            <h3>Single Part, Full Score &amp; Transpose</h3>
+            <p>Convert solo parts with optional <strong>Instrument, Clef &amp; Transpose</strong> overrides (<code>+2 (Up M2 · B♭)</code>), or switch to <strong>Full Score (Conductor)</strong> mode for multi-staff scores.</p>
           </article>
           <article class="card">
             <h3>MuseScore 4 Sanitization</h3>
