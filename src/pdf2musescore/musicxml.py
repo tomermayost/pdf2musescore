@@ -60,6 +60,109 @@ _NOTE_AFTER_ACCIDENTAL = frozenset(
 )
 _ATTR_BEFORE_TIME = frozenset({"footnote", "level", "divisions", "key"})
 _SECTION_BAR_STYLES = frozenset({"light-light", "heavy-heavy", "light-heavy"})
+_STANDARD_DYNAMIC_TAGS = frozenset(
+    {
+        "p", "pp", "ppp", "pppp", "ppppp", "pppppp",
+        "f", "ff", "fff", "ffff", "fffff", "ffffff",
+        "mp", "mf",
+        "sf", "sfp", "sfpp", "fp", "rf", "rfz", "sfz", "sffz", "fz", "n", "pf", "sfzp",
+    }
+)
+
+
+def _prune_colliding_dynamics_children(dyn: ET.Element) -> int:
+    """Keep at most one dynamic symbol inside ``<dynamics>``, preferring standard tags over ``<other-dynamics>``."""
+    children = list(dyn)
+    if len(children) <= 1:
+        if len(children) == 1 and children[0].tag == "other-dynamics" and not (children[0].text or "").strip():
+            dyn.remove(children[0])
+            return 1
+        return 0
+    std_children = [ch for ch in children if ch.tag in _STANDARD_DYNAMIC_TAGS]
+    if std_children:
+        keep = std_children[0]
+    else:
+        non_empty = [ch for ch in children if ch.tag != "other-dynamics" or (ch.text or "").strip()]
+        keep = non_empty[0] if non_empty else children[0]
+    removed = 0
+    for ch in children:
+        if ch is not keep:
+            dyn.remove(ch)
+            removed += 1
+    if keep.tag == "other-dynamics" and not (keep.text or "").strip():
+        dyn.remove(keep)
+        removed += 1
+    return removed
+
+
+def _is_pure_dynamics_direction(direction: ET.Element) -> tuple[bool, bool]:
+    """Return ``(is_pure_dynamics, has_standard_tag)`` for a ``<direction>`` element."""
+    dts = direction.findall("direction-type")
+    if not dts:
+        return False, False
+    has_dyn = False
+    has_std = False
+    for dt in dts:
+        if len(dt) == 0:
+            continue
+        for ch in dt:
+            if ch.tag != "dynamics":
+                return False, False
+            has_dyn = True
+            if any(d_ch.tag in _STANDARD_DYNAMIC_TAGS for d_ch in ch):
+                has_std = True
+    return has_dyn, has_std
+
+
+def sanitize_dynamics(root: ET.Element) -> ET.Element:
+    """Remove colliding children inside ``<dynamics>`` and same-beat duplicate dynamic directions."""
+    removed_children = 0
+    removed_dirs = 0
+
+    for measure in root.findall(".//measure"):
+        for direction in list(measure.findall("direction")):
+            for dt in list(direction.findall("direction-type")):
+                for dyn in list(dt.findall("dynamics")):
+                    removed_children += _prune_colliding_dynamics_children(dyn)
+                    if len(dyn) == 0:
+                        dt.remove(dyn)
+                if len(dt) == 0:
+                    direction.remove(dt)
+            if direction.find("direction-type") is None and direction.find("sound") is None:
+                measure.remove(direction)
+                removed_dirs += 1
+
+        # Drop consecutive same-beat pure-dynamics directions on the same staff
+        beat_dyn_by_staff: dict[str, tuple[ET.Element, bool]] = {}
+        for child in list(measure):
+            if child.tag in ("note", "forward", "backup"):
+                if child.tag == "note" and child.find("grace") is not None:
+                    continue
+                beat_dyn_by_staff.clear()
+            elif child.tag == "direction":
+                is_pure, has_std = _is_pure_dynamics_direction(child)
+                if not is_pure:
+                    continue
+                staff_id = (child.findtext("staff") or "1").strip() or "1"
+                prev = beat_dyn_by_staff.get(staff_id)
+                if prev is None:
+                    beat_dyn_by_staff[staff_id] = (child, has_std)
+                else:
+                    prev_el, prev_std = prev
+                    if has_std and not prev_std:
+                        measure.remove(prev_el)
+                        beat_dyn_by_staff[staff_id] = (child, has_std)
+                    else:
+                        measure.remove(child)
+                    removed_dirs += 1
+
+    if removed_children or removed_dirs:
+        log.info(
+            "Sanitized colliding dynamics: removed %d extra symbol(s) and %d duplicate/empty direction(s)",
+            removed_children,
+            removed_dirs,
+        )
+    return root
 
 
 def sanitize_slurs(root: ET.Element) -> ET.Element:
@@ -116,6 +219,7 @@ def sanitize_score(root: ET.Element) -> ET.Element:
                     run = []
         if run:
             _close_tuplet_run(run)
+    sanitize_dynamics(root)
     return sanitize_slurs(root)
 
 

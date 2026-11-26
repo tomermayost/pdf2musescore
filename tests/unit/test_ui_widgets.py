@@ -65,10 +65,12 @@ def test_collapsible_section_toggle_badge_and_theme(root):
     assert sec.badge_lbl.winfo_manager()
     sec.set_badge("1 warning", tone="warn")
     sec.set_badge("1 error", tone="danger")
-    sec.set_badge("")
-    assert not sec.badge_lbl.winfo_manager()
+    sec.set_badge("Customized", tone="accent")
 
     sec.apply_theme(get_theme("dark"))
+    assert sec.badge_lbl.cget("background") == get_theme("dark").accent_soft
+    sec.set_badge("")
+    assert not sec.badge_lbl.winfo_manager()
     sec.destroy()
 
 
@@ -118,19 +120,31 @@ def test_pdf_preview_pane_lifecycle(root, tmp_path):
     )
     pane.pack()
 
-    # Empty state: clicking triggers browse
+    # Empty state: clicking triggers browse, page nav/pick controls stay hidden
     pane._handle_stage_click()
     assert events["browse"] == 1
     assert str(pane.prev_btn["state"]) == "disabled"
     assert str(pane.pick_btn["state"]) == "disabled"
+    assert not pane._nav_frame.winfo_manager()
+    assert not pane.pick_btn.winfo_manager()
 
-    # Load 3-page PDF -> renders p1, caches p1
+    # Load 1-page file -> renders p1 while keeping multi-page nav/pick controls hidden
     sample_pdf = tmp_path / "etude.pdf"
+    pane.set_pdf(sample_pdf, total_pages=1)
+    assert pane.current_page == 1
+    assert pane._photo_ref is not None
+    assert not pane._nav_frame.winfo_manager()
+    assert not pane.pick_btn.winfo_manager()
+
+    # Load 3-page PDF -> renders p1, caches p1, shows nav & pick controls
+    render_calls.clear()
     pane.set_pdf(sample_pdf, total_pages=3)
     assert pane.current_page == 1
     assert pane.page_lbl.cget("text") == "Page 1 of 3"
     assert pane._photo_ref is not None
     assert len(render_calls) == 1
+    assert pane._nav_frame.winfo_manager()
+    assert pane.pick_btn.winfo_manager()
 
     # Boundary prev does nothing
     pane.go_prev()
@@ -166,6 +180,8 @@ def test_pdf_preview_pane_lifecycle(root, tmp_path):
     # Clear PDF & switch theme
     pane.set_pdf(None, 0)
     assert pane.page_lbl.cget("text") == "No PDF loaded"
+    assert not pane._nav_frame.winfo_manager()
+    assert not pane.pick_btn.winfo_manager()
     pane.apply_theme(get_theme("dark"))
     pane.destroy()
     gc.collect()

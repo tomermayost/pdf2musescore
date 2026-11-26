@@ -81,6 +81,19 @@ def test_west_side_story_baritone_time_sigs_tempos_and_courtesy_sharp():
     assert "72" in sound_bpms
     assert "84" in sound_bpms
 
+    # 4b) Colliding dynamics removed on Bar 77 & expression markings tranq. (Bar 76) and rit. (Bar 77)
+    assert xml_root.findall(".//other-dynamics") == []
+    bar76_words = [
+        (w.text or "").strip().lower()
+        for w in xml_ms[75].findall("./direction/direction-type/words[@font-style='italic']")
+    ]
+    bar77_words = [
+        (w.text or "").strip().lower()
+        for w in xml_ms[76].findall("./direction/direction-type/words[@font-style='italic']")
+    ]
+    assert "tranq." in bar76_words
+    assert "rit." in bar77_words
+
     # 5) MuseScore 4 (.mscx) verification
     with zipfile.ZipFile(out_mscz) as z:
         mscx_name = next(n for n in z.namelist() if n.endswith(".mscx"))
@@ -95,8 +108,22 @@ def test_west_side_story_baritone_time_sigs_tempos_and_courtesy_sharp():
     # Bar 5 has visible accidentalSharp in MuseScore
     assert mscx_ms[4].findtext(".//Note/Accidental/subtype") == "accidentalSharp"
 
-    # All 3 <Tempo> elements imported into MuseScore
-    mscx_tempo_texts = ["".join(t.itertext()).lower() for t in mscx_root.findall(".//Tempo")]
+    # Bar 77 dynamic has only 'mp' (no colliding 'più') and tranq./rit. appear on bars 76/77
+    all_dyn_subtypes = [d.findtext("subtype") for d in mscx_root.findall(".//Dynamic")]
+    assert not any("pi" in (s or "").lower() for s in all_dyn_subtypes)
+    tranq_idx = next(
+        i for i, m in enumerate(mscx_ms)
+        if "tranq." in "".join("".join(st.itertext()) for st in m.findall(".//StaffText/text")).lower()
+    )
+    rit_m = mscx_ms[tranq_idx + 1]
+    assert "rit." in "".join("".join(st.itertext()) for st in rit_m.findall(".//StaffText/text")).lower()
+    assert "mp" in [d.findtext("subtype") for d in rit_m.findall(".//Dynamic")]
+
+    # All 3 <Tempo> elements imported into MuseScore with spacing before metronome symbol
+    mscx_tempos = mscx_root.findall(".//Tempo")
+    mscx_tempo_texts = ["".join(t.itertext()).lower() for t in mscx_tempos]
     assert any("andante maestoso" in t for t in mscx_tempo_texts)
     assert any("spagnola" in t for t in mscx_tempo_texts)
     assert any("andante moderato" in t for t in mscx_tempo_texts)
+    moderato_xml = ET.tostring(next(t for t in mscx_tempos if "andante moderato" in "".join(t.itertext()).lower()), encoding="unicode")
+    assert "Andante moderato " in moderato_xml

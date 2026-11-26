@@ -23,6 +23,7 @@ def test_load_missing_returns_defaults_with_clamped_dpi(tmp_path):
     missing = tmp_path / "nope.json"
     prefs = load_preferences(missing, default_dpi=350)
     assert prefs == UserPreferences(render_dpi=350)
+    assert prefs.log_expanded is False
     assert load_preferences(missing, default_dpi=999).render_dpi == 300
     assert load_preferences(missing, default_dpi="bad").render_dpi == 300  # type: ignore[arg-type]
 
@@ -32,7 +33,7 @@ def test_save_and_load_roundtrip(tmp_path):
     original = UserPreferences(
         theme="light",
         advanced_expanded=True,
-        log_expanded=False,
+        log_expanded=True,
         render_dpi=400,
         preprocess_mode="faded",
         deskew=True,
@@ -74,7 +75,7 @@ def test_corrupt_and_out_of_range_preferences_fall_back_safely(tmp_path, caplog)
             {
                 "theme": "neon",
                 "advanced_expanded": "yes",
-                "log_expanded": False,
+                "log_expanded": "nope",
                 "render_dpi": 999,
                 "preprocess_mode": "unknown",
                 "deskew": True,

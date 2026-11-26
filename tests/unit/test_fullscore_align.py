@@ -137,10 +137,10 @@ def test_merge_fullscore_pages_tempo_dedup_and_change():
 
     merged = merge_fullscore_pages([(1, r1, sc1), (2, r2, sc2), (3, r3, sc3)], title="Tempo Test")
     ms = merged.findall("./part[@id='P1']/measure")
-    assert ms[0].findtext("./direction/direction-type/words") == "Adagio"
+    assert ms[0].findtext("./direction/direction-type/words") == "Adagio "
     assert ms[0].findtext("./direction/direction-type/metronome/per-minute") == "72"
     assert ms[1].find("direction") is None
-    assert ms[2].findtext("./direction/direction-type/words") == "Allegro"
+    assert ms[2].findtext("./direction/direction-type/words") == "Allegro "
     assert ms[2].findtext("./direction/direction-type/metronome/per-minute") == "132"
 
 

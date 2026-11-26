@@ -460,7 +460,7 @@ def test_annotate_standard_page_instruments(tmp_path):
     r2 = ET.parse(x2).getroot()
     assert r2.findtext("./part-list/score-part/score-instrument/instrument-sound") == "wind.reed.clarinet.bflat"
     assert r2.findtext("./part-list/score-part/midi-instrument/midi-program") == "72"
-    assert r2.findtext("./part/measure/direction/direction-type/words") == "Andante"
+    assert r2.findtext("./part/measure/direction/direction-type/words") == "Andante "
     assert r2.findtext("./part/measure/direction/direction-type/metronome/per-minute") == "88"
 
     # 3) Single-part with NO written instrument name anywhere -> falls back from Voice to Piano
@@ -565,7 +565,10 @@ def test_annotate_standard_page_instruments(tmp_path):
                 [[[130, 120], [340, 120], [340, 150], [130, 150]], [[660, 120], [880, 120], [880, 150], [660, 150]]],
                 ["Andante maestoso (J=72)", "Allegro (in t) alla Spagnola"],
             )
-        return ([[[700, 20], [900, 20], [900, 50], [700, 50]]], ["Andante moderato (J=s4)"])
+        return (
+            [[[700, 20], [900, 20], [900, 50], [700, 50]], [[730, 55], [900, 55], [900, 80], [730, 80]]],
+            ["Andante moderato (J=s4)", "trang. rit."],
+        )
 
     annotate_standard_page_instruments(
         png,
@@ -577,7 +580,9 @@ def test_annotate_standard_page_instruments(tmp_path):
     )
     r7 = ET.parse(x7).getroot()
     ms7 = r7.findall("./part/measure")
-    assert ms7[0].findtext("./direction/direction-type/words") == "Andante maestoso"
+    assert ms7[0].findtext("./direction/direction-type/words") == "Andante maestoso "
     assert ms7[2].findtext("./direction/direction-type/words") == "Allegro (in 1) alla Spagnola"
-    assert ms7[5].findtext("./direction/direction-type/words") == "Andante moderato"
+    assert ms7[5].findtext("./direction/direction-type/words") == "Andante moderato "
     assert ms7[5].find("./direction/sound").get("tempo") == "84"
+    expr_words = [w.text for w in r7.findall(".//direction/direction-type/words[@font-style='italic']")]
+    assert "tranq." in expr_words and "rit." in expr_words

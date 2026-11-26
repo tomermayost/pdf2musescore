@@ -107,6 +107,8 @@ def test_configure_ttk_style_on_root(root):
     for name in ("light", "dark"):
         configure_ttk_style(style, get_theme(name), "Segoe UI")
         assert style.lookup("Primary.TButton", "background")
+        assert style.lookup("CompactPrimary.TButton", "background")
+        assert style.lookup("CompactPrimary.TButton", "foreground")
         # Selected PresetActive buttons must remain distinct from unselected Preset buttons in both idle and disabled states
         active_bg = style.lookup("PresetActive.TButton", "background")
         inactive_bg = style.lookup("Preset.TButton", "background")

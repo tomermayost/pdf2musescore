@@ -37,7 +37,7 @@ def default_preferences_path() -> Path:
 class UserPreferences:
     theme: str = "dark"
     advanced_expanded: bool = False
-    log_expanded: bool = True
+    log_expanded: bool = False
     render_dpi: int = 300
     preprocess_mode: str = "auto"
     deskew: bool = False
@@ -125,7 +125,7 @@ def _sanitize_preferences(raw: Mapping[str, Any], default_dpi: int = 300) -> Use
     return UserPreferences(
         theme=_coerce_choice(raw, "theme", VALID_THEMES, "dark"),
         advanced_expanded=_coerce_bool(raw, "advanced_expanded", False),
-        log_expanded=_coerce_bool(raw, "log_expanded", True),
+        log_expanded=_coerce_bool(raw, "log_expanded", False),
         render_dpi=_coerce_int_range(raw, "render_dpi", 100, 600, safe_dpi),
         preprocess_mode=_coerce_choice(raw, "preprocess_mode", PREPROCESS_MODES, "auto"),
         deskew=_coerce_bool(raw, "deskew", False),

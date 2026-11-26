@@ -212,6 +212,8 @@ class CollapsibleSection(ttk.Frame):
         self._title = title
         self._expanded = bool(expanded)
         self._on_toggle = on_toggle
+        self._badge_text: str = ""
+        self._badge_tone: str = "accent"
 
         bg = self.palette.card if card_surface else self.palette.bg
         self.header_frame = tk.Frame(self, background=bg, cursor="hand2")
@@ -280,6 +282,8 @@ class CollapsibleSection(ttk.Frame):
 
     def set_badge(self, text: str, tone: str = "accent") -> None:
         cleaned = (text or "").strip()
+        self._badge_text = cleaned
+        self._badge_tone = tone
         if not cleaned:
             self.badge_lbl.pack_forget()
             return
@@ -302,6 +306,8 @@ class CollapsibleSection(ttk.Frame):
         self.header_frame.configure(background=bg)
         self.chevron_lbl.configure(background=bg, foreground=palette.text_muted)
         self.title_lbl.configure(background=bg, foreground=palette.text)
+        if self._badge_text:
+            self.set_badge(self._badge_text, tone=self._badge_tone)
 
 
 class PdfPreviewPane(tk.Frame):
@@ -337,6 +343,7 @@ class PdfPreviewPane(tk.Frame):
         self.current_page: int = 1
         self._busy = False
         self._selected_pages: Optional[set[int]] = None
+        self._nav_visible: Optional[bool] = None
         self._cache: "OrderedDict[tuple[Path, int], Image.Image]" = OrderedDict()
         self._photo_ref: Optional[ImageTk.PhotoImage] = None
         self._emblem_ref: Optional[ImageTk.PhotoImage] = None
@@ -398,9 +405,9 @@ class PdfPreviewPane(tk.Frame):
         # Image / fallback label for loaded PDFs
         self.image_lbl = tk.Label(self.stage, cursor="arrow", justify="center", wraplength=self.PREVIEW_W - 24)
 
-        # Bottom navigation bar
+        # Bottom navigation bar (packed only for multi-page documents)
         nav = ttk.Frame(self, style="Card.TFrame")
-        nav.pack(fill="x", pady=(10, 4))
+        self._nav_frame = nav
         self.prev_btn = ttk.Button(nav, text="◀", width=3, style="Secondary.TButton", command=self.go_prev)
         self.prev_btn.pack(side="left")
         self.page_lbl = ttk.Label(nav, text="No PDF loaded", style="Muted.TLabel", anchor="center")
@@ -414,7 +421,6 @@ class PdfPreviewPane(tk.Frame):
             style="Secondary.TButton",
             command=lambda: self.on_toggle_page(self.current_page),
         )
-        self.pick_btn.pack(fill="x", pady=(4, 0))
 
         self._show_empty()
         self._sync_controls()
@@ -512,6 +518,25 @@ class PdfPreviewPane(tk.Frame):
 
     def _sync_controls(self) -> None:
         has_pdf = self.pdf is not None and self.total_pages > 0
+        is_multipage = has_pdf and self.total_pages > 1
+        if is_multipage:
+            if not self._nav_frame.winfo_manager():
+                self._nav_frame.pack(fill="x", pady=(10, 4))
+            if not self.pick_btn.winfo_manager():
+                self.pick_btn.pack(fill="x", pady=(4, 0))
+        else:
+            if self._nav_frame.winfo_manager():
+                self._nav_frame.pack_forget()
+            if self.pick_btn.winfo_manager():
+                self.pick_btn.pack_forget()
+        if self._nav_visible != is_multipage:
+            self._nav_visible = is_multipage
+            log.debug(
+                "Preview pane page controls %s (total_pages=%d)",
+                "shown" if is_multipage else "hidden",
+                self.total_pages,
+            )
+
         nav_prev = "normal" if (has_pdf and not self._busy and self.current_page > 1) else "disabled"
         nav_next = "normal" if (has_pdf and not self._busy and self.current_page < self.total_pages) else "disabled"
         self.prev_btn.configure(state=nav_prev)

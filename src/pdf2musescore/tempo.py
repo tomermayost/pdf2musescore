@@ -84,6 +84,44 @@ _PAREN_IN_ONE_RE = re.compile(r"\(\s*in\s+[1-4tlI|]\s*\)", re.IGNORECASE)
 _PAREN_METRONOME_RE = re.compile(r"\([^)]*[=≈][^)]*\)")
 _SECTION_BAR_STYLES = frozenset({"light-light", "heavy-heavy", "light-heavy"})
 
+_EXPR_MODIFIER_PAT = r"(?:poco\s+a\s+poco|poco|molto|sempre|pi[uù]|meno)"
+_EXPR_TERMS_PAT = (
+    r"tranguillo|tranquillo|trang\.?|tranq\.?|"
+    r"ritardando|ritard\.?|rit\.?|"
+    r"rallentando|rall\.?|"
+    r"accelerando|accel\.?|"
+    r"a\s+tempo|"
+    r"espressivo|espress\.?|"
+    r"cantabile|dolce|stringendo|"
+    r"allargando|allarg\.?|"
+    r"calando|morendo|rubato|subito"
+)
+_EXPRESSION_RE = re.compile(
+    rf"(?P<full>(?:(?P<mod>{_EXPR_MODIFIER_PAT})\s+)?(?P<term>{_EXPR_TERMS_PAT}))(?!\w)",
+    re.IGNORECASE,
+)
+_EXPR_CANONICAL_TERMS: dict[str, str] = {
+    "trang": "tranq.",
+    "trang.": "tranq.",
+    "tranq": "tranq.",
+    "tranq.": "tranq.",
+    "tranguillo": "tranquillo",
+    "tranquillo": "tranquillo",
+    "rit": "rit.",
+    "rit.": "rit.",
+    "ritard": "ritard.",
+    "ritard.": "ritard.",
+    "rall": "rall.",
+    "rall.": "rall.",
+    "accel": "accel.",
+    "accel.": "accel.",
+    "espress": "espress.",
+    "espress.": "espress.",
+    "allarg": "allarg.",
+    "allarg.": "allarg.",
+}
+_XML_SPACE_ATTR = "{http://www.w3.org/XML/1998/namespace}space"
+
 _UNIT_MAP: dict[str, str] = {
     "h": "half",
     "𝅗𝅥": "half",
@@ -106,16 +144,19 @@ def _repair_bpm_token(tok: str) -> Optional[int]:
 
 @dataclass(frozen=True)
 class TempoMarking:
-    """Parsed tempo indication (text and/or metronome BPM)."""
+    """Parsed tempo or above-staff expression indication (text and/or metronome BPM)."""
 
     text: str = ""
     bpm: Optional[int] = None
     beat_unit: str = "quarter"
     beat_unit_dot: bool = False
     raw_ocr: str = ""
+    is_expression: bool = False
 
     def quarter_bpm(self) -> Optional[int]:
         """Return effective quarter-note BPM for MusicXML ``<sound tempo='...'>``."""
+        if self.is_expression and self.bpm is None:
+            return None
         if self.bpm is not None:
             factor = _UNIT_FACTORS.get(self.beat_unit, 1.0)
             if self.beat_unit_dot:
@@ -142,6 +183,7 @@ class TempoMarking:
             "beat_unit": self.beat_unit,
             "beat_unit_dot": self.beat_unit_dot,
             "raw_ocr": self.raw_ocr,
+            "is_expression": self.is_expression,
         }
 
     @classmethod
@@ -168,6 +210,7 @@ class TempoMarking:
             beat_unit=unit,
             beat_unit_dot=bool(raw.get("beat_unit_dot", False)),
             raw_ocr=str(raw.get("raw_ocr", "") or ""),
+            is_expression=bool(raw.get("is_expression", False)),
         )
 
 
@@ -234,6 +277,38 @@ def parse_tempo_text(raw: str) -> Optional[TempoMarking]:
     return TempoMarking(text=text_only, bpm=None, raw_ocr=cleaned)
 
 
+def parse_expression_tokens(raw: str) -> list[tuple[str, int, int]]:
+    """Parse an OCR line containing expression/tempo-modifier markings into ``(text, start, end)`` spans.
+
+    Splits combined OCR boxes such as ``'trang. rit.'`` -> ``[('tranq.', 0, 6), ('rit.', 7, 11)]``.
+    Only returns matches when every alphanumeric word in the line is accounted for.
+    """
+    cleaned = re.sub(r"\s+", " ", (raw or "")).strip()
+    if not cleaned or len(cleaned) > 60 or _BOILERPLATE_RE.search(cleaned):
+        return []
+
+    spans: list[tuple[str, int, int]] = []
+    consumed = bytearray(len(cleaned))
+    for match in _EXPRESSION_RE.finditer(cleaned):
+        start, end = match.span("full")
+        if start > 0 and cleaned[start - 1].isalnum():
+            continue
+        for pos in range(start, end):
+            consumed[pos] = 1
+        mod = match.group("mod")
+        term = match.group("term")
+        term_norm = _EXPR_CANONICAL_TERMS.get(term.lower(), term.lower())
+        full_norm = f"{re.sub(r'\\s+', ' ', mod.lower()).strip()} {term_norm}" if mod else term_norm
+        spans.append((full_norm, start, end))
+
+    if not spans:
+        return []
+    leftover = "".join(ch for idx, ch in enumerate(cleaned) if not consumed[idx])
+    if re.search(r"[A-Za-z0-9]", leftover):
+        return []
+    return spans
+
+
 def _merge_horizontal_ocr_boxes(
     boxes: Sequence[Any],
     txts: Sequence[str],
@@ -291,20 +366,26 @@ def extract_tempo_markings_in_band(
     ocr_dir: Optional[Path] = None,
     ocr_runner: Optional[Callable[[np.ndarray], tuple[Sequence[Any], Sequence[str]]]] = None,
     source_name: str = "",
+    include_expressions: bool = True,
+    expr_min_y: Optional[int] = None,
+    precomputed_ocr: Optional[tuple[Sequence[Any], Sequence[str]]] = None,
 ) -> list[PositionedTempo]:
-    """Extract all tempo markings from the vertical band ``[y_top, y_bot)`` sorted left-to-right."""
+    """Extract all tempo and expression markings from band ``[y_top, y_bot)`` sorted left-to-right."""
     h_px, w_px = img.shape[:2]
     y0 = max(0, int(y_top))
     y1 = min(h_px, int(y_bot))
     if y1 - y0 < 15:
         return []
 
-    from .fullscore.instruments import _run_rapidocr_on_crop
+    if precomputed_ocr is not None:
+        boxes_raw, txts_raw = precomputed_ocr
+    else:
+        from .fullscore.instruments import _run_rapidocr_on_crop
 
-    crop = img[y0:y1, :]
-    boxes_raw, txts_raw = _run_rapidocr_on_crop(
-        crop, ocr_reader=ocr_reader, ocr_dir=ocr_dir, ocr_runner=ocr_runner
-    )
+        crop = img[y0:y1, :]
+        boxes_raw, txts_raw = _run_rapidocr_on_crop(
+            crop, ocr_reader=ocr_reader, ocr_dir=ocr_dir, ocr_runner=ocr_runner
+        )
     if not boxes_raw or not txts_raw:
         return []
 
@@ -316,28 +397,48 @@ def extract_tempo_markings_in_band(
     raw_cands: list[tuple[tuple[int, int, float], PositionedTempo]] = []
     for left, top, right, bottom, txt in merged_boxes:
         tempo = parse_tempo_text(txt)
-        if tempo is None:
-            continue
-        u_norm = max(0.0, min(1.0, (float(left) - x_base) / span))
-        pt = PositionedTempo(
-            tempo=tempo,
-            x_left=float(left),
-            x_right=float(right),
-            y_top=float(y0 + top),
-            y_bottom=float(y0 + bottom),
-            u_norm=u_norm,
-        )
-        score = (1 if tempo.bpm is not None else 0, 1 if tempo.text else 0, float(bottom))
-        raw_cands.append((score, pt))
+        if tempo is not None:
+            u_norm = max(0.0, min(1.0, (float(left) - x_base) / span))
+            pt = PositionedTempo(
+                tempo=tempo,
+                x_left=float(left),
+                x_right=float(right),
+                y_top=float(y0 + top),
+                y_bottom=float(y0 + bottom),
+                u_norm=u_norm,
+            )
+            score = (1 if tempo.bpm is not None else 0, 1 if tempo.text else 0, float(bottom))
+            raw_cands.append((score, pt))
+        elif include_expressions and (expr_min_y is None or (y0 + bottom) >= expr_min_y):
+            expr_spans = parse_expression_tokens(txt)
+            if not expr_spans:
+                continue
+            cleaned_len = max(1, len(re.sub(r"\s+", " ", txt).strip()))
+            box_w = max(1.0, float(right - left))
+            for expr_txt, c_start, c_end in expr_spans:
+                sub_l = float(left) + box_w * (float(c_start) / cleaned_len)
+                sub_r = float(left) + box_w * (float(c_end) / cleaned_len)
+                sub_cx = 0.5 * (sub_l + sub_r)
+                u_norm = max(0.0, min(1.0, (sub_cx - x_base) / span))
+                pt = PositionedTempo(
+                    tempo=TempoMarking(text=expr_txt, bpm=None, raw_ocr=txt, is_expression=True),
+                    x_left=sub_l,
+                    x_right=sub_r,
+                    y_top=float(y0 + top),
+                    y_bottom=float(y0 + bottom),
+                    u_norm=u_norm,
+                )
+                raw_cands.append(((0, 1, float(bottom)), pt))
 
     if not raw_cands:
         return []
 
-    # Deduplicate horizontally overlapping detections, keeping the highest-scored one
+    # Deduplicate horizontally overlapping detections per category (main tempo vs expression)
     kept: list[tuple[tuple[int, int, float], PositionedTempo]] = []
     for score, pt in sorted(raw_cands, key=lambda item: item[0], reverse=True):
         overlaps = any(
-            min(pt.x_right, ex.x_right) - max(pt.x_left, ex.x_left) > 10.0
+            ex.tempo.is_expression == pt.tempo.is_expression
+            and min(pt.x_right, ex.x_right) - max(pt.x_left, ex.x_left) > 10.0
             for _, ex in kept
         )
         if not overlaps:
@@ -346,7 +447,8 @@ def extract_tempo_markings_in_band(
     result = sorted((pt for _, pt in kept), key=lambda item: item.x_left)
     for pt in result:
         log.info(
-            "Tempo band OCR on %s (y=%d..%d) detected %r (bpm=%s, u=%.2f)",
+            "%s band OCR on %s (y=%d..%d) detected %r (bpm=%s, u=%.2f)",
+            "Expression" if pt.tempo.is_expression else "Tempo",
             source_name or "image",
             y0,
             y1,
@@ -357,11 +459,103 @@ def extract_tempo_markings_in_band(
     return result
 
 
+def detect_staff_barlines(
+    gray: np.ndarray,
+    sy0: int,
+    sy1: int,
+    sx0: int,
+    sx1: int,
+) -> list[int]:
+    """Detect X-coordinates of interior and closing barlines across a staff band ``[sy0..sy1]``."""
+    h_img, w_img = gray.shape[:2]
+    y0 = max(0, int(sy0))
+    y1 = min(h_img - 1, int(sy1))
+    sh = y1 - y0 + 1
+    if sh < 12 or sx1 - sx0 < 40:
+        return []
+
+    sp = max(4, int(round(sh / 4.0)))
+    band = (gray[y0 : y1 + 1, :] < 180).astype(np.uint8)
+    band_dil = cv2.dilate(band, np.ones((1, 3), np.uint8))
+    col_in = band_dil.mean(axis=0)
+
+    h_kern = cv2.getStructuringElement(cv2.MORPH_RECT, (max(25, sh), 1))
+    no_staff = cv2.subtract(band, cv2.morphologyEx(band, cv2.MORPH_OPEN, h_kern))
+
+    min_x = max(0, int(sx0) + int(0.06 * (sx1 - sx0)))
+    max_x = min(w_img - 1, int(sx1) + 12)
+    cand = [int(c) for c in np.where(col_in >= 0.90)[0] if min_x <= c <= max_x]
+    if not cand:
+        return []
+
+    clusters: list[list[int]] = []
+    gap_limit = max(24, int(0.35 * sh))
+    for c in cand:
+        if not clusters or c - clusters[-1][-1] > gap_limit:
+            clusters.append([c])
+        else:
+            clusters[-1].append(c)
+
+    win_h = max(6, int(0.75 * sp))
+    win_w = max(5, int(0.55 * sp))
+    end_margin = max(40, int(0.6 * sh))
+    bar_xs: list[int] = []
+    for cl in clusters:
+        cx = int(round(float(np.mean(cl))))
+        c0, c1 = cl[0], cl[-1]
+        is_end = (sx1 - cx) < end_margin
+        l_strip = no_staff[:, max(0, c0 - win_w - 2) : max(0, c0 - 1)]
+        r_strip = no_staff[:, min(w_img, c1 + 2) : min(w_img, c1 + win_w + 3)]
+        max_blob = 0.0
+        for side in (l_strip, r_strip):
+            if side.shape[1] >= 3 and side.shape[0] > win_h:
+                csum = np.cumsum(side.mean(axis=1))
+                win_means = (csum[win_h:] - csum[:-win_h]) / float(win_h)
+                if win_means.size:
+                    max_blob = max(max_blob, float(win_means.max()))
+        if is_end or max_blob < 0.48:
+            bar_xs.append(cx)
+    return bar_xs
+
+
+def _interval_index(x_pos: float, edges: Sequence[float], k: int) -> int:
+    for j in range(k):
+        if x_pos <= edges[j + 1]:
+            return j
+    return k - 1
+
+
+def _find_structural_boundary_near(
+    measures: Sequence[ET.Element],
+    sys_indices: Sequence[int],
+    center_idx: int,
+    radius: int,
+) -> list[int]:
+    k = len(sys_indices)
+    boundaries: list[int] = []
+    for j in range(max(1, center_idx - radius), min(k, center_idx + radius + 1)):
+        g = sys_indices[j]
+        cur_m = measures[g]
+        prev_m = measures[g - 1]
+        has_attr_change = cur_m.find("./attributes/key") is not None or cur_m.find("./attributes/time") is not None
+        has_bar = any(
+            bl.find("repeat") is not None
+            or (bl.findtext("bar-style") or "").strip().lower() in _SECTION_BAR_STYLES
+            for bl in prev_m.findall("barline")
+        )
+        if has_attr_change or has_bar:
+            boundaries.append(j)
+    return boundaries
+
+
 def map_system_tempos_to_measures(
     root: ET.Element,
     system_tempos: Sequence[Sequence[PositionedTempo]],
+    *,
+    system_barlines: Optional[Sequence[Sequence[int]]] = None,
+    system_x_bounds: Optional[Sequence[tuple[float, float]]] = None,
 ) -> int:
-    """Map per-system positioned tempos onto MusicXML measures using ``<print new-system='yes'/>``."""
+    """Map per-system positioned tempos and expressions onto MusicXML measures."""
     first_part = root.find("part")
     if first_part is None:
         return 0
@@ -383,29 +577,35 @@ def map_system_tempos_to_measures(
             continue
         sys_indices = systems[sys_idx]
         k = len(sys_indices)
+        bars = list(system_barlines[sys_idx]) if (system_barlines is not None and sys_idx < len(system_barlines)) else []
+        x_bounds = (
+            system_x_bounds[sys_idx]
+            if (system_x_bounds is not None and sys_idx < len(system_x_bounds))
+            else None
+        )
+        has_exact_bars = bool(bars and len(bars) == k and x_bounds is not None)
+        edges = [float(x_bounds[0])] + [float(b) for b in bars] if has_exact_bars else []
+
         for pt in tempos:
-            if pt.u_norm < 0.12 or k == 1:
+            if pt.tempo.is_expression:
+                if has_exact_bars:
+                    cx = 0.5 * (pt.x_left + pt.x_right)
+                    local_idx = _interval_index(cx, edges, k)
+                else:
+                    local_idx = min(k - 1, max(0, int(pt.u_norm * k)))
+            elif pt.u_norm < 0.12 or k == 1:
                 local_idx = 0
+            elif has_exact_bars:
+                probe_x = pt.x_left + 0.15 * (pt.x_right - pt.x_left)
+                est_idx = _interval_index(probe_x, edges, k)
+                boundaries = _find_structural_boundary_near(measures, sys_indices, est_idx, radius=1)
+                local_idx = min(boundaries, key=lambda j: abs(j - est_idx)) if boundaries else est_idx
             else:
                 est_float = pt.u_norm * k
                 est_idx = min(k - 1, max(0, int(est_float)))
-                boundaries: list[int] = []
-                for j in range(max(1, est_idx - 2), min(k, est_idx + 3)):
-                    g = sys_indices[j]
-                    cur_m = measures[g]
-                    prev_m = measures[g - 1]
-                    has_attr_change = cur_m.find("./attributes/key") is not None or cur_m.find("./attributes/time") is not None
-                    has_bar = any(
-                        bl.find("repeat") is not None
-                        or (bl.findtext("bar-style") or "").strip().lower() in _SECTION_BAR_STYLES
-                        for bl in prev_m.findall("barline")
-                    )
-                    if has_attr_change or has_bar:
-                        boundaries.append(j)
-                if boundaries:
-                    local_idx = min(boundaries, key=lambda j: abs(j - est_float))
-                else:
-                    local_idx = est_idx
+                boundaries = _find_structural_boundary_near(measures, sys_indices, est_idx, radius=2)
+                local_idx = min(boundaries, key=lambda j: abs(j - est_float)) if boundaries else est_idx
+
             if apply_tempo_marking(root, pt.tempo, measure_index=sys_indices[local_idx]):
                 injected += 1
     return injected
@@ -492,40 +692,54 @@ def apply_tempo_marking(
         return False
     measure = measures[measure_index]
 
-    # Idempotent: avoid duplicating if tempo direction is already present
-    for existing in measure.findall("direction"):
-        if existing.find(".//metronome") is not None or existing.find("./sound[@tempo]") is not None:
-            return False
-
-    direction = ET.Element("direction", {"placement": "above"})
-    if tempo.text:
+    # Idempotent per category: expressions deduplicate by matching words text; main tempos by metronome/sound
+    if tempo.is_expression:
+        target_low = tempo.text.strip().lower()
+        for w_el in measure.findall("./direction/direction-type/words"):
+            if (w_el.text or "").strip().lower() == target_low:
+                return False
+        direction = ET.Element("direction", {"placement": "above"})
         dt_words = ET.SubElement(direction, "direction-type")
-        words = ET.SubElement(dt_words, "words", {"font-weight": "bold"})
+        words = ET.SubElement(dt_words, "words", {"font-style": "italic"})
         words.text = tempo.text
-    if tempo.bpm is not None:
-        dt_metro = ET.SubElement(direction, "direction-type")
-        metro = ET.SubElement(dt_metro, "metronome")
-        ET.SubElement(metro, "beat-unit").text = tempo.beat_unit
-        if tempo.beat_unit_dot:
-            ET.SubElement(metro, "beat-unit-dot")
-        ET.SubElement(metro, "per-minute").text = str(tempo.bpm)
-    q_bpm = tempo.quarter_bpm()
-    if q_bpm is not None:
-        ET.SubElement(direction, "sound", {"tempo": str(q_bpm)})
+    else:
+        for existing in measure.findall("direction"):
+            if existing.find(".//metronome") is not None or existing.find("./sound[@tempo]") is not None:
+                return False
+
+        direction = ET.Element("direction", {"placement": "above"})
+        if tempo.text:
+            dt_words = ET.SubElement(direction, "direction-type")
+            word_attrib = {"font-weight": "bold"}
+            if tempo.bpm is not None:
+                word_attrib[_XML_SPACE_ATTR] = "preserve"
+            words = ET.SubElement(dt_words, "words", word_attrib)
+            words.text = f"{tempo.text} " if tempo.bpm is not None else tempo.text
+        if tempo.bpm is not None:
+            dt_metro = ET.SubElement(direction, "direction-type")
+            metro = ET.SubElement(dt_metro, "metronome")
+            ET.SubElement(metro, "beat-unit").text = tempo.beat_unit
+            if tempo.beat_unit_dot:
+                ET.SubElement(metro, "beat-unit-dot")
+            ET.SubElement(metro, "per-minute").text = str(tempo.bpm)
+        q_bpm = tempo.quarter_bpm()
+        if q_bpm is not None:
+            ET.SubElement(direction, "sound", {"tempo": str(q_bpm)})
 
     insert_pos = 0
     for idx, child in enumerate(list(measure)):
-        if child.tag in ("print", "attributes"):
+        if child.tag in ("print", "attributes") or (tempo.is_expression and child.tag == "direction"):
             insert_pos = idx + 1
         elif child.tag == "note":
             break
     measure.insert(insert_pos, direction)
     log.info(
-        "Injected tempo marking into %s measure %s: text=%r bpm=%s sound_tempo=%s",
+        "Injected %s marking into %s measure %s: text=%r bpm=%s sound_tempo=%s",
+        "expression" if tempo.is_expression else "tempo",
         first_part.get("id", "P1"),
         measure.get("number", str(measure_index + 1)),
         tempo.text,
         tempo.bpm,
-        q_bpm,
+        tempo.quarter_bpm(),
     )
     return True

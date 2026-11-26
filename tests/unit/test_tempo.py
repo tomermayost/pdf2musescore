@@ -10,9 +10,11 @@ from pdf2musescore.tempo import (
     PositionedTempo,
     TempoMarking,
     apply_tempo_marking,
+    detect_staff_barlines,
     extract_tempo_marking,
     extract_tempo_markings_in_band,
     map_system_tempos_to_measures,
+    parse_expression_tokens,
     parse_tempo_text,
 )
 
@@ -171,7 +173,10 @@ def test_apply_tempo_marking_xml_structure_and_guards():
     assert [c.tag for c in m1] == ["attributes", "direction", "note"]
     d = m1.find("direction")
     assert d.get("placement") == "above"
-    assert d.findtext("./direction-type/words") == "Adagio affetuoso"
+    words_el = d.find("./direction-type/words")
+    assert words_el is not None
+    assert words_el.text == "Adagio affetuoso "
+    assert words_el.get("{http://www.w3.org/XML/1998/namespace}space") == "preserve"
     assert d.findtext("./direction-type/metronome/beat-unit") == "quarter"
     assert d.find("./direction-type/metronome/beat-unit-dot") is not None
     assert d.findtext("./direction-type/metronome/per-minute") == "72"
@@ -236,7 +241,134 @@ def test_extract_tempo_markings_in_band_and_map_to_measures():
     injected = map_system_tempos_to_measures(score_root, [pts, [sys1_right], []])
     assert injected == 3
     ms = score_root.findall("./part/measure")
-    assert ms[0].findtext("./direction/direction-type/words") == "Andante maestoso"
+    assert ms[0].findtext("./direction/direction-type/words") == "Andante maestoso "
     assert ms[5].findtext("./direction/direction-type/words") == "Allegro (in 1) alla Spagnola"
-    assert ms[8].findtext("./direction/direction-type/words") == "Andante moderato"
+    assert ms[8].findtext("./direction/direction-type/words") == "Andante moderato "
     assert ms[8].find("./direction/sound").get("tempo") == "84"
+
+
+@pytest.mark.parametrize(
+    "raw,exp",
+    [
+        ("tranq.", [("tranq.", 0, 6)]),
+        ("trang.", [("tranq.", 0, 6)]),
+        ("rit.", [("rit.", 0, 4)]),
+        ("trang. rit.", [("tranq.", 0, 6), ("rit.", 7, 11)]),
+        ("poco rit.", [("poco rit.", 0, 9)]),
+        ("molto espress.", [("molto espress.", 0, 14)]),
+        ("dolce", [("dolce", 0, 5)]),
+        ("a tempo", [("a tempo", 0, 7)]),
+        ("poco a poco accel.", [("poco a poco accel.", 0, 18)]),
+    ],
+)
+def test_parse_expression_tokens_valid(raw, exp):
+    assert parse_expression_tokens(raw) == exp
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "   ",
+        "WEST SIDE STORY",
+        "Andante moderato (J=84)",
+        "dolce in the band part",
+        "1st Bsn.",
+        "Copyright 1956 rit.",
+        "spirit.",
+        "guitar",
+    ],
+)
+def test_parse_expression_tokens_rejects_non_expressions(raw):
+    assert parse_expression_tokens(raw) == []
+
+
+def test_expression_extraction_barlines_mapping_and_xml():
+    assert TempoMarking(text="tranq.", is_expression=True).quarter_bpm() is None
+    tm_expr = TempoMarking(text="rit.", is_expression=True, raw_ocr="rit.")
+    assert TempoMarking.from_dict(tm_expr.to_dict()) == tm_expr
+
+    img = np.full((300, 1200, 3), 255, dtype=np.uint8)
+
+    # Combined box "trang. rit." coexists below overlapping wide main tempo box "Andante moderato (J=s4)"
+    def _ocr(_c):
+        return (
+            [
+                [[700, 10], [1080, 10], [1080, 42], [700, 42]],   # y=110..142
+                [[820, 48], [1060, 48], [1060, 82], [820, 82]],  # y=148..182
+                [[200, 5], [320, 5], [320, 28], [200, 28]],      # high title-zone expression y=105..128 (filtered by expr_min_y)
+            ],
+            ["Andante moderato (J=s4)", "trang. rit.", "dolce"],
+        )
+
+    pts = extract_tempo_markings_in_band(
+        img,
+        100,
+        200,
+        sys_min_x=50.0,
+        sys_max_x=1150.0,
+        ocr_runner=_ocr,
+        expr_min_y=140,
+    )
+    assert [(p.tempo.text, p.tempo.is_expression, p.tempo.bpm) for p in pts] == [
+        ("Andante moderato", False, 84),
+        ("tranq.", True, None),
+        ("rit.", True, None),
+    ]
+    assert pts[1].x_right < pts[2].x_left
+
+    # Synthetic staff image with 4 bars (unequal widths) + 1 stem with a filled notehead blob
+    gray = np.full((160, 1000), 255, dtype=np.uint8)
+    assert detect_staff_barlines(gray, 2, 10, 50, 950) == []  # too short staff guard
+    sy0, sy1 = 40, 100
+    for r in (40, 55, 70, 85, 100):
+        gray[r : r + 2, 40:961] = 0
+    # True barlines at 320, 620, 780, 960
+    for bx in (320, 620, 780, 960):
+        gray[sy0 : sy1 + 1, bx - 1 : bx + 2] = 0
+    # Note stem at x=470 spanning staff height + filled notehead on left [458..468]
+    gray[sy0 : sy1 + 1, 470:472] = 0
+    gray[62:76, 458:470] = 0
+    bars = detect_staff_barlines(gray, sy0, sy1, 40, 960)
+    assert bars == [320, 620, 780, 960]
+
+    xml = """<score-partwise><part id="P1">
+      <measure number="1"><attributes><key><fifths>-2</fifths></key></attributes><note/></measure>
+      <measure number="2"><attributes><key><fifths>-3</fifths></key></attributes><note/></measure>
+      <measure number="3"><note/></measure>
+      <measure number="4"><note/></measure>
+    </part></score-partwise>"""
+    score_root = ET.fromstring(xml)
+    assert map_system_tempos_to_measures(
+        score_root,
+        [pts],
+        system_barlines=[bars],
+        system_x_bounds=[(40.0, 960.0)],
+    ) == 3
+
+    ms = score_root.findall("./part/measure")
+    # Andante moderato -> snaps to key change M2; tranq. (cx~885 -> 780..960? adjust boxes cleanly below)
+    # Check M2..M4 received all 3 markings cleanly
+    words_per_bar = {i + 1: [w.text for w in m.findall("./direction/direction-type/words")] for i, m in enumerate(ms)}
+    assert words_per_bar[2] == ["Andante moderato "]
+
+    # Explicitly test exact-barline expression localization across unequal measures + idempotency
+    score_root2 = ET.fromstring(xml)
+    p_tempo = PositionedTempo(TempoMarking("Andante moderato", bpm=84), 600, 920, 20, 35, u_norm=0.58)
+    p_tranq = PositionedTempo(TempoMarking("tranq.", is_expression=True), 650, 750, 40, 58, u_norm=0.68)  # inside bar 3 [620..780]
+    p_rit = PositionedTempo(TempoMarking("rit.", is_expression=True), 810, 880, 40, 58, u_norm=0.84)    # inside bar 4 [780..960]
+    assert map_system_tempos_to_measures(
+        score_root2,
+        [[p_tempo, p_tranq, p_rit]],
+        system_barlines=[bars],
+        system_x_bounds=[(40.0, 960.0)],
+    ) == 3
+    ms2 = score_root2.findall("./part/measure")
+    assert ms2[1].findtext("./direction/direction-type/words") == "Andante moderato "
+    assert ms2[2].findtext("./direction/direction-type/words") == "tranq."
+    assert ms2[2].find("./direction/direction-type/words").get("font-style") == "italic"
+    assert ms2[2].find("./direction/sound") is None
+    assert ms2[3].findtext("./direction/direction-type/words") == "rit."
+    # Coexistence + idempotency: expression can be added to a bar that already has tempo, and duplicate expression is skipped
+    assert apply_tempo_marking(score_root2, TempoMarking("tranq.", is_expression=True), measure_index=1) is True
+    assert apply_tempo_marking(score_root2, TempoMarking("tranq.", is_expression=True), measure_index=1) is False

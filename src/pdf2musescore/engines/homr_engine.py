@@ -579,7 +579,11 @@ def annotate_standard_page_instruments(
         is_homr_default_voice,
         set_score_part_instrument,
     )
-    from ..tempo import extract_tempo_markings_in_band, map_system_tempos_to_measures
+    from ..tempo import (
+        detect_staff_barlines,
+        extract_tempo_markings_in_band,
+        map_system_tempos_to_measures,
+    )
 
     xml_path = Path(xml_path)
     if not xml_path.is_file():
@@ -670,16 +674,22 @@ def annotate_standard_page_instruments(
         if sys_boxes:
             img = cv2.imread(str(img_path))
             if img is not None:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
                 all_sys_tempos = []
-                for s_idx, (sx0, sx1, sy0, _sy1) in enumerate(sys_boxes):
+                all_sys_barlines: list[list[int]] = []
+                all_sys_x_bounds: list[tuple[float, float]] = []
+                for s_idx, (sx0, sx1, sy0, sy1) in enumerate(sys_boxes):
+                    expr_min_y = max(0, int(sy0) - int(max(95.0, avg_h * 2.4)))
                     if s_idx == 0:
                         if sy0 < 25:
                             all_sys_tempos.append([])
+                            all_sys_barlines.append([])
+                            all_sys_x_bounds.append((sx0, sx1))
                             continue
                         band_top, band_bot = 0, int(sy0) + 8
                     else:
                         prev_bot = sys_boxes[s_idx - 1][3]
-                        band_top = max(int(prev_bot) - 4, int(sy0) - int(max(90.0, avg_h * 2.4)))
+                        band_top = max(int(prev_bot) - 4, int(sy0) - int(max(105.0, avg_h * 2.6)))
                         band_bot = int(sy0) + 6
                     all_sys_tempos.append(
                         extract_tempo_markings_in_band(
@@ -692,9 +702,17 @@ def annotate_standard_page_instruments(
                             ocr_dir=ocr_dir,
                             ocr_runner=tempo_ocr_runner,
                             source_name=Path(img_path).name,
+                            expr_min_y=expr_min_y,
                         )
                     )
-                map_system_tempos_to_measures(root, all_sys_tempos)
+                    all_sys_barlines.append(detect_staff_barlines(gray, int(sy0), int(sy1), int(sx0), int(sx1)))
+                    all_sys_x_bounds.append((sx0, sx1))
+                map_system_tempos_to_measures(
+                    root,
+                    all_sys_tempos,
+                    system_barlines=all_sys_barlines,
+                    system_x_bounds=all_sys_x_bounds,
+                )
 
     ET.indent(root)
     ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)

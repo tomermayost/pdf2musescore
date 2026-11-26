@@ -170,7 +170,13 @@ def test_initial_state(root, calls, tmp_path):
     assert "By Tomer Mayost" not in root.title()
     assert not hasattr(app, "title_var")
     assert app.advanced_section.is_expanded is False
-    assert app.log_section.is_expanded is True
+    assert app.log_section.is_expanded is False
+    assert app.part_options_section.is_expanded is False
+    assert not app._pages_row.winfo_manager()
+    assert not app.abort_btn.winfo_manager()
+    assert not app.progress.winfo_manager()
+    assert str(app.load_btn.cget("style")) == "CompactPrimary.TButton"
+    assert app.load_btn.cget("text") == "Load File..."
     assert not app.result_banner.winfo_manager()
     app.on_convert()  # no pdf -> no-op
     app.on_open_result()  # no output yet -> no-op
@@ -652,11 +658,11 @@ def test_preferences_persist_across_restarts(root, calls, tmp_path):
     sample_pdf = pdf_dir / "sonata.pdf"
     sample_pdf.write_bytes(b"%PDF-1.4")
 
-    # Session 1: starts in dark mode, log open, advanced closed -> change everything & close
+    # Session 1: starts in dark mode, log closed, advanced closed -> change everything & close
     app1 = make_app(root, calls, tmp_path, open_path=str(sample_pdf), prefs_path=prefs_file)
     assert app1.theme_name == "dark"
     assert app1.advanced_section.is_expanded is False
-    assert app1.log_section.is_expanded is True
+    assert app1.log_section.is_expanded is False
 
     app1.toggle_theme()
     assert app1.theme_name == "light"
@@ -685,7 +691,7 @@ def test_preferences_persist_across_restarts(root, calls, tmp_path):
     assert app2.theme_name == "light"
     assert "Dark" in app2.theme_btn.cget("text")
     assert app2.advanced_section.is_expanded is True
-    assert app2.log_section.is_expanded is False
+    assert app2.log_section.is_expanded is True
     assert app2._last_dir == str(pdf_dir)
     assert app2.collect_options() == ConversionOptions(
         render_dpi=350,
@@ -824,9 +830,11 @@ def test_gui_full_score_mode_toggle_presets_busy_validation_and_persistence(root
         assert app.dpi_var.get() == "300"
         assert str(app.instrument_combo["state"]) == "normal"
         assert str(app.full_score_width_entry["state"]) == "disabled"
+        assert app.part_options_section.winfo_manager()
+        assert not app._full_score_width_frame.winfo_manager()
         assert not app.score_mode_hint_lbl.winfo_manager()
 
-        # Switch to Full Score Mode -> bumps DPI to 500, disables single-part controls, enables width
+        # Switch to Full Score Mode -> bumps DPI to 500, hides single-part section, shows width
         app.set_score_mode(True)
         assert app.full_score_var.get() is True
         assert app.dpi_var.get() == "500"
@@ -834,6 +842,8 @@ def test_gui_full_score_mode_toggle_presets_busy_validation_and_persistence(root
         assert str(app.clef_combo["state"]) == "disabled"
         assert str(app.transpose_entry["state"]) == "disabled"
         assert str(app.full_score_width_entry["state"]) == "normal"
+        assert not app.part_options_section.winfo_manager()
+        assert app._full_score_width_frame.winfo_manager()
         assert app.score_mode_hint_lbl.winfo_manager()
         assert app.single_part_btn.cget("style") == "Preset.TButton"
         assert app.full_score_btn.cget("style") == "PresetActive.TButton"
@@ -1205,3 +1215,111 @@ def test_gui_previous_crash_banner_and_persistence(root, calls, tmp_path):
         assert not app_new_after.crash_banner.winfo_manager()
     finally:
         close_app(app_new_after)
+
+
+def test_gui_progressive_disclosure_cta_badges_and_resize(root, calls, tmp_path, monkeypatch):
+    FakePipeline.behaviour = "ok"
+    app = make_app(root, calls, tmp_path, page_counter=lambda p: 1 if "single" in p.name else 4)
+    try:
+        # 1. Empty state: hero Load File button, hidden pages row, hidden preview nav/pick, hidden progress/abort
+        assert str(app.load_btn.cget("style")) == "CompactPrimary.TButton"
+        assert app.load_btn.cget("text") == "Load File..."
+        assert not app._pages_row.winfo_manager()
+        assert not app.preview_pane._nav_frame.winfo_manager()
+        assert not app.preview_pane.pick_btn.winfo_manager()
+        assert not app.abort_btn.winfo_manager()
+        assert not app.progress.winfo_manager()
+
+        # 2. Load 1-page file -> secondary Change File button, pages & preview nav remain hidden
+        single_pdf = tmp_path / "single.pdf"
+        single_pdf.write_bytes(b"%PDF-1.4")
+        assert app.load_source(single_pdf) is True
+        assert str(app.load_btn.cget("style")) == "Secondary.TButton"
+        assert app.load_btn.cget("text") == "Change File..."
+        assert not app._pages_row.winfo_manager()
+        assert not app.preview_pane._nav_frame.winfo_manager()
+        assert not app.preview_pane.pick_btn.winfo_manager()
+
+        # 3. Load 4-page PDF -> pages row & preview nav/pick appear
+        multi_pdf = tmp_path / "multi.pdf"
+        multi_pdf.write_bytes(b"%PDF-1.4")
+        assert app.load_source(multi_pdf) is True
+        assert app._pages_row.winfo_manager()
+        assert app.preview_pane._nav_frame.winfo_manager()
+        assert app.preview_pane.pick_btn.winfo_manager()
+
+        # 4. Collapsible Instrument/Clef/Transpose live badge + theme refresh + reset
+        assert not app.part_options_section.badge_lbl.winfo_manager()
+        app.instrument_var.set("Trombone")
+        app.clef_var.set("bass")
+        app.step_transpose(2)
+        assert app.part_options_section.badge_lbl.winfo_manager()
+        assert app.part_options_section.badge_lbl.cget("text") == "Trombone · Bass · +2"
+        app.toggle_theme()
+        assert app.part_options_section.badge_lbl.cget("background") == app.palette.accent_soft
+        app.transpose_var.set("bad")
+        assert "invalid" in app.part_options_section.badge_lbl.cget("text").lower()
+        app.on_reset_options()
+        assert not app.part_options_section.badge_lbl.winfo_manager()
+
+        # 5. Model prefetch progress reveals progress bar without Abort, then hides on ready
+        app.q.put(("models_progress", (40_000_000, 100_000_000)))
+        app.process_queue()
+        assert app.progress.winfo_manager()
+        assert not app.abort_btn.winfo_manager()
+        app.q.put(("models_ready", None))
+        app.process_queue()
+        assert not app.progress.winfo_manager()
+
+        # 6. Conversion shows Abort + progress during run, hides Abort on completion, hides both on abort
+        app.start_conversion(multi_pdf, tmp_path / "out.mscz")
+        assert app.abort_btn.winfo_manager()
+        assert str(app.abort_btn["state"]) == "normal"
+        assert app.progress.winfo_manager()
+        pump(app, root, lambda: bool(app.result_banner.winfo_manager()))
+        assert not app.abort_btn.winfo_manager()
+        assert app.progress.winfo_manager()
+
+        FakePipeline.behaviour = "abort"
+        app.start_conversion(multi_pdf, tmp_path / "out2.mscz")
+        pump(app, root, lambda: "aborted by user" in app.status_var.get())
+        assert not app.abort_btn.winfo_manager()
+        assert not app.progress.winfo_manager()
+
+        # 7. Log drawer expand packing toggles between non-expanding collapsed and expanding open
+        assert int(app.log_section.pack_info()["expand"]) == 0
+        app.log_section.toggle()
+        assert int(app.log_section.pack_info()["expand"]) == 1
+        app.log_section.toggle()
+        assert int(app.log_section.pack_info()["expand"]) == 0
+
+        # 8. _fit_window_to_content grows on expand, shrinks on collapse, skips zoomed/withdrawn
+        geo_calls: list[str] = []
+        minsize_calls: list[tuple[int, int]] = []
+        state_holder = {"state": "withdrawn", "req_h": 640, "cur_h": 500}
+
+        monkeypatch.setattr(root, "wm_state", lambda: state_holder["state"])
+        monkeypatch.setattr(root, "winfo_reqwidth", lambda: 860)
+        monkeypatch.setattr(root, "winfo_reqheight", lambda: state_holder["req_h"])
+        monkeypatch.setattr(root, "winfo_width", lambda: 860)
+        monkeypatch.setattr(root, "winfo_height", lambda: state_holder["cur_h"])
+        monkeypatch.setattr(root, "geometry", lambda g: geo_calls.append(g))
+        monkeypatch.setattr(root, "minsize", lambda w, h: minsize_calls.append((w, h)))
+
+        app._fit_window_to_content(shrink=False)
+        assert geo_calls == []
+        state_holder["state"] = "zoomed"
+        app._fit_window_to_content(shrink=True)
+        assert geo_calls == []
+
+        state_holder["state"] = "normal"
+        app._fit_window_to_content(shrink=False)
+        assert geo_calls[-1] == "860x648"
+
+        state_holder["cur_h"] = 648
+        state_holder["req_h"] = 430
+        app._fit_window_to_content(shrink=True)
+        assert geo_calls[-1] == "860x438"
+        assert minsize_calls[-1] == (780, 400)
+    finally:
+        close_app(app)

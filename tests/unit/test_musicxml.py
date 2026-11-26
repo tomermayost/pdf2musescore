@@ -15,6 +15,7 @@ from pdf2musescore.musicxml import (
     normalize_default_instruments,
     read_score,
     reconcile_standard_time_signatures,
+    sanitize_dynamics,
     sanitize_score,
     sanitize_slurs,
     set_score_part_instrument,
@@ -451,3 +452,60 @@ def test_add_courtesy_accidentals_and_transposed():
 
     # Idempotent
     assert add_courtesy_accidentals(root) == 0
+
+
+def test_sanitize_dynamics_colliding_and_same_beat_duplicates():
+    xml = """<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">
+      <measure number="1">
+        <direction placement="below">
+          <direction-type><dynamics><mp/><other-dynamics>più</other-dynamics></dynamics></direction-type>
+          <staff>1</staff>
+        </direction>
+        <direction placement="below">
+          <direction-type><dynamics><other-dynamics/></dynamics></direction-type>
+          <staff>1</staff>
+        </direction>
+        <direction placement="below">
+          <direction-type><dynamics><other-dynamics>molto</other-dynamics><other-dynamics>p</other-dynamics></dynamics></direction-type>
+          <staff>2</staff>
+        </direction>
+        <note><grace/><pitch><step>C</step><octave>4</octave></pitch></note>
+        <direction placement="below">
+          <direction-type><dynamics><f/></dynamics></direction-type>
+          <staff>2</staff>
+        </direction>
+        <direction placement="above">
+          <direction-type><words>Allegro</words></direction-type>
+        </direction>
+        <direction placement="below">
+          <direction-type><dynamics><other-dynamics>dolce</other-dynamics></dynamics></direction-type>
+          <staff>1</staff>
+        </direction>
+        <note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration></note>
+        <direction placement="below">
+          <direction-type><dynamics><ff/></dynamics></direction-type>
+          <staff>1</staff>
+        </direction>
+      </measure>
+    </part></score-partwise>"""
+    root = sanitize_dynamics(ET.fromstring(xml))
+    m1 = root.find("./part/measure[@number='1']")
+    dyns = m1.findall(".//dynamics")
+    # Remaining: staff 1 beat 1 <mp/>, staff 2 beat 1 <f/> (replaces <other-dynamics>molto</other-dynamics>), staff 1 beat 2 <ff/>
+    assert len(dyns) == 3
+    assert [ch.tag for ch in dyns[0]] == ["mp"]
+    assert [ch.tag for ch in dyns[1]] == ["f"]
+    assert [ch.tag for ch in dyns[2]] == ["ff"]
+    assert root.find(".//other-dynamics") is None
+
+    # Idempotent
+    assert len(sanitize_dynamics(root).findall(".//dynamics")) == 3
+
+    # Preserves single valid <other-dynamics> alone on a beat, and removes empty directions cleanly
+    xml2 = """<score-partwise><part id="P1"><measure number="1">
+      <direction><direction-type/><direction-type><dynamics><other-dynamics>subito</other-dynamics></dynamics></direction-type></direction>
+      <direction><direction-type><dynamics><other-dynamics/></dynamics></direction-type></direction>
+      <direction><direction-type/></direction>
+    </measure></part></score-partwise>"""
+    r2 = sanitize_dynamics(ET.fromstring(xml2))
+    assert [el.findtext(".//other-dynamics") for el in r2.findall(".//measure/direction")] == ["subito"]

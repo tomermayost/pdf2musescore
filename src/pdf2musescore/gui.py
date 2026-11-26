@@ -347,7 +347,7 @@ class App(ttk.Frame):
     # ---------- UI Construction ----------
     def _build(self) -> None:
         self.master.title(f"PDF to MuseScore {__version__} (homr {self.engine_version})")
-        self.master.minsize(780, 520)
+        self.master.minsize(780, 400)
 
         self._has_musescore = bool(self.musescore_available())
         self._build_variables()
@@ -381,14 +381,17 @@ class App(ttk.Frame):
         self._build_footer()
 
         self._attach_traces()
+        self._sync_source_ui()
         self._sync_score_mode_ui()
+        self._sync_part_options_badge()
         self._sync_preset_indicators()
         self._sync_transpose_hint()
         self._sync_pages_feedback()
+        self._sync_log_drawer_packing()
 
     def _build_variables(self) -> None:
         self.file_var = tk.StringVar(self, value="No file selected")
-        self.file_meta_var = tk.StringVar(self, value="Choose or drop a sheet music PDF or photo (Ctrl+O)")
+        self.file_meta_var = tk.StringVar(self, value="Supports PDF, PNG, JPG, WebP, BMP, and TIFF")
         self.pages_var = tk.StringVar(self, value="")
         self.pages_feedback_var = tk.StringVar(self, value="Leave empty to convert all pages")
         self.preset_badge_var = tk.StringVar(self, value="")
@@ -412,7 +415,7 @@ class App(ttk.Frame):
             self.config_.render_dpi if self._prefs.full_score else self._prefs.render_dpi
         )
 
-        self.status_var = tk.StringVar(self, value="Load or drop a sheet music PDF or photo to start.")
+        self.status_var = tk.StringVar(self, value="Select or drop a sheet music file to get started.")
         self.pct_var = tk.StringVar(self, value="0%")
         self.elapsed_var = tk.StringVar(self, value="")
         self.result_msg_var = tk.StringVar(self, value="")
@@ -561,16 +564,21 @@ class App(ttk.Frame):
         file_row = ttk.Frame(card, style="Card.TFrame")
         file_row.pack(fill="x", pady=(6, 6))
         # Pack button first on the right so long paths never squish the Load File button
-        self.load_btn = ttk.Button(file_row, text="Load File...", style="Secondary.TButton", command=self.on_load)
+        self.load_btn = ttk.Button(
+            file_row,
+            text="Load File...",
+            style="CompactPrimary.TButton",
+            command=self.on_load,
+        )
         self.load_btn.pack(side="right", padx=(8, 0))
         file_info = ttk.Frame(file_row, style="Card.TFrame")
         file_info.pack(side="left", fill="x", expand=True)
         ttk.Label(file_info, textvariable=self.file_var, style="CardTitle.TLabel").pack(anchor="w")
         ttk.Label(file_info, textvariable=self.file_meta_var, style="Hint.TLabel").pack(anchor="w", pady=(1, 0))
 
-        # Pages selector + live feedback
+        # Pages selector + live feedback (shown only when a multi-page document is loaded)
         pages_row = ttk.Frame(card, style="Card.TFrame")
-        pages_row.pack(fill="x", pady=(2, 8))
+        self._pages_row = pages_row
         pages_lbl = ttk.Label(pages_row, text="Pages:", style="Card.TLabel")
         pages_lbl.pack(side="left")
         self.pages_entry = ttk.Entry(pages_row, textvariable=self.pages_var, width=18, style="Studio.TEntry")
@@ -582,6 +590,7 @@ class App(ttk.Frame):
         # Scan type one-click presets
         preset_row = ttk.Frame(card, style="Card.TFrame")
         preset_row.pack(fill="x")
+        self._preset_row = preset_row
         ttk.Label(preset_row, text="Scan Type:", style="Card.TLabel").pack(side="left", padx=(0, 8))
         for preset in SCAN_PRESETS:
             btn = ttk.Button(
@@ -602,6 +611,7 @@ class App(ttk.Frame):
 
         mode_row = ttk.Frame(card, style="Card.TFrame")
         mode_row.pack(fill="x", pady=(0, 4))
+        self._mode_row = mode_row
         mode_lbl = ttk.Label(mode_row, text="Score Mode:", style="Card.TLabel")
         mode_lbl.pack(side="left", padx=(0, 8))
         self.single_part_btn = ttk.Button(
@@ -625,8 +635,19 @@ class App(ttk.Frame):
             card, textvariable=self.score_mode_hint_var, style="AccentHint.TLabel"
         )
 
-        grid = ttk.Frame(card, style="Card.TFrame")
-        grid.pack(fill="x", pady=(4, 0))
+        # Optional Single-Part overrides (collapsed by default so beginners aren't confronted with a form)
+        self.part_options_section = CollapsibleSection(
+            card,
+            title="Instrument, Clef & Transpose",
+            expanded=False,
+            palette=self.palette,
+            card_surface=True,
+            on_toggle=self._on_part_options_toggled,
+        )
+        self.part_options_section.pack(fill="x", pady=(6, 0))
+
+        grid = ttk.Frame(self.part_options_section.content, style="Card.TFrame")
+        grid.pack(fill="x")
         self._score_grid = grid
         grid.columnconfigure(0, weight=1)
         grid.columnconfigure(1, weight=1)
@@ -686,7 +707,8 @@ class App(ttk.Frame):
         self._attach_tip("transpose_semitones", self.transpose_entry, tr_lbl)
 
         # Collapsible Advanced AI & Layout Drawer (compact 2-column grid to keep card narrow)
-        ttk.Separator(card, orient="horizontal", style="Studio.TSeparator").pack(fill="x", pady=(8, 6))
+        self._adv_separator = ttk.Separator(card, orient="horizontal", style="Studio.TSeparator")
+        self._adv_separator.pack(fill="x", pady=(8, 6))
         self.advanced_section = CollapsibleSection(
             card,
             title="Advanced AI & Layout Settings",
@@ -770,9 +792,9 @@ class App(ttk.Frame):
         )
         self.reset_opts_btn.pack(side="right", padx=(8, 0))
 
-        # Row 3: Full Score Target Width (active when Full Score Mode is selected)
+        # Row 3: Full Score Target Width (shown only when Full Score Mode is selected)
         f_fsw = ttk.Frame(adv_grid, style="Card.TFrame")
-        f_fsw.grid(row=3, column=0, sticky="ew", padx=(0, 10), pady=(5, 0))
+        self._full_score_width_frame = f_fsw
         fsw_lbl = ttk.Label(f_fsw, text="Full Score Width (px):", style="Card.TLabel")
         fsw_lbl.pack(side="left")
         self.full_score_width_entry = ttk.Entry(
@@ -828,16 +850,16 @@ class App(ttk.Frame):
             command=self.on_abort,
             state="disabled",
         )
-        self.abort_btn.pack(side="left", padx=(8, 0))
 
         self.progress = ttk.Progressbar(card, maximum=100, style="Studio.Horizontal.TProgressbar")
-        self.progress.pack(fill="x", pady=(10, 4))
+        self._progress_visible = False
 
         status_row = ttk.Frame(card, style="Card.TFrame")
-        status_row.pack(fill="x")
+        status_row.pack(fill="x", pady=(8, 0))
+        self._status_row = status_row
         ttk.Label(status_row, textvariable=self.status_var, style="Muted.TLabel").pack(side="left")
-        ttk.Label(status_row, textvariable=self.pct_var, style="Card.TLabel").pack(side="right")
-        ttk.Label(status_row, textvariable=self.elapsed_var, style="Hint.TLabel").pack(side="right", padx=(0, 8))
+        self.pct_lbl = ttk.Label(status_row, textvariable=self.pct_var, style="Card.TLabel")
+        self.elapsed_lbl = ttk.Label(status_row, textvariable=self.elapsed_var, style="Hint.TLabel")
 
         # Inline success banner (hidden until a conversion completes)
         self.result_banner = tk.Frame(
@@ -872,15 +894,16 @@ class App(ttk.Frame):
         self.result_text_lbl.pack(side="left", fill="x", expand=True)
 
     def _build_log_drawer(self) -> None:
+        expanded = bool(self._prefs.log_expanded)
         self.log_section = CollapsibleSection(
             self,
             title="Activity Log",
-            expanded=self._prefs.log_expanded,
+            expanded=expanded,
             palette=self.palette,
             card_surface=False,
             on_toggle=self._on_drawer_toggled,
         )
-        self.log_section.pack(fill="both", expand=True, pady=(4, 0))
+        self.log_section.pack(fill="both" if expanded else "x", expand=expanded, pady=(4, 0))
 
         self.log_frame = tk.Frame(
             self.log_section.content,
@@ -974,6 +997,82 @@ class App(ttk.Frame):
 
         self.transpose_var.trace_add("write", lambda *_a: self._sync_transpose_hint())
         self.pages_var.trace_add("write", lambda *_a: self._sync_pages_feedback())
+        for var in (self.instrument_var, self.clef_var, self.transpose_var):
+            var.trace_add("write", lambda *_a: self._sync_part_options_badge())
+
+    def _sync_source_ui(self) -> None:
+        has_file = self.pdf is not None
+        is_multipage = has_file and self.total_pages > 1
+        if has_file:
+            self.load_btn.configure(text="Change File...", style="Secondary.TButton")
+        else:
+            self.load_btn.configure(text="Load File...", style="CompactPrimary.TButton")
+
+        if is_multipage:
+            if not self._pages_row.winfo_manager():
+                self._pages_row.pack(fill="x", pady=(2, 8), before=self._preset_row)
+                log.debug("Shown Pages selector row (pages=%d)", self.total_pages)
+        elif self._pages_row.winfo_manager():
+            self._pages_row.pack_forget()
+            log.debug("Hidden Pages selector row (has_file=%s, pages=%d)", has_file, self.total_pages)
+
+    def _on_part_options_toggled(self, expanded: bool) -> None:
+        log.debug("Part options drawer toggled (expanded=%s)", expanded)
+        self._fit_window_to_content(shrink=not expanded)
+
+    def _sync_part_options_badge(self) -> None:
+        if self._trace_guard:
+            return
+        parts: list[str] = []
+        inst = (self.instrument_var.get() or "").strip()
+        if inst and inst.lower() != "auto":
+            parts.append(inst)
+        clef = (self.clef_var.get() or "").strip().lower()
+        if clef and clef != "auto":
+            parts.append(clef.capitalize())
+        tr_raw = (self.transpose_var.get() or "").strip()
+        try:
+            semi = int(tr_raw)
+        except ValueError:
+            parts.append("Transpose invalid")
+        else:
+            if semi != 0:
+                parts.append(f"+{semi}" if semi > 0 else str(semi))
+        badge = " · ".join(parts)
+        tone = "warn" if "invalid" in badge.lower() else "accent"
+        self.part_options_section.set_badge(badge, tone=tone)
+
+    def _sync_log_drawer_packing(self) -> None:
+        expanded = bool(self.log_section.is_expanded)
+        self.log_section.pack_configure(fill="both" if expanded else "x", expand=expanded)
+        log.debug("Log drawer packing updated (expanded=%s)", expanded)
+
+    def _set_abort_visible(self, visible: bool) -> None:
+        currently = bool(self.abort_btn.winfo_manager())
+        if visible and not currently:
+            self.abort_btn.pack(side="left", padx=(8, 0))
+            log.debug("Abort button shown")
+        elif not visible and currently:
+            self.abort_btn.pack_forget()
+            log.debug("Abort button hidden")
+
+    def _set_progress_visible(self, visible: bool) -> None:
+        want = bool(visible)
+        if want == self._progress_visible:
+            return
+        self._progress_visible = want
+        if want:
+            self.progress.pack(fill="x", pady=(10, 4), before=self._status_row)
+            self._status_row.pack_configure(pady=(0, 0))
+            self.pct_lbl.pack(side="right")
+            self.elapsed_lbl.pack(side="right", padx=(0, 8))
+        else:
+            self.progress.pack_forget()
+            self._status_row.pack_configure(pady=(8, 0))
+            self.pct_lbl.pack_forget()
+            self.elapsed_lbl.pack_forget()
+        log.debug("Progress bar visibility changed: %s", want)
+        self._fit_window_to_content(shrink=not want)
 
     def _sync_preset_indicators(self) -> None:
         if self._trace_guard:
@@ -1073,8 +1172,10 @@ class App(ttk.Frame):
             card.configure(background=p.card, highlightbackground=p.border)
 
         self.preview_pane.apply_theme(p)
+        self.part_options_section.apply_theme(p)
         self.advanced_section.apply_theme(p)
         self.log_section.apply_theme(p)
+        self._sync_part_options_badge()
         self.dual_install_banner.configure(background=p.warn_bg, highlightbackground=p.warn_border)
         self.crash_banner.configure(background=p.warn_bg, highlightbackground=p.warn_border)
         self.result_banner.configure(background=p.success_bg, highlightbackground=p.success_border)
@@ -1145,8 +1246,9 @@ class App(ttk.Frame):
         self.apply_theme("light" if self.theme_name == "dark" else "dark")
         self.save_preferences()
 
-    def _on_drawer_toggled(self, _expanded: bool) -> None:
-        self._fit_window_to_content()
+    def _on_drawer_toggled(self, expanded: bool) -> None:
+        self._sync_log_drawer_packing()
+        self._fit_window_to_content(shrink=not expanded)
         self.save_preferences()
 
     @staticmethod
@@ -1253,11 +1355,19 @@ class App(ttk.Frame):
                 "Conductor mode · 500 DPI · Auto instrument names & playback transpositions"
             )
             if not self.score_mode_hint_lbl.winfo_manager():
-                self.score_mode_hint_lbl.pack(anchor="w", pady=(0, 2), before=self._score_grid)
+                self.score_mode_hint_lbl.pack(anchor="w", pady=(0, 2), after=self._mode_row)
+            if self.part_options_section.winfo_manager():
+                self.part_options_section.pack_forget()
+            if not self._full_score_width_frame.winfo_manager():
+                self._full_score_width_frame.grid(row=3, column=0, sticky="ew", padx=(0, 10), pady=(5, 0))
         else:
             self.score_mode_hint_var.set("")
             if self.score_mode_hint_lbl.winfo_manager():
                 self.score_mode_hint_lbl.pack_forget()
+            if not self.part_options_section.winfo_manager():
+                self.part_options_section.pack(fill="x", pady=(6, 0), before=self._adv_separator)
+            if self._full_score_width_frame.winfo_manager():
+                self._full_score_width_frame.grid_remove()
 
         if not self._busy:
             for w in self._single_part_widgets:
@@ -1292,7 +1402,9 @@ class App(ttk.Frame):
 
         self._sync_score_mode_ui()
         self._sync_preset_indicators()
+        self._fit_window_to_content(shrink=True)
         self.save_preferences()
+        log.debug("Score mode switched to %s", "Full Score" if target else "Single Part")
 
     def apply_preset(self, preset_key: str) -> None:
         preset = get_scan_preset(preset_key)
@@ -1342,8 +1454,10 @@ class App(ttk.Frame):
         finally:
             self._trace_guard = False
         self._sync_score_mode_ui()
+        self._sync_part_options_badge()
         self._sync_preset_indicators()
         self._sync_transpose_hint()
+        self._fit_window_to_content(shrink=True)
         self.save_preferences()
 
     def collect_options(self) -> ConversionOptions:
@@ -1405,7 +1519,9 @@ class App(ttk.Frame):
             else:
                 w.configure(state=state)
         self.convert_btn.configure(state="disabled" if busy or not self.pdf else "normal")
-        self.abort_btn.configure(state="normal" if busy else "disabled")
+        show_abort = bool(busy and self._converting)
+        self._set_abort_visible(show_abort)
+        self.abort_btn.configure(state="normal" if show_abort else "disabled")
         self.preview_pane.set_busy(busy)
         if self._available_update is not None:
             self.update_btn.configure(state=state)
@@ -1426,23 +1542,34 @@ class App(ttk.Frame):
         self.elapsed_var.set(format_elapsed(time.monotonic() - self._started_at))
         self._elapsed_after_id = self.after(1000, self._tick_elapsed)
 
-    def _fit_window_to_content(self) -> None:
-        """Gently grow top-level window height if expanded drawers exceed current height."""
+    def _fit_window_to_content(self, *, shrink: bool = False) -> None:
+        """Adjust top-level window height smoothly to match visible sections."""
         try:
             self.master.update_idletasks()
             state = self.master.wm_state()
-            if state == "withdrawn":
+            if state != "normal":
                 return
             req_w = self.master.winfo_reqwidth()
             req_h = self.master.winfo_reqheight()
             cur_w = self.master.winfo_width()
             cur_h = self.master.winfo_height()
             max_w = max(820, self.master.winfo_screenwidth() - 60)
-            max_h = max(560, self.master.winfo_screenheight() - 80)
+            max_h = max(440, self.master.winfo_screenheight() - 80)
             target_w = min(max_w, max(cur_w, req_w))
-            target_h = min(max_h, max(cur_h, req_h))
+            desired_h = req_h + 8
+            target_h = min(max_h, desired_h) if shrink else min(max_h, max(cur_h, desired_h))
+            if shrink:
+                self.master.minsize(min(780, target_w), min(400, target_h))
             if target_w != cur_w or target_h != cur_h:
                 self.master.geometry(f"{target_w}x{target_h}")
+                log.debug(
+                    "Resized window to %dx%d (req=%dx%d, shrink=%s)",
+                    target_w,
+                    target_h,
+                    req_w,
+                    req_h,
+                    shrink,
+                )
         except Exception:
             pass
 
@@ -1625,7 +1752,7 @@ class App(ttk.Frame):
     def _acknowledge_crash(self) -> None:
         if self.crash_banner.winfo_manager():
             self.crash_banner.pack_forget()
-            self._fit_window_to_content()
+            self._fit_window_to_content(shrink=True)
         if self._crash_notice is not None:
             self._dismissed_crash = self._crash_notice.signature
             self._crash_notice = None
@@ -2055,7 +2182,7 @@ class App(ttk.Frame):
             return
 
         self._set_busy(True)
-        self.abort_btn.configure(state="disabled")
+        self._set_progress_visible(True)
         self.progress["value"] = 0
         self.pct_var.set("0%")
         self.elapsed_var.set("")
@@ -2129,7 +2256,9 @@ class App(ttk.Frame):
             self.pages_var.set("")
 
         self.preview_pane.set_pdf(source, total_pages=self.total_pages)
+        self._sync_source_ui()
         self._sync_pages_feedback()
+        self._set_progress_visible(False)
         self.progress["value"] = 0
         self.pct_var.set("0%")
         self.elapsed_var.set("")
@@ -2137,6 +2266,7 @@ class App(ttk.Frame):
         log.info("Selected source file: %s (%d page(s))", source, self.total_pages)
         self.save_preferences()
         self._set_busy(False)
+        self._fit_window_to_content(shrink=self.total_pages <= 1)
         return True
 
     def on_drop_files(self, paths: Sequence[Path]) -> None:
@@ -2232,6 +2362,7 @@ class App(ttk.Frame):
         self._converting = True
         self._started_at = time.monotonic()
         self._set_busy(True)
+        self._set_progress_visible(True)
         self.progress["value"] = 0
         self.pct_var.set("0%")
         self.elapsed_var.set("0:00")
@@ -2318,7 +2449,7 @@ class App(ttk.Frame):
     def on_dismiss_dual_install(self) -> None:
         if self.dual_install_banner.winfo_manager():
             self.dual_install_banner.pack_forget()
-            self._fit_window_to_content()
+            self._fit_window_to_content(shrink=True)
         if self._dual_install_notice is not None:
             self._dismissed_dual_install = self._dual_install_notice.dismiss_key
             self.save_preferences()
@@ -2475,11 +2606,13 @@ class App(ttk.Frame):
                 self._show_completion_popup(out_path, elapsed_text)
             elif kind == "aborted":
                 self._set_busy(False)
+                self._set_progress_visible(False)
                 self.progress["value"] = 0
                 self.pct_var.set("0%")
                 self.status_var.set("Conversion aborted by user.")
             elif kind == "error":
                 self._set_busy(False)
+                self._set_progress_visible(False)
                 self.progress["value"] = 0
                 self.pct_var.set("0%")
                 self.status_var.set("Conversion failed. See Activity Log for details.")
@@ -2559,6 +2692,7 @@ class App(ttk.Frame):
                 self._on_exit()
             elif kind == "update_error":
                 self._set_busy(False)
+                self._set_progress_visible(False)
                 self.progress["value"] = 0
                 self.pct_var.set("0%")
                 self.status_var.set("Update failed. See Activity Log for details.")
@@ -2567,6 +2701,7 @@ class App(ttk.Frame):
             elif kind == "models_progress":
                 done_b, total_b = payload
                 if not self._busy:
+                    self._set_progress_visible(True)
                     denom = max(int(total_b), 1)
                     pct = min(99, max(0, int(100 * int(done_b) / denom)))
                     self.progress["value"] = pct
@@ -2576,14 +2711,16 @@ class App(ttk.Frame):
                     )
             elif kind == "models_ready":
                 if not self._busy:
+                    self._set_progress_visible(False)
                     self.progress["value"] = 0
                     self.pct_var.set("0%")
                     if self.pdf is not None:
                         self.status_var.set("Ready. Pick a preset or click Convert & Save.")
                     else:
-                        self.status_var.set("AI models ready. Load or drop a sheet music PDF or photo to start.")
+                        self.status_var.set("AI models ready. Select or drop a file to start.")
             elif kind == "models_error":
                 if not self._busy:
+                    self._set_progress_visible(False)
                     self.progress["value"] = 0
                     self.pct_var.set("0%")
                     self.status_var.set(
@@ -2656,9 +2793,11 @@ def run_gui(config: AppConfig) -> None:  # pragma: no cover - interactive main l
     root.update_idletasks()
     scr_w = root.winfo_screenwidth()
     scr_h = root.winfo_screenheight()
-    width = min(max(920, root.winfo_reqwidth() + 8), max(820, scr_w - 60))
-    height = min(max(620, root.winfo_reqheight() + 8), max(540, scr_h - 80))
-    root.minsize(min(width, root.winfo_reqwidth()), min(height, root.winfo_reqheight()))
+    req_w = root.winfo_reqwidth()
+    req_h = root.winfo_reqheight()
+    width = min(max(860, req_w + 12), max(820, scr_w - 60))
+    height = min(max(420, req_h + 8), max(420, scr_h - 80))
+    root.minsize(min(width, max(780, req_w)), min(height, max(400, req_h)))
     x = max(0, (scr_w - width) // 2)
     y = max(0, (scr_h - height) // 2 - 20)
     root.geometry(f"{width}x{height}+{x}+{y}")

@@ -89,10 +89,16 @@ def test_musescore_tempo_import():
       <part-list>
         <score-part id="P1"><part-name>Piano</part-name><score-instrument id="P1-I1"><instrument-name>Piano</instrument-name><instrument-sound>keyboard.piano</instrument-sound></score-instrument><midi-instrument id="P1-I1"><midi-channel>1</midi-channel><midi-program>1</midi-program></midi-instrument></score-part>
       </part-list>
-      <part id="P1"><measure number="1"><attributes><divisions>4</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note></measure></part>
+      <part id="P1"><measure number="1"><attributes><divisions>4</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+        <direction placement="below"><direction-type><dynamics><mp/><other-dynamics>più</other-dynamics></dynamics></direction-type><staff>1</staff></direction>
+        <note><pitch><step>C</step><octave>4</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note>
+      </measure></part>
     </score-partwise>"""
-    root = ET.fromstring(raw_xml)
+    from pdf2musescore.musicxml import sanitize_dynamics
+
+    root = sanitize_dynamics(ET.fromstring(raw_xml))
     assert apply_tempo_marking(root, TempoMarking(text="Adagio affetuoso", bpm=72)) is True
+    assert apply_tempo_marking(root, TempoMarking(text="tranq.", is_expression=True)) is True
 
     xml_path = write_musicxml(root, OUT / "tempo_import.musicxml")
     mscz = MuseScoreExporter(ms).export(xml_path, OUT / "tempo_import.mscz")
@@ -103,7 +109,11 @@ def test_musescore_tempo_import():
     tempos = mscx_root.findall(".//Tempo")
     assert tempos, "Expected MuseScore 4 to import <Tempo> element"
     assert abs(float(tempos[0].findtext("tempo") or "0") - 1.2) < 0.05
-    assert "Adagio affetuoso" in "".join(tempos[0].itertext())
+    tempo_xml = ET.tostring(tempos[0], encoding="unicode")
+    assert "Adagio affetuoso " in tempo_xml
+    assert "tranq." in "".join("".join(st.itertext()) for st in mscx_root.findall(".//StaffText/text"))
+    dyn_subtypes = [d.findtext("subtype") for d in mscx_root.findall(".//Dynamic")]
+    assert dyn_subtypes == ["mp"]
 
 
 def test_musescore_courtesy_accidental_import():

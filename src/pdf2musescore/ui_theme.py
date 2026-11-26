@@ -350,6 +350,21 @@ def configure_ttk_style(style: ttk.Style, palette: ThemePalette, ui_font: str) -
     )
 
     style.configure(
+        "CompactPrimary.TButton",
+        background=palette.accent,
+        foreground=palette.accent_text,
+        borderwidth=0,
+        focusthickness=0,
+        padding=(12, 5),
+        font=(ui_font, 9, "bold"),
+    )
+    style.map(
+        "CompactPrimary.TButton",
+        background=[("disabled", palette.pill_bg), ("pressed", palette.accent_hover), ("active", palette.accent_hover)],
+        foreground=[("disabled", palette.text_subtle), ("active", palette.accent_text)],
+    )
+
+    style.configure(
         "Secondary.TButton",
         background=palette.card_alt,
         foreground=palette.text,
