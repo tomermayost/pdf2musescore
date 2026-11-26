@@ -5,6 +5,7 @@ import pytest
 
 from pdf2musescore.musicxml import (
     MergeError,
+    add_courtesy_accidentals,
     apply_clef_override,
     apply_instrument_override,
     apply_score_options,
@@ -13,6 +14,7 @@ from pdf2musescore.musicxml import (
     merge_scores,
     normalize_default_instruments,
     read_score,
+    reconcile_standard_time_signatures,
     sanitize_score,
     sanitize_slurs,
     set_score_part_instrument,
@@ -63,15 +65,18 @@ def test_sanitize_tuplets_and_tremolos():
       <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification><notations/></note>
       <note><duration>12</duration></note>
       <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>
-      <note><duration>8</duration><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>
+      <note><duration>4</duration><type>eighth</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>
+      <note><duration>12</duration></note>
+      <note><duration>2</duration><type>16th</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>
     </measure></part></score-partwise>"""
     root = sanitize_score(ET.fromstring(xml))
     assert root.find(".//tremolo") is None
     tuplets = [(t.get("type")) for t in root.findall(".//tuplet")]
     assert tuplets == ["start", "stop"]
     notes = root.findall(".//note")
-    assert notes[-1].find("time-modification") is None
-    assert notes[-1].find("duration").text == "12"
+    orphans = [notes[5], notes[6], notes[8]]
+    assert all(n.find("time-modification") is None for n in orphans)
+    assert [n.findtext("duration") for n in orphans] == ["12", "6", "3"]
 
 
 def test_transpose_clef_instrument_and_score_options():
@@ -322,3 +327,127 @@ def test_merge_files_sorted(tmp_path):
     write_mxl(score(1, mtitle="A"), tmp_path / "x.mvt1.mxl")
     out = merge_files(list(tmp_path.glob("*.mxl")), tmp_path / "o" / "x.musicxml")
     assert [w.text for w in read_score(out).iter("words")] == ["A", "B"]
+
+
+def test_single_page_merge_omits_title_words():
+    s = score(2, mtitle="WEST SIDE STORY")
+    merged = merge_scores([s], title="west side story")
+    assert list(merged.iter("words")) == []
+
+    # Multi-page score with tempo on M1 and running instrument headers suppresses overlapping titles
+    p1 = score(1, mtitle="WEST SIDE STORY")
+    p1.find("./part-list/score-part").append(ET.fromstring("<part-name>BARITONE</part-name>"))
+    d = ET.SubElement(p1.find("./part/measure"), "direction")
+    ET.SubElement(ET.SubElement(d, "direction-type"), "words").text = "Andante maestoso"
+    ET.SubElement(d, "sound", tempo="72")
+    p2 = score(1, mtitle="BARITONE")
+    merged_multi = merge_scores([p1, p2], title="West Side Story", options=ConversionOptions(keep_line_breaks=True))
+    assert [w.text for w in merged_multi.iter("words")] == ["Andante maestoso"]
+    assert len(merged_multi.findall(".//print[@new-page='yes']")) == 1
+
+
+def test_reconcile_standard_time_signatures():
+    # Empty / single measure -> no-op
+    assert reconcile_standard_time_signatures(score(1)) == 0
+
+    def _m(num: int, q_dur: float, *, ts: tuple[str, str] | None = None, rest_meas: bool = False, key: str | None = None, double_bar: bool = False) -> ET.Element:
+        m = ET.Element("measure", number=str(num))
+        if ts or key or num == 1:
+            a = ET.SubElement(m, "attributes")
+            if num == 1:
+                ET.SubElement(a, "divisions").text = "4"
+            if key is not None:
+                ET.SubElement(ET.SubElement(a, "key"), "fifths").text = key
+            if ts is not None:
+                t = ET.SubElement(a, "time")
+                ET.SubElement(t, "beats").text = ts[0]
+                ET.SubElement(t, "beat-type").text = ts[1]
+        n = ET.SubElement(m, "note")
+        if rest_meas:
+            ET.SubElement(n, "rest", measure="yes")
+            ET.SubElement(n, "duration").text = str(int(round(q_dur * 4)))
+            ET.SubElement(n, "type").text = "whole"
+        else:
+            p = ET.SubElement(n, "pitch")
+            ET.SubElement(p, "step").text = "C"
+            ET.SubElement(p, "octave").text = "4"
+            ET.SubElement(n, "duration").text = str(int(round(q_dur * 4)))
+        if double_bar:
+            ET.SubElement(ET.SubElement(m, "barline", location="right"), "bar-style").text = "light-light"
+        return m
+
+    # West Side Story pattern: M1 wrongly labeled 3/4, M1-5 are 4/4 (double bar at M5),
+    # M6 is key-change rest bar (3/4), M7-14 are 3/4 (double bar at M14), M15-18 are 4/4.
+    root = ET.Element("score-partwise")
+    ET.SubElement(ET.SubElement(root, "part-list"), "score-part", id="P1")
+    part = ET.SubElement(root, "part", id="P1")
+    for i in range(1, 6):
+        part.append(_m(i, 4.0, ts=("3", "4") if i == 1 else None, double_bar=(i == 5)))
+    part.append(_m(6, 4.0, rest_meas=True, key="-2"))  # stale duration=16 -> should sync to 12 for 3/4
+    for i in range(7, 15):
+        part.append(_m(i, 3.0, double_bar=(i == 14)))
+    for i in range(15, 19):
+        part.append(_m(i, 4.0))
+
+    assert reconcile_standard_time_signatures(root) == 1
+    ms = part.findall("measure")
+    times = [(i + 1, m.findtext("./attributes/time/beats"), m.findtext("./attributes/time/beat-type")) for i, m in enumerate(ms) if m.find("./attributes/time") is not None]
+    assert times == [(1, "4", "4"), (6, "3", "4"), (15, "4", "4")]
+    assert ms[5].findtext("./note/duration") == "12"
+    assert ms[5].find("./note/type") is None
+
+    # Idempotent when re-run
+    assert reconcile_standard_time_signatures(root) == 0
+
+    # Preserves 6/8 compound meter and 1-bar pickup without breaking them
+    root_68 = ET.Element("score-partwise")
+    ET.SubElement(ET.SubElement(root_68, "part-list"), "score-part", id="P1")
+    p68 = ET.SubElement(root_68, "part", id="P1")
+    p68.append(_m(1, 0.5, ts=("6", "8")))  # 1-eighth pickup
+    for i in range(2, 6):
+        p68.append(_m(i, 3.0))  # 6/8 = 3 quarters
+    assert reconcile_standard_time_signatures(root_68) == 0
+    assert (p68.findtext("./measure[@number='1']/attributes/time/beats"), p68.findtext("./measure[@number='1']/attributes/time/beat-type")) == ("6", "8")
+
+
+def test_add_courtesy_accidentals_and_transposed():
+    xml = """<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">
+      <measure number="1">
+        <attributes><key><fifths>2</fifths></key></attributes>
+        <note><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><stem>up</stem></note>
+        <note><pitch><step>C</step><alter>0</alter><octave>5</octave></pitch><duration>4</duration><stem>down</stem></note>
+        <note><rest/><duration>4</duration></note>
+      </measure>
+      <measure number="2">
+        <note><pitch><step>F</step><alter>1</alter><octave>4</octave></pitch><duration>8</duration><stem>up</stem></note>
+        <note><pitch><step>F</step><alter>1</alter><octave>4</octave></pitch><duration>4</duration><stem>up</stem></note>
+        <note><pitch><step>C</step><alter>1</alter><octave>5</octave></pitch><duration>4</duration><tie type="stop"/><stem>down</stem></note>
+      </measure>
+      <measure number="3">
+        <attributes><key><fifths>-1</fifths></key></attributes>
+        <note><pitch><step>B</step><alter>0</alter><octave>4</octave></pitch><duration>4</duration><stem>down</stem></note>
+      </measure>
+      <measure number="4">
+        <note><pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch><duration>4</duration><stem>down</stem></note>
+      </measure>
+    </part></score-partwise>"""
+    root = ET.fromstring(xml)
+    # M1 alters F4 (0 vs +1) and C5 (0 vs +1).
+    # M2: first F#4 gets cautionary sharp before <stem>; second F#4 does not; tied C#5 stop does not!
+    # M3 has key change to -1 (clears prev_altered), alters B4 (natural vs -1).
+    # M4: Bb4 gets cautionary flat!
+    assert add_courtesy_accidentals(root) == 2
+
+    m2_notes = root.findall("./part/measure[@number='2']/note")
+    acc0 = m2_notes[0].find("accidental")
+    assert acc0 is not None and acc0.text == "sharp" and acc0.get("cautionary") == "yes"
+    assert [c.tag for c in m2_notes[0]].index("accidental") < [c.tag for c in m2_notes[0]].index("stem")
+    assert m2_notes[1].find("accidental") is None
+    assert m2_notes[2].find("accidental") is None
+
+    m4_note = root.find("./part/measure[@number='4']/note")
+    acc_b = m4_note.find("accidental")
+    assert acc_b is not None and acc_b.text == "flat" and acc_b.get("cautionary") == "yes"
+
+    # Idempotent
+    assert add_courtesy_accidentals(root) == 0

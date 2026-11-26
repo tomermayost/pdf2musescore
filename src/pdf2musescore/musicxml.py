@@ -6,6 +6,7 @@ import copy
 import logging
 import zipfile
 import xml.etree.ElementTree as ET
+from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
@@ -45,6 +46,20 @@ _CLEF_MAP: dict[str, tuple[str, str]] = {
     "tenor": ("C", "4"),
 }
 _SEMITONE_FIFTHS_SHIFT = (0, -5, 2, -3, 4, -1, 6, 1, -4, 3, -2, 5)
+_SHARP_ORDER: tuple[str, ...] = ("F", "C", "G", "D", "A", "E", "B")
+_FLAT_ORDER: tuple[str, ...] = ("B", "E", "A", "D", "G", "C", "F")
+_ALTER_TO_ACCIDENTAL: dict[int, str] = {
+    -2: "flat-flat",
+    -1: "flat",
+    0: "natural",
+    1: "sharp",
+    2: "double-sharp",
+}
+_NOTE_AFTER_ACCIDENTAL = frozenset(
+    {"time-modification", "stem", "notehead", "notehead-text", "staff", "beam", "notations", "lyric", "play"}
+)
+_ATTR_BEFORE_TIME = frozenset({"footnote", "level", "divisions", "key"})
+_SECTION_BAR_STYLES = frozenset({"light-light", "heavy-heavy", "light-heavy"})
 
 
 def sanitize_slurs(root: ET.Element) -> ET.Element:
@@ -119,11 +134,20 @@ def _close_tuplet_run(run: list[ET.Element]) -> None:
         else:
             for note in grp:
                 tm = note.find("time-modification")
+                actual = normal = 0
                 if tm is not None:
+                    an_txt = (tm.findtext("actual-notes") or "").strip()
+                    nn_txt = (tm.findtext("normal-notes") or "").strip()
+                    if an_txt.isdigit() and nn_txt.isdigit():
+                        actual, normal = int(an_txt), int(nn_txt)
                     note.remove(tm)
                 dur = note.find("duration")
-                if dur is not None and dur.text == "8":
-                    dur.text = "12"
+                if dur is not None and (dur.text or "").strip().isdigit():
+                    cur_dur = int(dur.text.strip())
+                    if actual > 0 and normal > 0 and (cur_dur * actual) % normal == 0:
+                        dur.text = str((cur_dur * actual) // normal)
+                    elif cur_dur == 8:
+                        dur.text = "12"
 
 
 def strip_layout_breaks(root: ET.Element) -> ET.Element:
@@ -405,10 +429,288 @@ def apply_instrument_override(root: ET.Element, instrument_name: str) -> ET.Elem
     return root
 
 
+def _fifths_to_key_alters(fifths: int) -> dict[str, int]:
+    """Return diatonic step alterations (``-1``, ``0``, ``+1``) implied by ``fifths``."""
+    alters = {step: 0 for step in "CDEFGAB"}
+    wf = ((fifths + 6) % 12) - 6
+    if wf > 0:
+        for step in _SHARP_ORDER[: min(7, wf)]:
+            alters[step] = 1
+    elif wf < 0:
+        for step in _FLAT_ORDER[: min(7, -wf)]:
+            alters[step] = -1
+    return alters
+
+
+def add_courtesy_accidentals(root: ET.Element) -> int:
+    """Emit cautionary ``<accidental>`` tags when a note returns to the key signature after an alteration."""
+    added = 0
+    for part in root.findall("part"):
+        key_alters = _fifths_to_key_alters(0)
+        prev_altered: set[tuple[str, str]] = set()
+        for mi, measure in enumerate(part.findall("measure")):
+            fifths_txt = measure.findtext("./attributes/key/fifths")
+            if fifths_txt is not None and fifths_txt.strip().lstrip("+-").isdigit():
+                key_alters = _fifths_to_key_alters(int(fifths_txt.strip()))
+                if mi > 0:
+                    prev_altered.clear()
+
+            cur_altered: set[tuple[str, str]] = set()
+            seen_in_bar: set[tuple[str, str]] = set()
+            for note in measure.findall("note"):
+                if note.find("rest") is not None:
+                    continue
+                pitch = note.find("pitch")
+                if pitch is None:
+                    continue
+                step = (pitch.findtext("step") or "").strip().upper()
+                octave = (pitch.findtext("octave") or "").strip()
+                if step not in key_alters or not octave:
+                    continue
+                alter_txt = (pitch.findtext("alter") or "").strip()
+                try:
+                    alter = int(round(float(alter_txt))) if alter_txt else 0
+                except ValueError:
+                    alter = 0
+
+                key = (step, octave)
+                expected = key_alters[step]
+                is_tie_stop = any(t.get("type") == "stop" for t in note.findall("tie"))
+                if alter != expected:
+                    cur_altered.add(key)
+                elif key in prev_altered and key not in seen_in_bar and not is_tie_stop and note.find("accidental") is None:
+                    acc_name = _ALTER_TO_ACCIDENTAL.get(alter)
+                    if acc_name:
+                        acc_el = ET.Element("accidental", {"cautionary": "yes"})
+                        acc_el.text = acc_name
+                        ins_idx = len(note)
+                        for idx, ch in enumerate(list(note)):
+                            if ch.tag in _NOTE_AFTER_ACCIDENTAL:
+                                ins_idx = idx
+                                break
+                        note.insert(ins_idx, acc_el)
+                        added += 1
+                seen_in_bar.add(key)
+            prev_altered = cur_altered
+    if added:
+        log.info("Added %d courtesy <accidental cautionary='yes'> tag(s) across score", added)
+    return added
+
+
+def _quarter_duration_to_time_sig(
+    q: Fraction,
+    preferred_beat_type: Optional[str] = None,
+) -> Optional[tuple[str, str]]:
+    if preferred_beat_type == "8" and (q * 2).denominator == 1 and int(q * 2) in (3, 5, 6, 7, 9, 12):
+        return (str(int(q * 2)), "8")
+    if preferred_beat_type == "2" and (q / 2).denominator == 1 and int(q / 2) in (2, 3, 4):
+        return (str(int(q / 2)), "2")
+    if q.denominator == 1 and 2 <= int(q) <= 6:
+        return (str(int(q)), "4")
+    if q.denominator == 2 and int(q * 2) in (3, 5, 7, 9):
+        return (str(int(q * 2)), "8")
+    return None
+
+
+def _measure_voice1_quarters(measure: ET.Element, div: int) -> tuple[Optional[Fraction], bool]:
+    notes = measure.findall("note")
+    is_rest_only = (not notes) or all(n.find("rest") is not None for n in notes)
+    if is_rest_only:
+        return None, True
+    first_voice: Optional[str] = None
+    total = 0
+    for note in notes:
+        if note.find("chord") is not None or note.find("grace") is not None:
+            continue
+        v = (note.findtext("voice") or "1").strip() or "1"
+        if first_voice is None:
+            first_voice = v if any((n.findtext("voice") or "1").strip() == "1" for n in notes) else v
+            if first_voice != "1":
+                first_voice = v
+        target_v = "1" if first_voice == "1" else first_voice
+        if v != target_v:
+            continue
+        dur_txt = (note.findtext("duration") or "").strip()
+        if dur_txt.isdigit():
+            total += int(dur_txt)
+    if total <= 0:
+        return None, False
+    return Fraction(total, max(1, div)), False
+
+
+def _has_section_boundary_before(measures: Sequence[ET.Element], idx: int) -> bool:
+    if idx == 0:
+        return True
+    cur = measures[idx]
+    if cur.find("./attributes/key") is not None or cur.find("./attributes/time") is not None:
+        return True
+    prev = measures[idx - 1]
+    for bl in prev.findall("barline"):
+        if bl.find("repeat") is not None:
+            return True
+        style = (bl.findtext("bar-style") or "").strip().lower()
+        if style in _SECTION_BAR_STYLES:
+            return True
+    return False
+
+
+def reconcile_standard_time_signatures(root: ET.Element) -> int:
+    """Infer piecewise-constant meter regimes from actual measure durations and repair wrong/missing ``<time>``."""
+    changed_parts = 0
+    for part in root.findall("part"):
+        measures = part.findall("measure")
+        n_bars = len(measures)
+        if n_bars < 2:
+            continue
+
+        divs: list[int] = []
+        quarters: list[Optional[Fraction]] = []
+        is_rest: list[bool] = []
+        declared_ts: list[Optional[tuple[str, str]]] = []
+        boundary: list[bool] = []
+
+        cur_div = 4
+        for i, m in enumerate(measures):
+            for a in m.findall("attributes"):
+                d_txt = (a.findtext("divisions") or "").strip()
+                if d_txt.isdigit():
+                    cur_div = max(1, int(d_txt))
+            divs.append(cur_div)
+            q_val, rest_only = _measure_voice1_quarters(m, cur_div)
+            quarters.append(q_val)
+            is_rest.append(rest_only)
+
+            ts_found: Optional[tuple[str, str]] = None
+            for t in m.findall("./attributes/time"):
+                b = (t.findtext("beats") or "").strip()
+                bt = (t.findtext("beat-type") or "").strip()
+                if b.isdigit() and bt.isdigit() and int(b) > 0 and int(bt) > 0:
+                    ts_found = (b, bt)
+            declared_ts.append(ts_found)
+            boundary.append(_has_section_boundary_before(measures, i))
+
+        cands: list[Optional[tuple[str, str]]] = []
+        active_decl: Optional[tuple[str, str]] = None
+        for i in range(n_bars):
+            if declared_ts[i] is not None:
+                active_decl = declared_ts[i]
+            if is_rest[i] or quarters[i] is None:
+                cands.append(None)
+                continue
+            pref_bt = active_decl[1] if active_decl is not None else None
+            if active_decl is not None and quarters[i] == Fraction(int(active_decl[0]) * 4, int(active_decl[1])):
+                cands.append(active_decl)
+            else:
+                cands.append(_quarter_duration_to_time_sig(quarters[i], preferred_beat_type=pref_bt))
+
+        # Group contiguous non-rest measures with identical candidate meter
+        raw_runs: list[tuple[tuple[str, str], list[int]]] = []
+        for i, c in enumerate(cands):
+            if c is None:
+                continue
+            if raw_runs and raw_runs[-1][0] == c:
+                raw_runs[-1][1].append(i)
+            else:
+                raw_runs.append((c, [i]))
+
+        valid_runs: list[list[object]] = []
+        for ts, idxs in raw_runs:
+            if len(idxs) >= 2 or (len(idxs) == 1 and declared_ts[idxs[0]] == ts):
+                if valid_runs and valid_runs[-1][0] == ts:
+                    valid_runs[-1][2] = idxs[-1]
+                else:
+                    valid_runs.append([ts, idxs[0], idxs[-1]])
+
+        if not valid_runs:
+            continue
+
+        inferred: list[tuple[str, str]] = [valid_runs[0][0]] * n_bars  # type: ignore[list-item]
+        for k, (ts, start_i, end_i) in enumerate(valid_runs):
+            s_i, e_i = int(start_i), int(end_i)
+            for j in range(s_i, e_i + 1):
+                inferred[j] = ts  # type: ignore[assignment]
+            if k + 1 < len(valid_runs):
+                next_ts, next_s_raw, _ = valid_runs[k + 1]
+                next_s = int(next_s_raw)
+                split_idx = next_s
+                for g in range(e_i + 1, next_s + 1):
+                    if boundary[g]:
+                        split_idx = g
+                        break
+                for j in range(e_i + 1, split_idx):
+                    inferred[j] = ts  # type: ignore[assignment]
+                for j in range(split_idx, next_s):
+                    inferred[j] = next_ts  # type: ignore[assignment]
+            else:
+                for j in range(e_i + 1, n_bars):
+                    inferred[j] = ts  # type: ignore[assignment]
+
+        # Compare inferred timeline against currently declared timeline
+        existing_timeline: list[Optional[tuple[str, str]]] = []
+        cur_ts_decl: Optional[tuple[str, str]] = None
+        for ts in declared_ts:
+            if ts is not None:
+                cur_ts_decl = ts
+            existing_timeline.append(cur_ts_decl)
+        if existing_timeline == list(inferred):
+            continue
+
+        for mi, m in enumerate(measures):
+            b, bt = inferred[mi]
+            need_time = (mi == 0) or (inferred[mi] != inferred[mi - 1])
+            for attrs in m.findall("attributes"):
+                for old_t in list(attrs.findall("time")):
+                    attrs.remove(old_t)
+            if need_time:
+                attrs = m.find("attributes")
+                if attrs is None:
+                    attrs = ET.Element("attributes")
+                    m.insert(0, attrs)
+                t_el = ET.Element("time")
+                ET.SubElement(t_el, "beats").text = b
+                ET.SubElement(t_el, "beat-type").text = bt
+                ins_idx = 0
+                for idx, ch in enumerate(list(attrs)):
+                    if ch.tag in _ATTR_BEFORE_TIME:
+                        ins_idx = idx + 1
+                attrs.insert(ins_idx, t_el)
+
+            if is_rest[mi]:
+                mr_note = None
+                for n in m.findall("note"):
+                    r_el = n.find("rest")
+                    if r_el is not None and r_el.get("measure") == "yes":
+                        mr_note = n
+                        break
+                if mr_note is not None:
+                    expected_dur = max(1, int(round(divs[mi] * int(b) * 4 / max(1, int(bt)))))
+                    dur_el = mr_note.find("duration")
+                    if dur_el is not None and dur_el.text != str(expected_dur):
+                        dur_el.text = str(expected_dur)
+                        for stale_tag in ("type", "dot"):
+                            for stale in list(mr_note.findall(stale_tag)):
+                                mr_note.remove(stale)
+
+        transitions = [
+            f"M{mi + 1}={b}/{bt}"
+            for mi, (b, bt) in enumerate(inferred)
+            if mi == 0 or inferred[mi] != inferred[mi - 1]
+        ]
+        log.info(
+            "Reconciled time signatures on %s (%d bars): %s",
+            part.get("id", "P1"),
+            n_bars,
+            ", ".join(transitions),
+        )
+        changed_parts += 1
+    return changed_parts
+
+
 def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) -> ET.Element:
-    """Apply Section 3 post-processing options (transpose, clef, instrument, layout) to ``root``."""
+    """Apply Section 3 post-processing options (transpose, clef, instrument, layout, courtesy accidentals) to ``root``."""
     if options is None:
         normalize_default_instruments(root)
+        add_courtesy_accidentals(root)
         return root
     if options.transpose_semitones != 0:
         transpose_score(root, options.transpose_semitones)
@@ -420,6 +722,7 @@ def apply_score_options(root: ET.Element, options: Optional[ConversionOptions]) 
         normalize_default_instruments(root)
     if not options.keep_line_breaks:
         strip_layout_breaks(root)
+    add_courtesy_accidentals(root)
     return root
 
 
@@ -438,6 +741,11 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
             p.remove(m)
 
     keep_breaks = bool(options.keep_line_breaks) if options is not None else False
+    part_names_lower = {
+        (sp.findtext("part-name") or "").strip().lower()
+        for sp in merged.findall("./part-list/score-part")
+        if (sp.findtext("part-name") or "").strip()
+    }
     counters = [0] * len(base_parts)
     for idx, root in enumerate(roots, start=1):
         mtitle = _movement_title(root, idx)
@@ -451,8 +759,18 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
                 m = copy.deepcopy(m)
                 counters[pi] += 1
                 m.set("number", str(counters[pi]))
-                if mi == 0 and pi == 0:
-                    _mark_movement_start(m, mtitle, new_page=(keep_breaks and idx > 1))
+                if len(roots) > 1 and mi == 0 and pi == 0:
+                    has_tempo_dir = (
+                        m.find("./direction/direction-type/metronome") is not None
+                        or m.find("./direction/sound[@tempo]") is not None
+                    )
+                    is_running_part_hdr = idx > 1 and mtitle.lower() in part_names_lower
+                    skip_title_overlap = idx == 1 and bool(title) and has_tempo_dir
+                    if is_running_part_hdr or skip_title_overlap:
+                        if keep_breaks and idx > 1:
+                            m.insert(0, ET.Element("print", {"new-page": "yes"}))
+                    else:
+                        _mark_movement_start(m, mtitle, new_page=(keep_breaks and idx > 1))
                 base_parts[pi].append(m)
         log.info("Merged section %d: %s (%d measures)", idx, mtitle,
                  len(parts[0].findall("measure")) if parts else 0)
@@ -471,6 +789,7 @@ def merge_scores(roots: Sequence[ET.Element], title: str | None = None,
             wt = ET.SubElement(work, "work-title")
         wt.text = title
 
+    reconcile_standard_time_signatures(merged)
     apply_score_options(merged, options)
     if options is None:
         strip_layout_breaks(merged)

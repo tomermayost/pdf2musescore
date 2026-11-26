@@ -781,7 +781,10 @@ def test_normalize_overfull_measure_tiers_and_backup_sync():
         _add_rhythm_note(m, 4, "eighth")
         _add_rhythm_note(m, 6, "eighth", dots=1)
         _add_rhythm_note(m, 1, "32nd")
-        _add_rhythm_note(m, 22, "half")  # 33 > 32, excess=1
+        _add_rhythm_note(m, 8, "quarter")
+        _add_rhythm_note(m, 8, "quarter")
+        _add_rhythm_note(m, 4, "eighth")
+        _add_rhythm_note(m, 2, "16th")  # 33 > 32, excess=1
 
     res_p2 = _run_one(setup_tier1_pass2)
     assert sum(int(n.findtext("duration")) for n in res_p2.findall("note")) == 31
@@ -812,9 +815,9 @@ def test_normalize_overfull_measure_tiers_and_backup_sync():
 
     # Tier 3b: Trailing clamp + drop + multi-voice <backup> duration sync
     def setup_tier3b(m, _m2):
-        # voice 1: 12 + 12 + 12 = 36 -> wait 12 (dotted-quarter) has dot_val=4 matching excess! Use non-standard dur=11+11+14=36 so Tier 1-3a don't trigger, hitting Tier 3b!
         _add_rhythm_note(m, 16, "half", voice="1")
-        _add_rhythm_note(m, 12, "quarter", dots=0, voice="1")  # weird 12 without dot
+        n_weird = _add_rhythm_note(m, 12, "quarter", dots=0, voice="1")
+        n_weird.remove(n_weird.find("type"))  # non-standard 12 without <type> -> forces Tier 3b excess=12
         _add_rhythm_note(m, 8, "quarter", voice="1")  # onset 28, dur 8 -> clamped to 4 (eighth)
         _add_rhythm_note(m, 8, "quarter", voice="1")  # onset 36 >= 32 -> dropped!
         bk = ET.SubElement(m, "backup")
@@ -900,3 +903,46 @@ def test_normalize_interleaved_multivoice_deinterleaves_and_preserves_offsets():
     assert [f.findtext("duration") for f in res_fw.findall("forward")] == ["8"]
     v2_durs = [n.findtext("duration") for n in res_fw.findall("note") if n.findtext("voice") == "2"]
     assert v2_durs == ["8"]
+
+
+def test_reconcile_duration_type_mismatch_nonstandard_clamp_and_equivalent_meter():
+    # 1) Orphan triplet duration mismatch (<duration>4</duration><type>eighth</type> at div=12 -> visual 6)
+    #    PLUS Tier 3b non-standard remainder clamp (rem=8 at div=12 -> clamped to largest standard 6 eighth)
+    p1 = _make_part("P1", [(False, ("4", "4"))], divisions=12)
+    p2 = _make_part("P2", [(True, ("4", "4"))], divisions=12)
+    m1 = p1[1].find("measure")
+    for n in list(m1.findall("note")):
+        m1.remove(n)
+    _add_rhythm_note(m1, 24, "half")
+    _add_rhythm_note(m1, 4, "eighth")  # mismatched visual=6 -> reconciled!
+    _add_rhythm_note(m1, 12, "quarter")
+    _add_rhythm_note(m1, 12, "quarter")  # total after reconcile = 54 > 48 -> Tier 3a fixes last quarter->eighth(6)
+    aligned1, _ = align_page_score(_build_score([p1, p2]), page_num=1)
+    durs1 = [n.findtext("duration") for n in aligned1.findall("./part[@id='P1']/measure/note")]
+    assert durs1 == ["24", "6", "12", "6"]
+
+    # Direct non-standard Tier 3b remainder (rem=8 at div=12 -> 2/3 quarter -> largest standard 6 eighth, no type mismatch)
+    p3 = _make_part("P1", [(False, ("4", "4"))], divisions=12)
+    p4 = _make_part("P2", [(True, ("4", "4"))], divisions=12)
+    m3 = p3[1].find("measure")
+    for n in list(m3.findall("note")):
+        m3.remove(n)
+    _add_rhythm_note(m3, 12, "quarter")
+    _add_rhythm_note(m3, 12, "quarter")
+    n16 = _add_rhythm_note(m3, 16, "quarter")  # non-standard raw dur without matching type? Force type="whole" removed or weird type:
+    n16.remove(n16.find("type"))  # total=40 -> onset of next is 40, rem=8!
+    _add_rhythm_note(m3, 12, "quarter")  # onset 40, dur 12 > 48 -> Tier 3b rem=8 -> clamped to (6, eighth)!
+    aligned2, _ = align_page_score(_build_score([p3, p4]), page_num=1)
+    last_n = aligned2.findall("./part[@id='P1']/measure/note")[-1]
+    assert last_n.findtext("duration") == "6" and last_n.findtext("type") == "eighth"
+
+    # 2) Continuation page preserves equivalent meter (12/8 vs minority 6/4; 6/8 vs minority 3/4),
+    #    accepts strong >=60% printed change (6/4), and accepts different-duration changes (4/4 -> 12/8).
+    def _meter_page(ts_list, inh):
+        specs = [_make_part(f"P{i+1}", [(False, ts)], divisions=4) for i, ts in enumerate(ts_list)]
+        return align_page_score(_build_score(specs), page_num=15, inherited_time_sig=inh)[1]
+
+    assert _meter_page([("6", "4"), ("6", "4"), ("3", "4"), ("4", "4"), ("2", "4")], ("12", "8")) == ("12", "8")
+    assert _meter_page([("3", "4"), ("3", "4"), ("2", "4"), ("4", "4"), ("5", "4")], ("6", "8")) == ("6", "8")
+    assert _meter_page([("6", "4"), ("6", "4"), ("6", "4"), ("3", "4")], ("12", "8")) == ("6", "4")
+    assert _meter_page([("12", "8"), ("12", "8"), ("12", "8"), ("4", "4")], ("4", "4")) == ("12", "8")

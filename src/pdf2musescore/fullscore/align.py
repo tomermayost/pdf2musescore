@@ -15,6 +15,7 @@ from typing import Optional, Sequence
 
 from ..musicxml import (
     MergeError,
+    add_courtesy_accidentals,
     read_score,
     set_score_part_instrument,
     strip_layout_breaks,
@@ -215,6 +216,69 @@ def _duration_to_type_and_dots(dur: int, div: int) -> Optional[tuple[str, int]]:
         if q == base_q * Fraction(7, 4):
             return (note_type, 2)
     return None
+
+
+def _largest_standard_type_and_dots(max_dur: int, div: int) -> Optional[tuple[int, str, int]]:
+    """Return ``(ticks, type, dots)`` for the largest standard notation value with ``0 < ticks <= max_dur``."""
+    if max_dur <= 0:
+        return None
+    d_unit = max(1, div)
+    best: Optional[tuple[int, int, str, int]] = None  # (ticks, -dots, type, dots)
+    for note_type, base_q in _TYPE_TO_QUARTERS.items():
+        for dots, mult in ((0, Fraction(1)), (1, Fraction(3, 2)), (2, Fraction(7, 4))):
+            ticks_frac = base_q * mult * d_unit
+            if ticks_frac.denominator != 1:
+                continue
+            ticks = int(ticks_frac)
+            if 0 < ticks <= max_dur:
+                cand = (ticks, -dots, note_type, dots)
+                if best is None or cand[:2] > best[:2]:
+                    best = cand
+    if best is None:
+        return None
+    return best[0], best[2], best[3]
+
+
+def _reconcile_duration_type_mismatches(measure: ET.Element, div: int) -> bool:
+    """Sync ``<duration>`` when it disagrees with explicit ``<type>``/``<dot>``/``<time-modification>``."""
+    d_unit = max(1, div)
+    changed = False
+    for note in measure.findall("note"):
+        if note.find("grace") is not None:
+            continue
+        note_type = (note.findtext("type") or "").strip()
+        base_q = _TYPE_TO_QUARTERS.get(note_type)
+        if base_q is None:
+            continue
+        dots = len(note.findall("dot"))
+        if dots == 0:
+            dot_mult = Fraction(1)
+        elif dots == 1:
+            dot_mult = Fraction(3, 2)
+        elif dots == 2:
+            dot_mult = Fraction(7, 4)
+        else:
+            continue
+        tm_mult = Fraction(1)
+        tm = note.find("time-modification")
+        if tm is not None:
+            an_txt = (tm.findtext("actual-notes") or "").strip()
+            nn_txt = (tm.findtext("normal-notes") or "").strip()
+            if not (an_txt.isdigit() and nn_txt.isdigit()):
+                continue
+            actual, normal = int(an_txt), int(nn_txt)
+            if actual <= 0 or normal <= 0:
+                continue
+            tm_mult = Fraction(normal, actual)
+        vis_frac = base_q * dot_mult * tm_mult * d_unit
+        if vis_frac.denominator != 1 or vis_frac <= 0:
+            continue
+        vis_ticks = int(vis_frac)
+        dur_el = note.find("duration")
+        if dur_el is not None and (dur_el.text or "").strip().isdigit() and int(dur_el.text.strip()) != vis_ticks:
+            dur_el.text = str(vis_ticks)
+            changed = True
+    return changed
 
 
 def _set_note_duration_and_type(
@@ -487,16 +551,24 @@ def _normalize_group_sequence(
         if onset + dur > expected_dur:
             rem = max(1, expected_dur - onset)
             td = _duration_to_type_and_dots(rem, div)
+            if td is not None:
+                clamped_dur, clamped_type, clamped_dots = rem, td[0], td[1]
+            else:
+                fb = _largest_standard_type_and_dots(rem, div)
+                if fb is not None:
+                    clamped_dur, clamped_type, clamped_dots = fb
+                else:
+                    clamped_dur, clamped_type, clamped_dots = rem, None, None
             for note in notes:
                 _set_note_duration_and_type(
                     note,
-                    rem,
-                    td[0] if td is not None else None,
-                    td[1] if td is not None else None,
+                    clamped_dur,
+                    clamped_type,
+                    clamped_dots,
                     clear_tuplet=True,
                 )
             _clear_beam_run([gr[2] for gr in groups], idx)
-            g[1] = rem
+            g[1] = clamped_dur
         kept_groups.append(g)
     return kept_groups
 
@@ -557,9 +629,10 @@ def _normalize_overfull_measure(measure: ET.Element, expected_dur: int, div: int
     if expected_dur <= 0 or _is_rest_only_measure(measure):
         return False
 
+    reconciled = _reconcile_duration_type_mismatches(measure, div)
     voice_groups, overlap_voices = _collect_voice_groups(measure)
     if not voice_groups:
-        return False
+        return reconciled
 
     is_multivoice = (
         len(voice_groups) > 1
@@ -569,7 +642,7 @@ def _normalize_overfull_measure(measure: ET.Element, expected_dur: int, div: int
     m_num = measure.get("number", "?")
 
     if not is_multivoice:
-        any_modified = False
+        any_modified = reconciled
         for voice, groups in voice_groups.items():
             old_end = max(int(g[0]) + int(g[1]) for g in groups)
             if old_end <= expected_dur:
@@ -603,7 +676,7 @@ def _normalize_overfull_measure(measure: ET.Element, expected_dur: int, div: int
                 needs_repair = True
                 break
     if not needs_repair:
-        return False
+        return reconciled
 
     kept_by_voice: dict[str, list[list[object]]] = {}
     for voice, groups in voice_groups.items():
@@ -730,7 +803,7 @@ def align_page_score(
         if mi == 0:
             votes = pitched_votes if pitched_votes else all_votes
             if votes:
-                active_global_ts = max(
+                chosen_ts = max(
                     votes.keys(),
                     key=lambda ts: (
                         votes[ts],
@@ -739,6 +812,23 @@ def align_page_score(
                         else 0,
                     ),
                 )
+                if inherited_time_sig is not None and chosen_ts != inherited_time_sig:
+                    inh_q = _time_sig_quarters(inherited_time_sig)
+                    ch_q = _time_sig_quarters(chosen_ts)
+                    strong_explicit = all_votes.get(chosen_ts, 0) >= 0.60 * len(parts)
+                    if inh_q is not None and ch_q is not None and ch_q == inh_q and not strong_explicit:
+                        log.info(
+                            "Page %d measure 1: preserved inherited equivalent meter %s/%s over unprinted OMR guess %s/%s (votes=%d/%d)",
+                            page_num,
+                            inherited_time_sig[0],
+                            inherited_time_sig[1],
+                            chosen_ts[0],
+                            chosen_ts[1],
+                            all_votes.get(chosen_ts, 0),
+                            len(parts),
+                        )
+                        chosen_ts = inherited_time_sig
+                active_global_ts = chosen_ts
             else:
                 active_global_ts = fallback_ts
         else:
@@ -1813,6 +1903,7 @@ def merge_fullscore_pages(
         keep_line_breaks=keep_line_breaks,
         is_transposed_score=is_transposed_score,
     )
+    add_courtesy_accidentals(merged)
     last_tempo_key: Optional[tuple[str, Optional[int], str, bool]] = None
     for start_idx, p_tempo in page_start_measures:
         if p_tempo is None:
