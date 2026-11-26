@@ -153,6 +153,20 @@ def test_generate_store_screenshots_and_cli_with_stub(root, tmp_path: Path, monk
             assert im.size == (1920, 1080)
             assert im.mode == "RGB"
 
+    split_direct = tmp_path / "split_direct.png"
+    gm.compose_store_slide(
+        Image.new("RGB", (900, 760), (20, 30, 48)),
+        "Direct Split\nHeadline",
+        "Subtitle copy",
+        split_direct,
+        badge="TEST",
+        bullets=("Point one", "Point two"),
+        layout="split",
+        dark_canvas=True,
+    )
+    with Image.open(split_direct) as im:
+        assert im.size == (1920, 1080)
+
     copy_file = store_dir / "store_listing_copy.txt"
     assert copy_file.is_file()
     copy_text = copy_file.read_text(encoding="utf-8")

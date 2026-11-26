@@ -709,6 +709,16 @@ Open source under GNU AGPL-3.0-or-later (source code: https://github.com/tomerma
 """
 
 
+def _draw_check_bullet(draw: ImageDraw.ImageDraw, cx: int, cy: int, radius: int = 13) -> None:
+    """Draw a cobalt circle with a crisp white vector checkmark for Store feature bullets."""
+    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=(37, 99, 235))
+    draw.line(
+        [(cx - 5, cy + 1), (cx - 1, cy + 5), (cx + 6, cy - 4)],
+        fill=(255, 255, 255),
+        width=3,
+    )
+
+
 def compose_store_slide(
     image: Image.Image,
     title: str,
@@ -716,7 +726,10 @@ def compose_store_slide(
     out_path: Path,
     *,
     badge: str = "",
+    bullets: Sequence[str] = (),
+    layout: str = "centered",
     dark_canvas: bool = True,
+    icon_path: Optional[Path] = DEFAULT_ICON,
     size: tuple[int, int] = (1920, 1080),
 ) -> Path:
     """Compose a crisp 16:9 Microsoft Store showcase screenshot slide."""
@@ -727,6 +740,7 @@ def compose_store_slide(
     bg = (15, 23, 42) if dark_canvas else (241, 245, 249)
     title_fg = (248, 250, 252) if dark_canvas else (15, 23, 42)
     sub_fg = (148, 163, 184) if dark_canvas else (71, 85, 105)
+    bullet_fg = (226, 232, 240) if dark_canvas else (30, 41, 59)
     card_bg = (22, 32, 50) if dark_canvas else (255, 255, 255)
     card_border = (51, 65, 85) if dark_canvas else (203, 213, 225)
     shadow_col = (7, 11, 22) if dark_canvas else (203, 213, 225)
@@ -746,51 +760,128 @@ def compose_store_slide(
         draw.line([(x, 0), (x, 7)], fill=color)
 
     badge_font = _load_font(15, bold=True)
-    title_font = _load_font(40, bold=True)
-    sub_font = _load_font(22, bold=False)
-
-    cur_y = 28
     cleaned_badge = (badge or "").strip()
-    if cleaned_badge:
-        bb = draw.textbbox((0, 0), cleaned_badge, font=badge_font)
-        bw = (bb[2] - bb[0]) + 28
-        bh = (bb[3] - bb[1]) + 14
-        bx0 = (w - bw) // 2
-        draw.rounded_rectangle(
-            (bx0, cur_y, bx0 + bw, cur_y + bh),
-            radius=bh // 2,
-            fill=badge_bg,
-            outline=badge_border,
-            width=1,
+
+    if layout == "split":
+        brand_font = _load_font(24, bold=True)
+        brand_sub_font = _load_font(16, bold=False)
+        title_font = _load_font(46, bold=True)
+        sub_font = _load_font(22, bold=False)
+        bullet_font = _load_font(21, bold=False)
+        foot_font = _load_font(17, bold=False)
+
+        left_x = 76
+        cur_y = 76
+
+        # Brand icon + label row
+        text_x = left_x
+        if icon_path is not None and Path(icon_path).is_file():
+            icon = Image.open(icon_path).convert("RGBA").resize((56, 56), Image.Resampling.LANCZOS)
+            canvas.paste(icon, (left_x, cur_y), icon)
+            text_x = left_x + 74
+        draw.text((text_x, cur_y + 2), "PDF to MuseScore", font=brand_font, fill=title_fg)
+        draw.text((text_x, cur_y + 34), "Offline Windows Studio", font=brand_sub_font, fill=sub_fg)
+        cur_y += 96
+
+        if cleaned_badge:
+            bb = draw.textbbox((0, 0), cleaned_badge, font=badge_font)
+            bw = (bb[2] - bb[0]) + 28
+            bh = (bb[3] - bb[1]) + 14
+            draw.rounded_rectangle(
+                (left_x, cur_y, left_x + bw, cur_y + bh),
+                radius=bh // 2,
+                fill=badge_bg,
+                outline=badge_border,
+                width=1,
+            )
+            draw.text(
+                (
+                    left_x + (bw - (bb[2] - bb[0])) // 2 - bb[0],
+                    cur_y + (bh - (bb[3] - bb[1])) // 2 - bb[1],
+                ),
+                cleaned_badge,
+                font=badge_font,
+                fill=badge_fg,
+            )
+            cur_y += bh + 28
+
+        tb = draw.multiline_textbbox((0, 0), title, font=title_font, spacing=10)
+        th = tb[3] - tb[1]
+        draw.multiline_text((left_x, cur_y - tb[1]), title, font=title_font, fill=title_fg, spacing=10)
+        cur_y += th + 24
+
+        sb = draw.multiline_textbbox((0, 0), subtitle, font=sub_font, spacing=8)
+        sh = sb[3] - sb[1]
+        draw.multiline_text((left_x, cur_y - sb[1]), subtitle, font=sub_font, fill=sub_fg, spacing=8)
+        cur_y += sh + 42
+
+        for item in bullets:
+            _draw_check_bullet(draw, left_x + 13, cur_y + 13, radius=13)
+            draw.text((left_x + 40, cur_y), item, font=bullet_font, fill=bullet_fg)
+            cur_y += 52
+
+        draw.text((left_x, h - 74), "100% Local CPU AI · GNU AGPL-3.0", font=foot_font, fill=sub_fg)
+
+        # Right column: large near-full-height framed screenshot
+        right_x0 = 704
+        right_w = w - right_x0 - 64
+        right_y0 = 54
+        right_h = h - 108
+        card_pad = 18
+        fitted = _fit_into_box(
+            image.convert("RGB"),
+            max_w=right_w - card_pad * 2,
+            max_h=right_h - card_pad * 2,
         )
-        draw.text(
-            (bx0 + (bw - (bb[2] - bb[0])) // 2 - bb[0], cur_y + (bh - (bb[3] - bb[1])) // 2 - bb[1]),
-            cleaned_badge,
-            font=badge_font,
-            fill=badge_fg,
-        )
-        cur_y += bh + 14
+        card_w = fitted.width + card_pad * 2
+        card_h = fitted.height + card_pad * 2
+        cx0 = right_x0 + (right_w - card_w) // 2
+        cy0 = right_y0 + (right_h - card_h) // 2
+    else:
+        title_font = _load_font(40, bold=True)
+        sub_font = _load_font(22, bold=False)
 
-    tb = draw.textbbox((0, 0), title, font=title_font)
-    tw, th = tb[2] - tb[0], tb[3] - tb[1]
-    draw.text(((w - tw) // 2 - tb[0], cur_y - tb[1]), title, font=title_font, fill=title_fg)
-    cur_y += th + 12
+        cur_y = 28
+        if cleaned_badge:
+            bb = draw.textbbox((0, 0), cleaned_badge, font=badge_font)
+            bw = (bb[2] - bb[0]) + 28
+            bh = (bb[3] - bb[1]) + 14
+            bx0 = (w - bw) // 2
+            draw.rounded_rectangle(
+                (bx0, cur_y, bx0 + bw, cur_y + bh),
+                radius=bh // 2,
+                fill=badge_bg,
+                outline=badge_border,
+                width=1,
+            )
+            draw.text(
+                (bx0 + (bw - (bb[2] - bb[0])) // 2 - bb[0], cur_y + (bh - (bb[3] - bb[1])) // 2 - bb[1]),
+                cleaned_badge,
+                font=badge_font,
+                fill=badge_fg,
+            )
+            cur_y += bh + 14
 
-    sb = draw.textbbox((0, 0), subtitle, font=sub_font)
-    sw, sh = sb[2] - sb[0], sb[3] - sb[1]
-    draw.text(((w - sw) // 2 - sb[0], cur_y - sb[1]), subtitle, font=sub_font, fill=sub_fg)
-    cur_y += sh + 26
+        tb = draw.textbbox((0, 0), title, font=title_font)
+        tw, th = tb[2] - tb[0], tb[3] - tb[1]
+        draw.text(((w - tw) // 2 - tb[0], cur_y - tb[1]), title, font=title_font, fill=title_fg)
+        cur_y += th + 12
 
-    bottom_margin = 34
-    card_pad = 16
-    avail_w = w - 120 - card_pad * 2
-    avail_h = max(200, h - cur_y - bottom_margin - card_pad * 2)
-    fitted = _fit_into_box(image.convert("RGB"), max_w=avail_w, max_h=avail_h)
+        sb = draw.textbbox((0, 0), subtitle, font=sub_font)
+        sw, sh = sb[2] - sb[0], sb[3] - sb[1]
+        draw.text(((w - sw) // 2 - sb[0], cur_y - sb[1]), subtitle, font=sub_font, fill=sub_fg)
+        cur_y += sh + 24
 
-    card_w = fitted.width + card_pad * 2
-    card_h = fitted.height + card_pad * 2
-    cx0 = (w - card_w) // 2
-    cy0 = cur_y + max(0, (h - bottom_margin - cur_y - card_h) // 2)
+        bottom_margin = 30
+        card_pad = 16
+        avail_w = w - 72 - card_pad * 2
+        avail_h = max(200, h - cur_y - bottom_margin - card_pad * 2)
+        fitted = _fit_into_box(image.convert("RGB"), max_w=avail_w, max_h=avail_h)
+
+        card_w = fitted.width + card_pad * 2
+        card_h = fitted.height + card_pad * 2
+        cx0 = (w - card_w) // 2
+        cy0 = cur_y + max(0, (h - bottom_margin - cur_y - card_h) // 2)
 
     draw.rounded_rectangle(
         (cx0 + 4, cy0 + 8, cx0 + card_w + 4, cy0 + card_h + 8),
@@ -880,10 +971,16 @@ def generate_store_screenshots(
         outputs.append(
             compose_store_slide(
                 img_dark,
-                "Convert Sheet Music PDFs & Photos Locally",
-                "100% Free · Offline homr AI · Direct MuseScore 4 (.mscz) & MusicXML",
+                "Convert Sheet Music\nPDFs & Photos Locally",
+                "Turn printed scores, scans, and photos\ninto editable MuseScore 4 & MusicXML.",
                 out_dir / "01-dark-studio.png",
-                badge="MICROSOFT STORE · ZERO ACCOUNT · UNLIMITED PAGES",
+                badge="MICROSOFT STORE · FREE & OPEN SOURCE",
+                bullets=(
+                    "100% local CPU AI — zero cloud uploads",
+                    "No account required & unlimited pages",
+                    "Direct .mscz export & Open in MuseScore",
+                ),
+                layout="split",
                 dark_canvas=True,
             )
         )
@@ -896,6 +993,7 @@ def generate_store_screenshots(
                 "Preserves clefs, key & time signatures, slurs, ties, beams, and flowing measures",
                 out_dir / "02-before-after-bach.png",
                 badge="BACH CELLO SUITE NO. 2 · CONVERTED ON CPU",
+                layout="centered",
                 dark_canvas=True,
             )
         )
@@ -904,10 +1002,16 @@ def generate_store_screenshots(
         outputs.append(
             compose_store_slide(
                 img_light,
-                "Light & Dark Studio · Built-In Transpose & Score Setup",
-                "Single Part & Full Score (Conductor) modes with live musical transpose hints",
+                "Built-In Transpose &\nFlexible Score Setup",
+                "Switch between Single Part and Full Score\nwith live musical interval hints.",
                 out_dir / "03-light-studio-transpose.png",
-                badge="LIGHT & DARK THEMES · COLLAPSIBLE OVERRIDES",
+                badge="LIGHT & DARK THEMES · MUSICIAN TOOLS",
+                bullets=(
+                    "Single Part & Full Score (Conductor) modes",
+                    "Transpose by half-steps (e.g. +2 for Bb)",
+                    "Instrument & clef overrides with live badge",
+                ),
+                layout="split",
                 dark_canvas=False,
             )
         )
@@ -919,10 +1023,16 @@ def generate_store_screenshots(
             outputs.append(
                 compose_store_slide(
                     img_empty,
-                    "Clean First Launch · Powerful When You Need It",
-                    "Drag and drop a PDF or photo — advanced AI settings stay out of the way until needed",
+                    "Simple to Start,\nPowerful When Needed",
+                    "Drop a PDF or photo and click Convert —\nadvanced AI knobs stay neatly tucked away.",
                     out_dir / "04-clean-first-launch.png",
                     badge="STREAMLINED STUDIO WORKFLOW",
+                    bullets=(
+                        "Drag & drop PDF, PNG, JPG, WebP, or TIFF",
+                        "One-click Clean PDF, Faded & Photo presets",
+                        "Auto-shown page picker for multi-page PDFs",
+                    ),
+                    layout="split",
                     dark_canvas=True,
                 )
             )
