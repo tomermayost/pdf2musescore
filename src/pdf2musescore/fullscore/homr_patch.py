@@ -5,11 +5,13 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional, Sequence
 
 import numpy as np
 
 from ..engines.homr_engine import CancelledError
+
+from .chunking import parse_staff_image_chunked
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +60,8 @@ def fullscore_homr_context(
     segnet_step_size: int = 320,
     min_notehead_size: int = 4,
     preprocess_mode: str = "auto",
+    enable_staff_chunking: bool = True,
+    barlines_provider: Optional[Callable[[Any], Sequence[int]]] = None,
     is_cancelled: Callable[[], bool] = lambda: False,
     staff_progress_cb: Optional[Callable[[int], None]] = None,
     homr_resize: Any = None,
@@ -135,6 +139,21 @@ def fullscore_homr_context(
             if staff_progress_cb is not None:
                 staff_progress_cb(int(index))
             try:
+                barlines_x = barlines_provider(staff) if (enable_staff_chunking and barlines_provider is not None) else ()
+                if len(barlines_x) >= 3:
+                    return parse_staff_image_chunked(
+                        debug,
+                        index,
+                        staff,
+                        image,
+                        regions,
+                        config,
+                        page_to_input_image=page_to_input_image,
+                        barlines_x=barlines_x,
+                        orig_parse_staff_image=orig_parse_staff_image,
+                        homr_staff_parsing=homr_staff_parsing,
+                        is_cancelled=is_cancelled,
+                    )
                 return orig_parse_staff_image(
                     debug,
                     index,

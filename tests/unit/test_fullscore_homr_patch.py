@@ -146,3 +146,53 @@ def test_fullscore_homr_context_staff_error_skips_but_cancel_propagates(caplog):
     # Restored even after CancelledError
     assert resize_mod.calc_target_image_size is orig["calc_size"]
     assert staff_mod.parse_staff_image is flaky_parse
+
+
+def test_fullscore_homr_context_routes_to_chunked_when_barlines_available(monkeypatch):
+    resize_mod, staff_mod, main_mod, orig = _fake_homr_modules()
+    chunked_calls: list[tuple[int, list[int]]] = []
+
+    def _fake_chunked(
+        debug,
+        idx,
+        staff,
+        img,
+        regions,
+        cfg,
+        *,
+        page_to_input_image,
+        barlines_x,
+        orig_parse_staff_image,
+        homr_staff_parsing,
+        is_cancelled,
+    ):
+        chunked_calls.append((idx, list(barlines_x)))
+        return [f"chunked-{idx}"]
+
+    import pdf2musescore.fullscore.homr_patch as hp_mod
+
+    monkeypatch.setattr(hp_mod, "parse_staff_image_chunked", _fake_chunked)
+
+    with fullscore_homr_context(
+        enable_staff_chunking=True,
+        barlines_provider=lambda _staff: [100, 500, 900, 1300],
+        homr_resize=resize_mod,
+        homr_staff_parsing=staff_mod,
+        homr_main=main_mod,
+    ):
+        res = staff_mod.parse_staff_image(None, 3, "staff-obj", None, None, None)
+        assert res == ["chunked-3"]
+        assert chunked_calls == [(3, [100, 500, 900, 1300])]
+
+    # When disabled, falls back directly to orig parse_staff_image
+    chunked_calls.clear()
+    with fullscore_homr_context(
+        enable_staff_chunking=False,
+        barlines_provider=lambda _staff: [100, 500, 900, 1300],
+        homr_resize=resize_mod,
+        homr_staff_parsing=staff_mod,
+        homr_main=main_mod,
+    ):
+        assert staff_mod.parse_staff_image(None, 4, "staff-obj", None, None, None) == ["sym-4"]
+        assert chunked_calls == []
+    assert staff_mod.parse_staff_image is orig["parse"]

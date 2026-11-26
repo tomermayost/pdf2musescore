@@ -241,3 +241,29 @@ def test_run_fullscore_homr_empty_staves_partial_fail_all_fail_and_cancel(tmp_pa
     with pytest.raises(CancelledError):
         run_fullscore_homr([p1], is_cancelled=cancel_after_one, homr_modules=mods_ok, ocr_reader_factory=_fake_ocr_factory)
     assert mods_ok["resize"].calc_target_image_size is orig_calc
+
+
+def test_run_fullscore_homr_barline_detection_error_and_disabled_chunking(tmp_path, monkeypatch, caplog):
+    import pdf2musescore.fullscore.runner as runner_mod
+
+    p1 = tmp_path / "page_001.png"
+    Image.new("RGB", (400, 400), (255, 255, 255)).save(p1)
+
+    mods, _, _ = _build_fake_homr("ok")
+    monkeypatch.setattr(
+        runner_mod,
+        "detect_system_barlines_with_skew",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("barline probe boom")),
+    )
+    with caplog.at_level("WARNING"):
+        outs = run_fullscore_homr([p1], homr_modules=mods, ocr_reader_factory=_fake_ocr_factory)
+    assert len(outs) == 1
+    assert "System barline detection failed" in caplog.text
+
+    outs_disabled = run_fullscore_homr(
+        [p1],
+        enable_staff_chunking=False,
+        homr_modules=mods,
+        ocr_reader_factory=_fake_ocr_factory,
+    )
+    assert len(outs_disabled) == 1

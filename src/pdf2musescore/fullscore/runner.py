@@ -17,6 +17,7 @@ from ..engines.homr_engine import CancelledError, PageFailure, configure_model_c
 from ..rehearsal import PositionedRehearsal, extract_rehearsal_marks_in_band
 from ..tempo import PositionedTempo, TempoMarking, extract_tempo_markings_in_band
 from .align import PageSidecar, write_page_sidecar
+from .chunking import detect_system_barlines_with_skew, staff_barlines_from_system
 from .homr_patch import DEFAULT_TARGET_WIDTH, fullscore_homr_context
 from .instruments import extract_instrument_labels
 from .staves import flatten_filter_and_extend_staves
@@ -158,6 +159,7 @@ def run_fullscore_homr(
     segnet_step_size: int = 320,
     min_notehead_size: int = 4,
     preprocess_mode: str = "auto",
+    enable_staff_chunking: bool = True,
     models_dir: Optional[Path] = None,
     homr_modules: Optional[dict[str, Any]] = None,
     ocr_reader_factory: Optional[Callable[[Optional[Path]], Any]] = None,
@@ -216,7 +218,24 @@ def run_fullscore_homr(
     skipped_pages: list[int] = []
     total_pages = len(image_paths)
 
-    active_page = {"idx": 1, "staff_count": 0}
+    active_page: dict[str, Any] = {
+        "idx": 1,
+        "staff_count": 0,
+        "barlines": [],
+        "barlines_y_mid": 0.0,
+        "barlines_skew": 0.0,
+    }
+
+    def _barlines_for_staff(staff: Any) -> list[int]:
+        bls = active_page["barlines"]
+        if not bls:
+            return []
+        return staff_barlines_from_system(
+            bls,
+            staff,
+            y_mid=float(active_page["barlines_y_mid"]),
+            dx_per_dy=float(active_page["barlines_skew"]),
+        )
 
     def _on_staff_progress(staff_idx: int) -> None:
         if staff_cb is not None and active_page["staff_count"] > 0:
@@ -232,6 +251,8 @@ def run_fullscore_homr(
         segnet_step_size=int(segnet_step_size),
         min_notehead_size=int(min_notehead_size),
         preprocess_mode=preprocess_mode,
+        enable_staff_chunking=enable_staff_chunking,
+        barlines_provider=_barlines_for_staff,
         is_cancelled=is_cancelled,
         staff_progress_cb=_on_staff_progress,
         homr_resize=hresize,
@@ -291,6 +312,27 @@ def run_fullscore_homr(
 
                 active_page["idx"] = idx
                 active_page["staff_count"] = len(layout.kept_staffs)
+                if enable_staff_chunking:
+                    try:
+                        bls, y_mid, dx_per_dy = detect_system_barlines_with_skew(
+                            preprocessed_img, layout.kept_staffs
+                        )
+                        active_page["barlines"] = bls
+                        active_page["barlines_y_mid"] = y_mid
+                        active_page["barlines_skew"] = dx_per_dy
+                    except Exception as exc:
+                        log.warning(
+                            "System barline detection failed on page %d (%s); using single-pass OMR",
+                            pno,
+                            exc,
+                        )
+                        active_page["barlines"] = []
+                        active_page["barlines_y_mid"] = 0.0
+                        active_page["barlines_skew"] = 0.0
+                else:
+                    active_page["barlines"] = []
+                    active_page["barlines_y_mid"] = 0.0
+                    active_page["barlines_skew"] = 0.0
 
                 full_system = [multi_staff_cls(layout.kept_staffs, [])]
                 tr_cfg = tr_config_cls()
