@@ -11,8 +11,8 @@ body:
     id: app_version
     attributes:
       label: App Version
-      description: Shown in the window title bar (e.g. `0.4.7 (homr 0.7.1)`)
-      placeholder: "0.4.7"
+      description: Shown in the window title bar (e.g. `0.5.0 (homr 0.7.1)`)
+      placeholder: "0.5.0"
     validations:
       required: true
   - type: input

@@ -2,7 +2,7 @@
 ; Supports Windows 10 (Home and upwards) and Windows 11
 
 #define MyAppName "PDF to MuseScore"
-#define MyAppVersion "0.4.7"
+#define MyAppVersion "0.5.0"
 #define MyAppPublisher "Tomer Mayost"
 #define MyAppCredit "By Tomer Mayost"
 #define MyAppExeName "pdf2musescore.exe"
