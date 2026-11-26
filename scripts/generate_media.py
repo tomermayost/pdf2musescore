@@ -670,7 +670,7 @@ def capture_ui_screenshots(
     return dark_out, light_out
 
 
-_STORE_LISTING_COPY = """=== MICROSOFT STORE PARTNER CENTER LISTING COPY (PDF2MuseScore v0.4.7+) ===
+_STORE_LISTING_COPY = """=== MICROSOFT STORE PARTNER CENTER LISTING COPY (PDF2MuseScore v0.5.0) ===
 
 --- SHORT DESCRIPTION ---
 Convert sheet music PDFs & photos into editable MuseScore 4 (.mscz) and MusicXML scores — 100% free, local AI, no account or page limits.
@@ -678,12 +678,12 @@ Convert sheet music PDFs & photos into editable MuseScore 4 (.mscz) and MusicXML
 --- FULL DESCRIPTION ---
 PDF2MuseScore converts printed sheet music PDFs, faded photocopies, and smartphone photos (.png, .jpg, .webp, .bmp, .tif) into editable MuseScore 4 (.mscz) and MusicXML (.musicxml) scores — running 100% locally on your Windows PC with no account, no cloud uploads, and no page limits.
 
-Powered by the open-source homr deep-learning optical music recognition engine and RapidOCR, PDF2MuseScore supports both Single Part and Full Score (Conductor) modes — recognizing notes, slurs, ties, beams, dynamics, tempo markings, and multi-page scores while sanitizing slurs, tuplets, and forced line breaks so MuseScore 4 imports cleanly.
+Powered by the open-source homr deep-learning optical music recognition engine and RapidOCR, PDF2MuseScore supports both Single Part and Full Score (Conductor) modes — recognizing notes, slurs, ties, beams, dynamics, tempo markings, rehearsal marks, expression text, and multi-page scores while sanitizing slurs, tuplets, dynamics collisions, multi-voice measures, and forced line breaks so MuseScore 4 imports cleanly.
 
 Key highlights:
 • Drag-and-drop PDFs or phone photos with live page preview and context-aware page range picking for multi-page scores
 • One-click scan presets: Clean PDF, Faded Scan (contrast boost + deskew), and Phone Photo (shadow cleanup)
-• Single Part & Full Score (Conductor) modes with automatic multi-staff instrument detection and playback transpositions
+• Single Part & Full Score (Conductor) modes with automatic written instrument detection (Piano fallback — no more Voice mixer default), accurate MIDI playback & transpositions, OCR tempo markings, boxed/unboxed rehearsal marks, and expression text
 • Optional collapsible Instrument, Clef & Transpose overrides with live interval hints (e.g. +2 for B♭ instruments)
 • Clean Dark & Light Studio themes with one-click Open in MuseScore and Show in Folder completion actions
 
@@ -696,16 +696,16 @@ Open source under GNU AGPL-3.0-or-later (source code: https://github.com/tomerma
 --- PRODUCT FEATURES (UP TO 200 CHARS EACH) ---
 1. 100% local offline AI on your PC — no account, no cloud uploads, no page limits
 2. Drag & drop PDFs or photos (.png, .jpg, .webp, .bmp, .tif) with live page preview
-3. Single Part & Full Score (Conductor) modes with auto-detected instruments and tempo
-4. One-click Clean PDF, Faded Scan, and Phone Photo presets plus optional AI tuning
+3. Single Part & Full Score (Conductor) modes with auto instruments, MIDI playback, and tempo
+4. OCR boxed/unboxed rehearsal marks, mid-piece tempo changes, and expression text (rit., tranq.)
 5. Pre-export Instrument, Clef & Transpose overrides with live musical interval hints
-6. Direct MuseScore 4 (.mscz) and standalone MusicXML (.musicxml) export with sanitization
+6. Direct .mscz and .musicxml export with dynamics collision, tuplet, and slur sanitization
 
 --- WHAT'S NEW IN THIS VERSION ---
-• Streamlined, beginner-friendly Studio UI: cleaner first-run screen, flush preview layout, softer active toggle pills, auto-fitting window height, and context-aware page picker, progress bar, and drawers.
-• Collapsible Instrument, Clef & Transpose drawer with live summary badges (e.g. "Cello · Bass" or "Trumpet · Treble · +2").
-• Added Full Score (Conductor) mode with multi-staff alignment, automatic instrument detection, playback transpositions, and OCR tempo/expression markings.
-• Added themed completion popup, taskbar flash, and optional privacy-sanitized bug reporting.
+• Added Full Score (Conductor) mode with multi-staff alignment, automatic written instrument detection, Piano fallback (replacing homr's default Voice), and synced MIDI playback & transpositions.
+• Added OCR tempo marking detection (including BPM and mid-piece tempo changes), boxed/unboxed rehearsal marks, and expression markings (such as rit. and tranq.).
+• Improved MusicXML sanitization: fixes colliding dynamics, normalizes overfull and multi-voice measures, and cleans orphan tuplets/slurs for MuseScore 4.
+• Added always-shown themed completion popup, Windows taskbar flash, and optional privacy-sanitized Feedback & crash reporting.
 """
 
 

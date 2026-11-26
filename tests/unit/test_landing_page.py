@@ -126,11 +126,12 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert {"SoftwareApplication", "FAQPage"}.issubset(set(jsonld_by_type))
 
     ld = jsonld_by_type["SoftwareApplication"]
+    assert ld["softwareVersion"] == "0.5.0"
     assert "PDF2MuseScore" in ld["alternateName"]
     assert "https://github.com/tomermayost/pdf2musescore" in ld["sameAs"]
     assert "https://apps.microsoft.com/detail/9N6NCBWM3BHT" in ld["sameAs"]
     assert len(ld["screenshot"]) >= 2
-    assert len(ld["featureList"]) >= 4
+    assert len(ld["featureList"]) >= 5
     assert ld["offers"]["price"] == "0"
     assert ld["installUrl"] == "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
     assert ld["downloadUrl"] == "https://github.com/tomermayost/pdf2musescore/releases/latest"
@@ -183,6 +184,11 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert "AVX2" in html_text
     assert "Full Score (Conductor)" in html_text
     assert "Instrument, Clef &amp; Transpose" in html_text
+    assert "rehearsal" in html_text.lower()
+    assert "tempo" in html_text.lower()
+    assert "Feedback" in html_text
+    assert "~85 MB" in html_text
+    assert "~105 MB" not in html_text
     assert "preparing a Microsoft-signed" not in html_text
     assert "submitted for Store review" not in html_text
     assert "drag and drop" in html_text.lower()

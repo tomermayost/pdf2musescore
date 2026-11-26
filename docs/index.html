@@ -52,8 +52,9 @@
     "featureList": [
       "100% local offline AI music recognition powered by homr ONNX models",
       "Converts PDFs and sheet music photos (.png, .jpg, .webp, .bmp, .tif) with drag and drop",
-      "Direct .mscz and MusicXML (.musicxml) export with MuseScore 4 sanitization",
-      "Single Part and Full Score (Conductor) modes with page picker, scan presets, clef override, and semitone transposition"
+      "Single Part and Full Score (Conductor) modes with automatic instrument detection, accurate MIDI playback & transpositions, and Piano fallback (no more Voice mixer default)",
+      "OCR tempo markings (BPM and mid-piece changes), boxed/unboxed rehearsal marks, and expression text (rit., tranq.)",
+      "Direct .mscz and MusicXML (.musicxml) export with MuseScore 4 sanitization (slurs, tuplets, dynamics collisions, and multi-voice measures)"
     ],
     "sameAs": [
       "https://github.com/tomermayost/pdf2musescore",
@@ -81,7 +82,7 @@
         "name": "Does PDF to MuseScore upload my sheet music anywhere?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "No. All PDF rendering and AI music recognition runs 100% locally on your CPU. The only optional network requests are downloading the open-source homr and RapidOCR ONNX model weights once during installation (or automatically on startup if missing), and a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via check_updates = false)."
+          "text": "No. All PDF rendering and AI music recognition runs 100% locally on your CPU. The only optional network requests are downloading the open-source homr and RapidOCR ONNX model weights once during installation (or automatically on startup if missing), a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via check_updates = false), and an optional Feedback report if you choose to submit diagnostic logs (privacy-sanitized, never containing sheet music, and never sent automatically)."
         }
       },
       {
@@ -105,7 +106,7 @@
         "name": "How are the ~180 MB AI models downloaded?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "To keep the Windows installer compact, the open-source homr and RapidOCR neural network weights (~180 MB) are downloaded once during installation (or automatically in the background when the app starts if missing, such as in offline installs or Microsoft Store builds) and cached locally for offline use afterward."
+          "text": "To keep the Windows installer compact (~85 MB), the open-source homr and RapidOCR neural network weights (~180 MB) are downloaded once during installation (or automatically in the background when the app starts if missing, such as in offline installs or Microsoft Store builds) and cached locally for offline use afterward."
         }
       },
       {
@@ -121,7 +122,7 @@
         "name": "Where can I report a bug, share sample scores, or request features?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Join GitHub Discussions to ask questions or share tips, or open a ticket in GitHub Issues (clicking Open log folder in the bottom-right of the app attaches helpful diagnostic logs)."
+          "text": "Click Feedback in the bottom-right of the app to send a privacy-sanitized bug report directly (no GitHub account required), join GitHub Discussions to ask questions or share tips, or open a ticket in GitHub Issues (using Open log folder to attach diagnostic logs)."
         }
       }
     ]
@@ -291,12 +292,12 @@
             <p>Switch cleanly between <strong>Clean PDF</strong>, <strong>Faded Scan</strong> (contrast boost + deskew), and <strong>Phone Photo</strong> (shadow cleanup).</p>
           </article>
           <article class="card">
-            <h3>Single Part, Full Score &amp; Transpose</h3>
-            <p>Convert solo parts with optional <strong>Instrument, Clef &amp; Transpose</strong> overrides (<code>+2 (Up M2 · B♭)</code>), or switch to <strong>Full Score (Conductor)</strong> mode for multi-staff scores.</p>
+            <h3>Full Score, Auto Instruments &amp; Tempo</h3>
+            <p>Use <strong>Single Part</strong> with <strong>Instrument, Clef &amp; Transpose</strong> overrides (<code>+2 (Up M2 · B♭)</code>), or <strong>Full Score (Conductor)</strong> for auto-detected instruments &amp; Piano fallback (no more <code>Voice</code> default), accurate MIDI playback, OCR tempo markings, boxed/unboxed rehearsal marks, and expression text (<code>rit.</code>, <code>tranq.</code>).</p>
           </article>
           <article class="card">
             <h3>MuseScore 4 Sanitization</h3>
-            <p>Automatically pairs unclosed slurs, fixes malformed tuplets/tremolos, removes forced line breaks, and sets score title from your saved filename.</p>
+            <p>Automatically pairs unclosed slurs, fixes malformed tuplets and colliding dynamics, normalizes overfull/multi-voice measures, removes forced line breaks, and sets score title from your saved filename.</p>
           </article>
           <article class="card">
             <h3>Private Local CPU AI</h3>
@@ -378,6 +379,13 @@
                 <td>Edit after import</td>
                 <td>Varies</td>
               </tr>
+              <tr>
+                <td><strong>Full Score, Auto Instruments &amp; Tempo</strong></td>
+                <td class="col-ours">Built-in (Conductor mode + OCR tempo &amp; rehearsal)</td>
+                <td>Basic / Voice default</td>
+                <td>Manual setup</td>
+                <td>Varies</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -398,6 +406,7 @@
             <ul class="expect-list">
               <li>Crisp digital sheet-music PDFs exported from notation apps</li>
               <li>Solo, chamber, piano, and band/ensemble parts</li>
+              <li>Multi-staff ensemble &amp; conductor scores using <strong>Full Score (Conductor)</strong> mode</li>
               <li>Light or vintage photocopies using the <strong>Faded Scan</strong> preset</li>
               <li>Clear smartphone photos using the <strong>Phone Photo</strong> preset</li>
             </ul>
@@ -427,7 +436,7 @@
           <details class="faq-item">
             <summary>Does PDF to MuseScore upload my sheet music anywhere?</summary>
             <div class="faq-body">
-              No. All PDF rendering and AI music recognition runs <strong>100% locally on your CPU</strong>. The only optional network requests are downloading the open-source <code>homr</code> and <code>RapidOCR</code> ONNX model weights once during installation (or automatically on startup if missing), and a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via <code>check_updates = false</code>).
+              No. All PDF rendering and AI music recognition runs <strong>100% locally on your CPU</strong>. The only optional network requests are downloading the open-source <code>homr</code> and <code>RapidOCR</code> ONNX model weights once during installation (or automatically on startup if missing), a silent check against GitHub Releases for newer app versions (which sends zero user data and can be disabled via <code>check_updates = false</code>), and an optional <strong>Feedback</strong> report if you choose to submit diagnostic logs (privacy-sanitized, never containing sheet music, and never sent automatically).
             </div>
           </details>
 
@@ -450,7 +459,7 @@ gh attestation verify .\pdf2musescore-&lt;version&gt;-setup-x64.exe --repo tomer
           <details class="faq-item">
             <summary>How are the ~180 MB AI models downloaded?</summary>
             <div class="faq-body">
-              To keep the Windows installer compact (~105 MB), the open-source <code>homr</code> and <code>RapidOCR</code> neural network weights (~180 MB) are downloaded once during installation (or automatically in the background when the app starts if missing, such as in offline installs or Microsoft Store builds) and cached locally for offline use afterward.
+              To keep the Windows installer compact (~85 MB), the open-source <code>homr</code> and <code>RapidOCR</code> neural network weights (~180 MB) are downloaded once during installation (or automatically in the background when the app starts if missing, such as in offline installs or Microsoft Store builds) and cached locally for offline use afterward.
             </div>
           </details>
 
@@ -464,7 +473,7 @@ gh attestation verify .\pdf2musescore-&lt;version&gt;-setup-x64.exe --repo tomer
           <details class="faq-item">
             <summary>Where can I report a bug, share sample scores, or request features?</summary>
             <div class="faq-body">
-              Join <a href="https://github.com/tomermayost/pdf2musescore/discussions">GitHub Discussions</a> to ask questions or share tips, or open a ticket in <a href="https://github.com/tomermayost/pdf2musescore/issues">GitHub Issues</a> (clicking <strong>Open log folder</strong> in the bottom-right of the app attaches helpful diagnostic logs).
+              Click <strong>Feedback</strong> in the bottom-right of the app to send a privacy-sanitized bug report directly (no GitHub account required), join <a href="https://github.com/tomermayost/pdf2musescore/discussions">GitHub Discussions</a> to ask questions or share tips, or open a ticket in <a href="https://github.com/tomermayost/pdf2musescore/issues">GitHub Issues</a> (using <strong>Open log folder</strong> to attach diagnostic logs).
             </div>
           </details>
         </div>
