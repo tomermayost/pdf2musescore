@@ -146,7 +146,7 @@ def test_generate_store_screenshots_and_cli_with_stub(root, tmp_path: Path, monk
         )
 
     slides = gm.generate_store_screenshots(store_dir, capture_fn=fake_grab)
-    assert len(slides) == 4
+    assert len(slides) == 5
     for slide in slides:
         assert slide.is_file()
         with Image.open(slide) as im:
@@ -171,6 +171,7 @@ def test_generate_store_screenshots_and_cli_with_stub(root, tmp_path: Path, monk
     assert copy_file.is_file()
     copy_text = copy_file.read_text(encoding="utf-8")
     assert "RapidOCR" in copy_text and "Full Score (Conductor)" in copy_text
+    assert "v0.6.0" in copy_text
 
     monkeypatch.setattr(gm, "_capture_window_image", fake_grab)
     cli_dir = tmp_path / "store_cli"
@@ -178,7 +179,22 @@ def test_generate_store_screenshots_and_cli_with_stub(root, tmp_path: Path, monk
     assert rc == 0
     assert (cli_dir / "01-dark-studio.png").is_file()
     assert (cli_dir / "04-clean-first-launch.png").is_file()
+    assert (cli_dir / "05-before-after-fullscore.png").is_file()
     assert (cli_dir / "store_listing_copy.txt").is_file()
+
+    fs_b = tmp_path / "fs_before.png"
+    fs_a = tmp_path / "fs_after.png"
+    fs_out = tmp_path / "fs_ba.png"
+    Image.new("RGB", (600, 800), (255, 255, 255)).save(fs_b)
+    Image.new("RGB", (600, 800), (255, 255, 255)).save(fs_a)
+    rc_fs = gm.main([
+        "--before-after-fullscore",
+        "--fullscore-before-png", str(fs_b),
+        "--fullscore-after-png", str(fs_a),
+        "--before-after-fullscore-out", str(fs_out),
+    ])
+    assert rc_fs == 0
+    assert fs_out.is_file()
 
 
 def test_render_mscz_first_page_validation_and_mocked_cli(tmp_path: Path, monkeypatch) -> None:
@@ -256,9 +272,12 @@ def test_readme_assets_and_trust_statements() -> None:
     assert not re.search(r"\]\([^)]+\.pdf\)", readme, re.IGNORECASE)
 
     asset_refs = re.findall(r"docs/assets/[A-Za-z0-9_.-]+\.png", readme)
-    assert {"docs/assets/ui-light.png", "docs/assets/ui-dark.png", "docs/assets/before-after-bach.png"}.issubset(
-        set(asset_refs)
-    )
+    assert {
+        "docs/assets/ui-light.png",
+        "docs/assets/ui-dark.png",
+        "docs/assets/before-after-fullscore.png",
+        "docs/assets/before-after-bach.png",
+    }.issubset(set(asset_refs))
     for rel in asset_refs:
         img_path = ROOT / rel
         assert img_path.is_file(), f"Missing README asset: {rel}"

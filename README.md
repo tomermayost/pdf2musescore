@@ -26,7 +26,17 @@ Convert sheet music PDFs and photos (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) in
 
 ---
 
-## Real Conversion Example (Before → After)
+## Real Conversion Examples (Before → After)
+
+### Full Score (Conductor) — Beethoven Violin Concerto in D Major, Op. 61 (Opening)
+
+Converted directly on local CPU using **Full Score (Conductor)** mode from the public-domain [Mutopia Project](https://www.mutopiaproject.org/) score into an editable 13-staff `.mscz` conductor score opened in MuseScore 4:
+
+![Before and After: Original Beethoven Violin Concerto Op. 61 Full Score PDF compared with Editable MuseScore 4 output](docs/assets/before-after-fullscore.png)
+
+Notice how `pdf2musescore` aligns all **13 orchestral staves**, distinguishes **keyed Winds/Strings (D major), transposing `Clarinetti in A` (1♭), and unkeyed `Corni`/`Trombe`/`Timpani`**, and preserves **multi-voice woodwind writing, slurs, ties, `Allegro, ma non troppo` tempo, and dynamics** cleanly on one synchronized system.
+
+### Single Part — Bach Cello Suite No. 2 (Prélude)
 
 Converted directly on local CPU from the public-domain **Bach Cello Suite No. 2 (Prélude)** scan into an editable `.mscz` score opened in MuseScore 4:
 
@@ -55,18 +65,18 @@ Notice how `pdf2musescore` preserves the **bass clef, D minor key signature (B�
 - **Direct Image Input & Drag-and-Drop:** Drop a PDF or sheet-music photo (`.png`, `.jpg`, `.webp`, `.bmp`, `.tif`) straight onto the window — smartphone EXIF rotation and transparent PNGs are handled automatically.
 - **Live Sheet-Music Preview & Context-Aware Page Picker:** For multi-page PDFs, page navigation (`◀` / `▶` or `←` / `→`) and **Pick / Include page** controls appear automatically (or type ranges like `2-3, 5`), staying tucked away for single-page photos and scores.
 - **One-Click Scan Presets:** Choose **Clean PDF**, **Faded Scan** (enhances light photocopies + auto-deskews), or **Phone Photo** (adaptive shadow removal + auto-deskew) — no guesswork required.
-- **Single Part & Full Score (Conductor) Modes:** Switch between solo/individual parts and multi-staff conductor scores with automatic written instrument detection, accurate MIDI playback & transpositions, and Piano fallback (replacing `homr`'s default `Voice` instrument).
+- **Single Part & Full Score (Conductor) Modes:** Switch between solo/individual parts and dense multi-staff conductor scores (20–35+ staves) powered by native-scale barline-chunked OMR, skew-aware measure alignment, coordinate-free overlap stitching, tied accidental preservation, automatic written instrument detection & Piano fallback (replacing `homr`'s default `Voice` instrument), accurate MIDI playback & transpositions, and normalized unpitched percussion staves.
 - **Clean, Progressive Score Setup:** Optional **Instrument**, **Clef**, and **Transpose** (`−` / `+` half-steps with live musical hints like `+2 (Up M2 · B♭)`) live in a collapsible **Instrument, Clef & Transpose** drawer with a live summary badge, while **Advanced AI & Layout Settings** and **Activity Log** stay collapsed until needed.
-- **MuseScore 4 Sanitization & Unicode Path Safety:** Cleans unclosed slurs, malformed tuplets, colliding dynamics, overfull/multi-voice measures, and problematic tremolos from raw OMR output, sets the score title from your saved filename, and handles non-ASCII folders reliably.
-- **Powered by `homr` 0.7+ & RapidOCR:** Runs ONNX Runtime locally on CPU — recognizing notes, slurs, ties, dynamics, OCR tempo markings (including mid-piece changes), boxed/unboxed rehearsal marks, expression text (`rit.`, `tranq.`, `a tempo`), beams, and multi-page scores, with built-in privacy-sanitized **Feedback** / crash reporting.
+- **MuseScore 4 Sanitization & Unicode Path Safety:** Cleans unclosed slurs, malformed/spurious tuplets, colliding dynamics, overfull/multi-voice measures, cautionary system-end key/time stubs, and problematic tremolos from raw OMR output, sets the score title from your saved filename, and handles non-ASCII folders reliably.
+- **Powered by `homr` 0.7+ & RapidOCR:** Runs ONNX Runtime locally on CPU — recognizing notes, slurs, ties, dynamics, compound meters (`12/8`, `6/4`, `3/4`, `2/4`), OCR tempo markings (including mid-piece changes), boxed/unboxed rehearsal marks, expression text (`rit.`, `tranq.`, `a tempo`), beams, and multi-page scores, with built-in privacy-sanitized **Feedback** / crash reporting.
 
 ---
 
 ## What Works Best (Honest Expectations)
 
 Optical music recognition (OMR) has come a long way, and setting clear expectations saves frustration:
-- **Shines on:** Crisp digital PDFs, printed solo/chamber/band parts, lead sheets, piano scores, slightly faded photocopies (`Faded Scan`), and clear smartphone shots (`Phone Photo`).
-- **Expect light proofreading on:** Very dense multi-staff orchestral scores, overlapping vocal lyrics/chords, or unusual contemporary notation — just like every OMR engine, you may still want to touch up occasional accidentals, clefs, or tuplets in MuseScore 4.
+- **Shines on:** Crisp digital PDFs, printed solo/chamber/band parts, multi-staff band & orchestral conductor scores using **Full Score (Conductor)** mode, lead sheets, piano scores, slightly faded photocopies (`Faded Scan`), and clear smartphone shots (`Phone Photo`).
+- **Expect light proofreading on:** Very complex multi-voice divisi passages, overlapping vocal lyrics/chords, or unusual contemporary notation — just like every OMR engine, you may still want to touch up occasional accidentals, ornaments, or ledger-line chords in MuseScore 4.
 - **Not designed for:** Handwritten manuscripts or blurry low-contrast photos.
 
 ---

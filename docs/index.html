@@ -38,7 +38,7 @@
     "applicationCategory": "MultimediaApplication",
     "applicationSubCategory": "Optical Music Recognition",
     "description": "Free, offline Windows desktop application converting sheet music PDFs and photos into editable MuseScore 4 (.mscz) and MusicXML scores using local homr AI.",
-    "softwareVersion": "0.5.0",
+    "softwareVersion": "0.6.0",
     "softwareRequirements": "Windows 10 or Windows 11 (64-bit), x86-64 CPU with AVX2 & SSE4.2, 4 GB RAM minimum (8 GB recommended)",
     "license": "https://www.gnu.org/licenses/agpl-3.0.en.html",
     "url": "https://tomermayost.github.io/pdf2musescore/",
@@ -47,14 +47,15 @@
     "image": "https://tomermayost.github.io/pdf2musescore/assets/social-preview.png",
     "screenshot": [
       "https://tomermayost.github.io/pdf2musescore/assets/ui-dark.png",
+      "https://tomermayost.github.io/pdf2musescore/assets/before-after-fullscore.png",
       "https://tomermayost.github.io/pdf2musescore/assets/before-after-bach.png"
     ],
     "featureList": [
       "100% local offline AI music recognition powered by homr ONNX models",
       "Converts PDFs and sheet music photos (.png, .jpg, .webp, .bmp, .tif) with drag and drop",
-      "Single Part and Full Score (Conductor) modes with automatic instrument detection, accurate MIDI playback & transpositions, and Piano fallback (no more Voice mixer default)",
+      "Single Part and Full Score (Conductor) modes with native-scale barline-chunked OMR, automatic instrument detection, accurate MIDI playback & transpositions, and Piano fallback (no more Voice mixer default)",
       "OCR tempo markings (BPM and mid-piece changes), boxed/unboxed rehearsal marks, and expression text (rit., tranq.)",
-      "Direct .mscz and MusicXML (.musicxml) export with MuseScore 4 sanitization (slurs, tuplets, dynamics collisions, and multi-voice measures)"
+      "Direct .mscz and MusicXML (.musicxml) export with MuseScore 4 sanitization (slurs, tuplets, dynamics collisions, percussion cleanup, and multi-voice measures)"
     ],
     "sameAs": [
       "https://github.com/tomermayost/pdf2musescore",
@@ -215,23 +216,45 @@
     <section id="preview" class="section section-alt">
       <div class="container">
         <div class="section-head">
-          <h2>Real Conversion Example (Before → After)</h2>
+          <h2>Real Conversion Examples (Before → After)</h2>
           <p>
-            Converted directly on a regular laptop CPU from the public-domain
-            <strong>Bach Cello Suite No. 2 (Prélude)</strong> scan into an editable MuseScore 4 score.
+            Converted directly on a regular laptop CPU from public-domain scores into editable MuseScore 4
+            <strong>.mscz</strong> files — inspect both <strong>Full Score (Conductor)</strong> and <strong>Single Part</strong> results.
           </p>
         </div>
 
         <div class="ba-wrap">
-          <button id="openBeforeAfterZoom" class="ba-zoom-btn" type="button" aria-label="Zoom Before and After sheet music comparison">
-            <img src="assets/before-after-bach.png" alt="Side-by-side comparison of original Bach Cello Suite No. 2 PDF scan and editable MuseScore 4 output">
-          </button>
-          <div class="ba-footer">
-            <span>
-              Preserves <strong>bass clef, D minor key signature (B♭), 3/4 time, slurs, ties, stems, beams</strong>,
-              and clean auto-flowing measures for MuseScore 4.
-            </span>
-            <span class="zoom-pill">Click image to zoom</span>
+          <div class="showcase-bar ba-bar">
+            <div class="tab-group" role="tablist" aria-label="Before and after conversion examples">
+              <button id="baTabFullScore" class="tab-btn" type="button" role="tab" aria-selected="true" aria-controls="baPanelFullScore">Full Score (Beethoven Op. 61)</button>
+              <button id="baTabBach" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="baPanelBach">Single Part (Bach Cello Suite)</button>
+            </div>
+            <span id="baCaption" class="showcase-caption">13-Staff Orchestral Conductor Score · Public Domain (Mutopia Project)</span>
+          </div>
+
+          <div id="baPanelFullScore" role="tabpanel" aria-labelledby="baTabFullScore">
+            <button id="openFullScoreZoom" class="ba-zoom-btn" type="button" data-zoom-src="assets/before-after-fullscore.png" data-zoom-alt="Zoomed side-by-side comparison of Beethoven Violin Concerto Op. 61 Full Score PDF and MuseScore 4 conversion" aria-label="Zoom Beethoven Violin Concerto Op. 61 Full Score Before and After comparison">
+              <img src="assets/before-after-fullscore.png" alt="Side-by-side comparison of Beethoven Violin Concerto Op. 61 Full Score PDF and editable MuseScore 4 output">
+            </button>
+            <div class="ba-footer">
+              <span>
+                Aligns <strong>all 13 orchestral staves</strong>, preserves <strong>instrument labels, distinct Woodwind/Brass/Timpani key signatures, multi-voice slurs, ties, and Allegro ma non troppo tempo</strong> on one synchronized system.
+              </span>
+              <span class="zoom-pill">Click image to zoom</span>
+            </div>
+          </div>
+
+          <div id="baPanelBach" role="tabpanel" aria-labelledby="baTabBach" hidden>
+            <button id="openBeforeAfterZoom" class="ba-zoom-btn" type="button" data-zoom-src="assets/before-after-bach.png" data-zoom-alt="Zoomed side-by-side comparison of Bach Cello Suite No. 2 PDF and MuseScore 4 conversion" aria-label="Zoom Bach Cello Suite No. 2 Before and After comparison">
+              <img src="assets/before-after-bach.png" alt="Side-by-side comparison of original Bach Cello Suite No. 2 PDF scan and editable MuseScore 4 output">
+            </button>
+            <div class="ba-footer">
+              <span>
+                Preserves <strong>bass clef, D minor key signature (B♭), 3/4 time, slurs, ties, stems, beams</strong>,
+                and clean auto-flowing measures for MuseScore 4.
+              </span>
+              <span class="zoom-pill">Click image to zoom</span>
+            </div>
           </div>
         </div>
       </div>
@@ -293,11 +316,11 @@
           </article>
           <article class="card">
             <h3>Full Score, Auto Instruments &amp; Tempo</h3>
-            <p>Use <strong>Single Part</strong> with <strong>Instrument, Clef &amp; Transpose</strong> overrides (<code>+2 (Up M2 · B♭)</code>), or <strong>Full Score (Conductor)</strong> for auto-detected instruments &amp; Piano fallback (no more <code>Voice</code> default), accurate MIDI playback, OCR tempo markings, boxed/unboxed rehearsal marks, and expression text (<code>rit.</code>, <code>tranq.</code>).</p>
+            <p>Use <strong>Single Part</strong> with <strong>Instrument, Clef &amp; Transpose</strong> overrides (<code>+2 (Up M2 · B♭)</code>), or <strong>Full Score (Conductor)</strong> with native-scale barline-chunked OMR for dense 20–35+ staff scores — auto-detecting instruments (no more <code>Voice</code> default), preserving tied accidentals across measure boundaries, OCR tempo markings, boxed/unboxed rehearsal marks, and expression text (<code>rit.</code>, <code>tranq.</code>).</p>
           </article>
           <article class="card">
             <h3>MuseScore 4 Sanitization</h3>
-            <p>Automatically pairs unclosed slurs, fixes malformed tuplets and colliding dynamics, normalizes overfull/multi-voice measures, removes forced line breaks, and sets score title from your saved filename.</p>
+            <p>Automatically pairs unclosed slurs, repairs spurious tuplets, fixes colliding dynamics, normalizes percussion staves and compound meters (<code>12/8</code>, <code>6/4</code>), trims cautionary system-end key/time stubs, removes forced line breaks, and sets score title from your saved filename.</p>
           </article>
           <article class="card">
             <h3>Private Local CPU AI</h3>
@@ -406,7 +429,7 @@
             <ul class="expect-list">
               <li>Crisp digital sheet-music PDFs exported from notation apps</li>
               <li>Solo, chamber, piano, and band/ensemble parts</li>
-              <li>Multi-staff ensemble &amp; conductor scores using <strong>Full Score (Conductor)</strong> mode</li>
+              <li>Dense multi-staff band &amp; orchestral scores using <strong>Full Score (Conductor)</strong> mode</li>
               <li>Light or vintage photocopies using the <strong>Faded Scan</strong> preset</li>
               <li>Clear smartphone photos using the <strong>Phone Photo</strong> preset</li>
             </ul>
@@ -416,7 +439,7 @@
             <span class="badge-warn">CURRENT AI LIMITS</span>
             <h3>Complex Notation &amp; Handwritten Manuscripts</h3>
             <ul class="expect-list">
-              <li>Expect light proofreading in MuseScore 4 on dense multi-staff orchestral scores</li>
+              <li>Expect light proofreading in MuseScore 4 on intricate divisi passages or dense ledger-line chords</li>
               <li>Heavy vocal lyrics, chord grids, or experimental modern notation can confuse any OMR engine</li>
               <li>Handwritten manuscripts and blurry low-contrast photos are not supported</li>
             </ul>
@@ -521,7 +544,7 @@ gh attestation verify .\pdf2musescore-&lt;version&gt;-setup-x64.exe --repo tomer
   <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Zoomed Before and After comparison">
     <div class="lightbox-inner">
       <button id="closeLightbox" class="lightbox-close" type="button" aria-label="Close zoomed preview">×</button>
-      <img src="assets/before-after-bach.png" alt="Zoomed side-by-side comparison of Bach Cello Suite No. 2 PDF and MuseScore 4 conversion">
+      <img id="lightboxImg" src="assets/before-after-fullscore.png" alt="Zoomed side-by-side comparison of Beethoven Violin Concerto Op. 61 Full Score PDF and MuseScore 4 conversion">
     </div>
   </div>
 

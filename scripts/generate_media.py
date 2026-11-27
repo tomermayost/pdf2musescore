@@ -26,6 +26,7 @@ DEFAULT_SCREENSHOT = ROOT / "docs" / "assets" / "ui-dark.png"
 DEFAULT_UI_DARK_OUT = ROOT / "docs" / "assets" / "ui-dark.png"
 DEFAULT_UI_LIGHT_OUT = ROOT / "docs" / "assets" / "ui-light.png"
 DEFAULT_BEFORE_AFTER_OUT = ROOT / "docs" / "assets" / "before-after-bach.png"
+DEFAULT_BEFORE_AFTER_FULLSCORE_OUT = ROOT / "docs" / "assets" / "before-after-fullscore.png"
 DEFAULT_SOCIAL_OUT = ROOT / "docs" / "assets" / "social-preview.png"
 DEFAULT_MEDIA_TMP = ROOT / "tmp" / "media"
 DEFAULT_STORE_DIR = ROOT / "tmp" / "store_screenshots"
@@ -155,6 +156,11 @@ def compose_before_after(
     after_img: Image.Image,
     out_path: Path,
     width: int = 1400,
+    *,
+    before_title: str = "1. Original PDF Scan",
+    after_title: str = "2. Editable MuseScore 4 (.mscz)",
+    before_badge: str = "INPUT PDF",
+    after_badge: str = "LOCAL AI OUTPUT",
 ) -> Path:
     """Compose side-by-side framed 'Original PDF' -> 'Editable MuseScore 4' comparison PNG."""
     out_path = Path(out_path)
@@ -189,8 +195,8 @@ def compose_before_after(
         {
             "x": outer_pad,
             "img": trimmed_before,
-            "title": "1. Original PDF Scan",
-            "badge": "INPUT PDF",
+            "title": before_title,
+            "badge": before_badge,
             "header_bg": (241, 245, 249),
             "title_fg": (15, 23, 42),
             "badge_bg": (226, 232, 240),
@@ -200,8 +206,8 @@ def compose_before_after(
         {
             "x": outer_pad + card_w + gap_w,
             "img": trimmed_after,
-            "title": "2. Editable MuseScore 4 (.mscz)",
-            "badge": "LOCAL AI OUTPUT",
+            "title": after_title,
+            "badge": after_badge,
             "header_bg": (239, 246, 255),
             "title_fg": (30, 58, 138),
             "badge_bg": (219, 234, 254),
@@ -670,7 +676,7 @@ def capture_ui_screenshots(
     return dark_out, light_out
 
 
-_STORE_LISTING_COPY = """=== MICROSOFT STORE PARTNER CENTER LISTING COPY (PDF2MuseScore v0.5.0) ===
+_STORE_LISTING_COPY = """=== MICROSOFT STORE PARTNER CENTER LISTING COPY (PDF2MuseScore v0.6.0) ===
 
 --- SHORT DESCRIPTION ---
 Convert sheet music PDFs & photos into editable MuseScore 4 (.mscz) and MusicXML scores — 100% free, local AI, no account or page limits.
@@ -678,12 +684,12 @@ Convert sheet music PDFs & photos into editable MuseScore 4 (.mscz) and MusicXML
 --- FULL DESCRIPTION ---
 PDF2MuseScore converts printed sheet music PDFs, faded photocopies, and smartphone photos (.png, .jpg, .webp, .bmp, .tif) into editable MuseScore 4 (.mscz) and MusicXML (.musicxml) scores — running 100% locally on your Windows PC with no account, no cloud uploads, and no page limits.
 
-Powered by the open-source homr deep-learning optical music recognition engine and RapidOCR, PDF2MuseScore supports both Single Part and Full Score (Conductor) modes — recognizing notes, slurs, ties, beams, dynamics, tempo markings, rehearsal marks, expression text, and multi-page scores while sanitizing slurs, tuplets, dynamics collisions, multi-voice measures, and forced line breaks so MuseScore 4 imports cleanly.
+Powered by the open-source homr deep-learning optical music recognition engine and RapidOCR, PDF2MuseScore supports both Single Part and Full Score (Conductor) modes — including a native-scale barline-chunked OMR engine for dense 20-35+ staff band and orchestral scores. It recognizes notes, slurs, ties, tied accidentals, beams, dynamics, compound meters, tempo markings, rehearsal marks, expression text, and percussion staves while sanitizing slurs, tuplets, dynamics collisions, multi-voice measures, and forced line breaks so MuseScore 4 imports cleanly.
 
 Key highlights:
 • Drag-and-drop PDFs or phone photos with live page preview and context-aware page range picking for multi-page scores
 • One-click scan presets: Clean PDF, Faded Scan (contrast boost + deskew), and Phone Photo (shadow cleanup)
-• Single Part & Full Score (Conductor) modes with automatic written instrument detection (Piano fallback — no more Voice mixer default), accurate MIDI playback & transpositions, OCR tempo markings, boxed/unboxed rehearsal marks, and expression text
+• Single Part & Full Score (Conductor) modes with native-scale barline-chunked OMR, automatic written instrument detection (Piano fallback — no more Voice mixer default), accurate MIDI playback & transpositions, OCR tempo markings, boxed/unboxed rehearsal marks, and expression text
 • Optional collapsible Instrument, Clef & Transpose overrides with live interval hints (e.g. +2 for B♭ instruments)
 • Clean Dark & Light Studio themes with one-click Open in MuseScore and Show in Folder completion actions
 
@@ -696,16 +702,16 @@ Open source under GNU AGPL-3.0-or-later (source code: https://github.com/tomerma
 --- PRODUCT FEATURES (UP TO 200 CHARS EACH) ---
 1. 100% local offline AI on your PC — no account, no cloud uploads, no page limits
 2. Drag & drop PDFs or photos (.png, .jpg, .webp, .bmp, .tif) with live page preview
-3. Single Part & Full Score (Conductor) modes with auto instruments, MIDI playback, and tempo
+3. Single Part & Full Score (Conductor) modes — handles dense 20-35+ staff orchestral & band scores
 4. OCR boxed/unboxed rehearsal marks, mid-piece tempo changes, and expression text (rit., tranq.)
 5. Pre-export Instrument, Clef & Transpose overrides with live musical interval hints
 6. Direct .mscz and .musicxml export with dynamics collision, tuplet, and slur sanitization
 
 --- WHAT'S NEW IN THIS VERSION ---
-• Added Full Score (Conductor) mode with multi-staff alignment, automatic written instrument detection, Piano fallback (replacing homr's default Voice), and synced MIDI playback & transpositions.
-• Added OCR tempo marking detection (including BPM and mid-piece tempo changes), boxed/unboxed rehearsal marks, and expression markings (such as rit. and tranq.).
-• Improved MusicXML sanitization: fixes colliding dynamics, normalizes overfull and multi-voice measures, and cleans orphan tuplets/slurs for MuseScore 4.
-• Added always-shown themed completion popup, Windows taskbar flash, and optional privacy-sanitized Feedback & crash reporting.
+• Upgraded Full Score (Conductor) mode with native-scale barline-chunked OMR, skew-aware measure alignment, and coordinate-free sequence overlap stitching for dense multi-staff pages.
+• Preserved overlap-confirmed tied accidentals and cross-boundary chord ties, plus trimmed cautionary end-of-page key/time stubs so measures never desync across pages.
+• Hardened compound meters (12/8, 6/4, 3/4, 2/4), repaired spurious tuplets, and normalized unpitched percussion staves cleanly.
+• Improved boxed/unboxed rehearsal mark OCR (including O/P), multi-tempo placement, and non-English / curly-quote instrument label matching.
 """
 
 
@@ -957,6 +963,7 @@ def generate_store_screenshots(
     dark_ui_path: Path = DEFAULT_UI_DARK_OUT,
     light_ui_path: Path = DEFAULT_UI_LIGHT_OUT,
     before_after_path: Path = DEFAULT_BEFORE_AFTER_OUT,
+    fullscore_before_after_path: Optional[Path] = DEFAULT_BEFORE_AFTER_FULLSCORE_OUT,
     capture_fn: Optional[Callable[[tk.Misc], Image.Image]] = None,
 ) -> list[Path]:
     """Generate 1920x1080 Microsoft Store showcase slides and Partner Center copy."""
@@ -1037,6 +1044,20 @@ def generate_store_screenshots(
                 )
             )
 
+    if fullscore_before_after_path is not None and Path(fullscore_before_after_path).is_file():
+        with Image.open(fullscore_before_after_path) as img_fs:
+            outputs.append(
+                compose_store_slide(
+                    img_fs,
+                    "Full Score Conductor Mode: Dense Orchestral PDF → MuseScore 4",
+                    "Aligns 13 staves, preserves keyless Brass/Timpani vs keyed Winds/Strings, tempo, and multi-voice slurs",
+                    out_dir / "05-before-after-fullscore.png",
+                    badge="BEETHOVEN VIOLIN CONCERTO · FULL SCORE AI",
+                    layout="centered",
+                    dark_canvas=True,
+                )
+            )
+
     copy_path = out_dir / "store_listing_copy.txt"
     copy_path.write_text(_STORE_LISTING_COPY.lstrip(), encoding="utf-8")
     log.info("Saved Microsoft Store Partner Center copy to %s", copy_path)
@@ -1047,6 +1068,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate README and GitHub social media assets.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--before-after", action="store_true", help="Generate before/after Bach comparison PNG.")
+    parser.add_argument(
+        "--before-after-fullscore",
+        action="store_true",
+        help="Compose before/after Full Score comparison PNG from rendered before/after page images.",
+    )
     parser.add_argument("--social-preview", action="store_true", help="Generate 1280x640 GitHub social preview PNG.")
     parser.add_argument("--ui-screenshots", action="store_true", help="Capture refreshed Dark & Light UI PNGs.")
     parser.add_argument("--store-screenshots", action="store_true", help="Generate 1920x1080 Microsoft Store slides.")
@@ -1061,6 +1087,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--store-out-dir", type=Path, default=DEFAULT_STORE_DIR)
     parser.add_argument("--tmp-dir", type=Path, default=DEFAULT_MEDIA_TMP)
     parser.add_argument("--before-after-out", type=Path, default=DEFAULT_BEFORE_AFTER_OUT)
+    parser.add_argument("--fullscore-before-png", type=Path, default=DEFAULT_MEDIA_TMP / "fullscore_before.png")
+    parser.add_argument("--fullscore-after-png", type=Path, default=DEFAULT_MEDIA_TMP / "fullscore_after.png")
+    parser.add_argument("--before-after-fullscore-out", type=Path, default=DEFAULT_BEFORE_AFTER_FULLSCORE_OUT)
     parser.add_argument("--social-out", type=Path, default=DEFAULT_SOCIAL_OUT)
     return parser
 
@@ -1073,7 +1102,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
-    explicit = args.before_after or args.social_preview or args.ui_screenshots or args.store_screenshots
+    explicit = (
+        args.before_after
+        or args.before_after_fullscore
+        or args.social_preview
+        or args.ui_screenshots
+        or args.store_screenshots
+    )
     run_ba = args.all or args.before_after or not explicit
     run_social = args.all or args.social_preview or not explicit
 
@@ -1086,16 +1121,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         with Image.open(before_png) as b_img, Image.open(after_png) as a_img:
             compose_before_after(b_img, a_img, args.before_after_out)
 
+    if args.before_after_fullscore:
+        if not args.fullscore_before_png.is_file():
+            raise FileNotFoundError(f"Full score before PNG not found: {args.fullscore_before_png}")
+        if not args.fullscore_after_png.is_file():
+            raise FileNotFoundError(f"Full score after PNG not found: {args.fullscore_after_png}")
+        with Image.open(args.fullscore_before_png) as b_img, Image.open(args.fullscore_after_png) as a_img:
+            compose_before_after(
+                b_img,
+                a_img,
+                args.before_after_fullscore_out,
+                before_title="1. Original Full Score PDF",
+                after_title="2. Editable MuseScore 4 (.mscz)",
+                before_badge="FULL SCORE PDF",
+                after_badge="LOCAL AI OUTPUT",
+            )
+
     if run_social:
         shot = args.ui_dark_out if args.ui_screenshots else args.screenshot
         generate_social_preview(args.icon, shot, args.social_out)
 
     if args.store_screenshots:
+        fs_ba = args.before_after_fullscore_out if args.before_after_fullscore_out.is_file() else None
         generate_store_screenshots(
             args.store_out_dir,
             dark_ui_path=args.ui_dark_out,
             light_ui_path=args.ui_light_out,
             before_after_path=args.before_after_out,
+            fullscore_before_after_path=fs_ba,
         )
 
     return 0

@@ -85,9 +85,46 @@
     });
   }
 
-  /* Before / After Zoom Lightbox */
+  /* Before / After Tabs + Zoom Lightbox */
+  var baTabFullScore = document.getElementById("baTabFullScore");
+  var baTabBach = document.getElementById("baTabBach");
+  var baPanelFullScore = document.getElementById("baPanelFullScore");
+  var baPanelBach = document.getElementById("baPanelBach");
+  var baCaption = document.getElementById("baCaption");
+
+  function setBeforeAfterExample(choice) {
+    var isFullScore = choice !== "bach";
+    if (baTabFullScore && baTabBach) {
+      baTabFullScore.setAttribute("aria-selected", String(isFullScore));
+      baTabBach.setAttribute("aria-selected", String(!isFullScore));
+    }
+    if (baPanelFullScore) {
+      baPanelFullScore.hidden = !isFullScore;
+    }
+    if (baPanelBach) {
+      baPanelBach.hidden = isFullScore;
+    }
+    if (baCaption) {
+      baCaption.textContent = isFullScore
+        ? "13-Staff Orchestral Conductor Score · Public Domain (Mutopia Project)"
+        : "Solo Cello Part · Public Domain Scan (Bach Cello Suite No. 2)";
+    }
+  }
+
+  if (baTabFullScore) {
+    baTabFullScore.addEventListener("click", function () {
+      setBeforeAfterExample("fullscore");
+    });
+  }
+  if (baTabBach) {
+    baTabBach.addEventListener("click", function () {
+      setBeforeAfterExample("bach");
+    });
+  }
+
   var lightbox = document.getElementById("lightbox");
-  var openZoom = document.getElementById("openBeforeAfterZoom");
+  var lightboxImg = document.getElementById("lightboxImg");
+  var zoomButtons = document.querySelectorAll(".ba-zoom-btn");
   var closeZoom = document.getElementById("closeLightbox");
 
   function closeBox() {
@@ -97,10 +134,20 @@
     }
   }
 
-  if (openZoom && lightbox) {
-    openZoom.addEventListener("click", function () {
-      lightbox.classList.add("is-open");
-      lightbox.setAttribute("aria-hidden", "false");
+  if (zoomButtons.length > 0 && lightbox) {
+    zoomButtons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var nextSrc = btn.getAttribute("data-zoom-src");
+        var nextAlt = btn.getAttribute("data-zoom-alt");
+        if (lightboxImg && nextSrc) {
+          lightboxImg.src = nextSrc;
+          if (nextAlt) {
+            lightboxImg.alt = nextAlt;
+          }
+        }
+        lightbox.classList.add("is-open");
+        lightbox.setAttribute("aria-hidden", "false");
+      });
     });
     lightbox.addEventListener("click", function (ev) {
       if (ev.target === lightbox) {

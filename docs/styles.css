@@ -437,6 +437,14 @@ pre {
   box-shadow: var(--shadow);
 }
 
+.ba-bar {
+  flex-wrap: wrap;
+}
+
+.ba-wrap [hidden] {
+  display: none;
+}
+
 .ba-zoom-btn {
   display: block;
   width: 100%;

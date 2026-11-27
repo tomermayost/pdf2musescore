@@ -126,11 +126,12 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert {"SoftwareApplication", "FAQPage"}.issubset(set(jsonld_by_type))
 
     ld = jsonld_by_type["SoftwareApplication"]
-    assert ld["softwareVersion"] == "0.5.0"
+    assert ld["softwareVersion"] == "0.6.0"
     assert "PDF2MuseScore" in ld["alternateName"]
     assert "https://github.com/tomermayost/pdf2musescore" in ld["sameAs"]
     assert "https://apps.microsoft.com/detail/9N6NCBWM3BHT" in ld["sameAs"]
-    assert len(ld["screenshot"]) >= 2
+    assert len(ld["screenshot"]) >= 3
+    assert any(u.endswith("assets/before-after-fullscore.png") for u in ld["screenshot"])
     assert len(ld["featureList"]) >= 5
     assert ld["offers"]["price"] == "0"
     assert ld["installUrl"] == "https://apps.microsoft.com/detail/9N6NCBWM3BHT"
@@ -158,6 +159,7 @@ def test_landing_page_html_seo_assets_and_constraints() -> None:
     assert "styles.css" in local_refs
     assert "app.js" in local_refs
     assert "assets/favicon.png" in local_refs
+    assert "assets/before-after-fullscore.png" in local_refs
     assert "assets/before-after-bach.png" in local_refs
 
     for rel in local_refs:
@@ -210,7 +212,7 @@ def test_robots_txt_and_sitemap_xml() -> None:
     assert locs == [SITE_URL]
 
     img_locs = [el.text for el in root.findall("sm:url/image:image/image:loc", ns) if el.text]
-    assert len(img_locs) >= 4
+    assert len(img_locs) >= 5
     for img_url in img_locs:
         assert img_url.startswith(SITE_URL)
         rel = img_url.removeprefix(SITE_URL)

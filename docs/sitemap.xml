@@ -4,9 +4,13 @@
   xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://tomermayost.github.io/pdf2musescore/</loc>
-    <lastmod>2026-11-26</lastmod>
+    <lastmod>2026-11-27</lastmod>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://tomermayost.github.io/pdf2musescore/assets/before-after-fullscore.png</image:loc>
+      <image:title>Before and After Beethoven Violin Concerto Op. 61 Full Score PDF to MuseScore 4 conversion</image:title>
+    </image:image>
     <image:image>
       <image:loc>https://tomermayost.github.io/pdf2musescore/assets/before-after-bach.png</image:loc>
       <image:title>Before and After Bach Cello Suite No. 2 PDF to MuseScore 4 conversion</image:title>
