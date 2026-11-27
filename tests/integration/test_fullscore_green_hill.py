@@ -32,6 +32,7 @@ _OMR_CACHE_ROOT = ROOT / "tmp" / "integration" / "_raw_omr_cache" / "fullscore"
 _OMR_SOURCE_FILES: tuple[Path, ...] = (
     ROOT / "src" / "pdf2musescore" / "fullscore" / "staves.py",
     ROOT / "src" / "pdf2musescore" / "fullscore" / "homr_patch.py",
+    ROOT / "src" / "pdf2musescore" / "fullscore" / "chunking.py",
 )
 
 pytestmark = pytest.mark.integration
@@ -455,6 +456,13 @@ def test_fullscore_green_hill_midscore_and_meter_change():
     assert ("4", "4") in p1_times
     assert ("6", "4") in p1_times
 
+    # Genuine 3:2 trumpet tuplets in p.11 M5 must be preserved
+    trumpet_m5_tm = [
+        root.find(f"./part[@id='P{pid}']/measure[@number='5']//time-modification")
+        for pid in (15, 16, 17)
+    ]
+    assert any(tm is not None for tm in trumpet_m5_tm)
+
 
 def test_fullscore_cover_page_skipped_cleanly():
     _require_prereqs()
@@ -516,11 +524,104 @@ def test_fullscore_green_hill_tuplets_meter_rehearsal_and_percussion():
     m6_words = " ".join((w.text or "") for w in p1_ms[5].findall("./direction/direction-type/words"))
     assert "E " not in m6_words and "•" not in m6_words
 
-    # p.17 (M11..M15, Bar. Solo): ZERO spurious tuplets! M13 (5th bar after F) preserves all 13 notes cleanly
-    for mi in range(10, 15):
-        assert p1_ms[mi].find(".//time-modification") is None, f"Unexpected spurious tuplet in M{mi + 1}"
+    # p.17 (M11..M15, Bar. Solo): ZERO spurious tuplets, exact 6.0q (12/8) in every bar, accurate 16ths in M11 & M13!
+    p1_part = root.find("./part[@id='P1']")
+    p1_div = 4
+    p1_divs: list[int] = []
+    for mi, m in enumerate(p1_ms):
+        for a in m.findall("attributes"):
+            d_txt = a.findtext("divisions")
+            if d_txt and d_txt.strip().isdigit():
+                p1_div = max(1, int(d_txt.strip()))
+        p1_divs.append(p1_div)
+        if 10 <= mi <= 14:
+            assert m.find(".//time-modification") is None, f"Unexpected spurious tuplet in M{mi + 1}"
+            bar_q = Fraction(
+                sum(
+                    int(n.findtext("duration") or "0")
+                    for n in m.findall("note")
+                    if n.find("chord") is None and n.find("grace") is None
+                ),
+                p1_div,
+            )
+            assert bar_q == Fraction(6, 1), f"P1 M{mi + 1} duration {bar_q}q != 6q"
+
+    m11_notes = [n for n in p1_ms[10].findall("note") if n.find("chord") is None]
+    assert [n.findtext("type") for n in m11_notes[:4]] == ["16th", "16th", "eighth", "eighth"]
+    assert [(n.findtext("pitch/step"), n.findtext("pitch/octave")) for n in m11_notes[:4]] == [
+        ("F", "3"),
+        ("G", "3"),
+        ("A", "3"),
+        ("F", "3"),
+    ]
+
     m13_notes = [n for n in p1_ms[12].findall("note") if n.find("chord") is None and n.find("rest") is None]
     assert len(m13_notes) == 13
+    assert [n.findtext("type") for n in m13_notes[6:13]] == [
+        "16th",
+        "16th",
+        "eighth",
+        "eighth",
+        "eighth",
+        "eighth",
+        "eighth",
+    ]
+    assert [n.findtext("pitch/step") for n in m13_notes[6:8]] == ["C", "B"]
+
+    # p.14 Bar. Solo M5 (index 9): exact 6.0q (12/8) duration, starts with pitched G3 (no whole-rest header bleed), ends on D3
+    m10_solo = p1_ms[9]
+    assert m10_solo.find(".//time-modification") is None
+    m10_q = Fraction(
+        sum(
+            int(n.findtext("duration") or "0")
+            for n in m10_solo.findall("note")
+            if n.find("chord") is None and n.find("grace") is None
+        ),
+        p1_divs[9],
+    )
+    assert m10_q == Fraction(6, 1), f"P1 M10 (p.14 Bar. Solo M5) duration {m10_q}q != 6q"
+    m10_elems = [n for n in m10_solo.findall("note") if n.find("chord") is None]
+    assert m10_elems[0].find("rest") is None
+    assert (m10_elems[0].findtext("pitch/step"), m10_elems[0].findtext("pitch/octave")) == ("G", "3")
+    m10_pitched = [n for n in m10_elems if n.find("rest") is None]
+    assert len(m10_pitched) >= 9
+    assert (m10_pitched[-1].findtext("pitch/step"), m10_pitched[-1].findtext("pitch/octave")) == ("D", "3")
+
+    # Zero spurious chunk-boundary double/heavy barlines on p.14 (M6..M10) and p.17 (M11..M15); preserve genuine double bar at end of p.13 (M5)
+    spurious_mid_bars = [
+        (part.attrib.get("id"), m_idx + 1, bs.text)
+        for part in root.findall("part")
+        for m_idx in range(5, 15)
+        for bs in part.findall("measure")[m_idx].findall("barline/bar-style")
+        if bs.text in ("heavy-heavy", "light-light")
+    ]
+    assert spurious_mid_bars == [], f"Unexpected chunk-boundary double barlines: {spurious_mid_bars[:10]}"
+    p13_end_double = sum(
+        1
+        for part in root.findall("part")
+        if any(
+            bs.text in ("light-light", "heavy-heavy")
+            for bs in part.findall("measure")[4].findall("barline/bar-style")
+        )
+    )
+    assert p13_end_double >= 20
+
+    # p.17 C Baritone (P23, M13): exact full-bar dotted-whole duration (6q), and p.14 C Baritone keeps cross-bar ties
+    p23_ms = root.findall("./part[@id='P23']/measure")
+    p23_div = 4
+    for mi, m in enumerate(p23_ms):
+        for a in m.findall("attributes"):
+            d_txt = a.findtext("divisions")
+            if d_txt and d_txt.strip().isdigit():
+                p23_div = max(1, int(d_txt.strip()))
+        if mi == 12:
+            bar_q = Fraction(
+                sum(int(n.findtext("duration") or "0") for n in m.findall("note") if n.find("chord") is None),
+                p23_div,
+            )
+            assert bar_q == Fraction(6, 1), f"P23 M13 duration {bar_q}q != 6q"
+    p23_p14_ties = [t.get("type") for m in p23_ms[5:10] for t in m.findall(".//tie")]
+    assert "start" in p23_p14_ties and "stop" in p23_p14_ties
 
     # p.29 (M16..M20): inherited 12/8 is preserved (does NOT flip to 6/4)
     for mi in range(10, 20):
@@ -538,9 +639,13 @@ def test_fullscore_green_hill_tuplets_meter_rehearsal_and_percussion():
         mscx_root = ET.fromstring(z.read(mscx))
 
     mscx_staves = mscx_root.findall("./Score/Staff")
-    # Bar. Solo has 0 <Tuplet> elements across p.17 bars (M11..M15)
+    # Bar. Solo has 0 <Tuplet> elements and 0 hidden padding rests across p.17 bars (M11..M15)
     solo_ms = mscx_staves[0].findall("Measure")
     assert all(len(solo_ms[mi].findall(".//Tuplet")) == 0 for mi in range(10, 15))
+    assert all(
+        all(r.findtext("visible") != "0" for r in solo_ms[mi].findall(".//Rest"))
+        for mi in range(10, 15)
+    )
 
     # Percussion 1 & 2 (staves 27, 28) have PERC clef only in M1, zero key flats, and no erratic heads
     for perc_idx in (27, 28):
@@ -726,3 +831,64 @@ def test_fullscore_musescore_percussion_and_meter_edge_cases():
     assert perc_staff.findall(".//KeySig") == []
     perc_notes = [(n.findtext("pitch"), n.findtext("head")) for n in perc_staff.findall(".//Note")]
     assert perc_notes == [("38", None), ("38", None), ("38", None)]
+
+
+def test_fullscore_green_hill_rehearsal_b_sync():
+    _require_prereqs()
+    cfg = _make_config("rehearsal_b")
+    out_mscz = OUT / "rehearsal_b" / "green_hill_p7.mscz"
+    out_mscz.parent.mkdir(parents=True, exist_ok=True)
+
+    result = Pipeline(cfg).convert(
+        GREEN_HILL_PDF,
+        out_mscz,
+        pages_spec="7",
+        options=ConversionOptions(render_dpi=500, full_score=True),
+    )
+    assert result == out_mscz and zipfile.is_zipfile(out_mscz)
+
+    staged_xml = _newest_staged_xml(cfg.work_dir)
+    root = ET.parse(staged_xml).getroot()
+    summary = verify_fullscore_invariants(root)
+    assert summary["parts"] == 29
+    assert summary["measures"] == 5
+    _assert_no_overfull_measures(root)
+
+    p1_ms = root.findall("./part[@id='P1']/measure")
+    assert p1_ms[2].findtext("./direction/direction-type/rehearsal") == "B"
+    assert p1_ms[2].find("./direction/direction-type/rehearsal").get("enclosure") == "square"
+
+    # Synchronized entry at Rehearsal B (Measure 3): Bb Cl. 1/2, solo Bb Tpt. 1, F Hn. 1/2, C Bar. rest M1-M2 and play M3-M5
+    for pid in ("P6", "P7", "P15", "P18", "P19", "P23"):
+        ms = root.findall(f"./part[@id='{pid}']/measure")
+        assert len(ms) == 5
+        for rest_mi in (0, 1):
+            assert [n for n in ms[rest_mi].findall("note") if n.find("rest") is None] == [], (
+                f"{pid} M{rest_mi + 1} shifted early before Rehearsal B"
+            )
+        for play_mi in (2, 3, 4):
+            assert len([n for n in ms[play_mi].findall("note") if n.find("rest") is None]) >= 1, (
+                f"{pid} M{play_mi + 1} missing notes after Rehearsal B"
+            )
+
+    # Trombones (P20-P22) play M1-M3 (resolving on Rehearsal B downbeat) and rest M4-M5
+    for pid in ("P20", "P21", "P22"):
+        ms = root.findall(f"./part[@id='{pid}']/measure")
+        assert len(ms) == 5
+        for play_mi in (0, 1, 2):
+            assert len([n for n in ms[play_mi].findall("note") if n.find("rest") is None]) >= 1, (
+                f"{pid} M{play_mi + 1} missing notes before/at Rehearsal B"
+            )
+        for rest_mi in (3, 4):
+            assert [n for n in ms[rest_mi].findall("note") if n.find("rest") is None] == [], (
+                f"{pid} M{rest_mi + 1} shifted late after Rehearsal B"
+            )
+
+    spurious_bars = [
+        (part.attrib.get("id"), mi + 1, bs.text)
+        for part in root.findall("part")
+        for mi, m in enumerate(part.findall("measure"))
+        for bs in m.findall("barline/bar-style")
+        if bs.text in ("heavy-heavy", "light-light")
+    ]
+    assert spurious_bars == []

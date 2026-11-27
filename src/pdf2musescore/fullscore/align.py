@@ -814,25 +814,49 @@ def align_page_score(
         min_shorter_parts = max(2, int(0.25 * len(parts)))
         shorter_count = sum(1 for c in counts if c < target_measures)
         last_idx = target_measures - 1
-        last_all_rest = all(
-            _is_rest_only_measure(ms[last_idx])
-            for ms in part_measures_list
-            if len(ms) >= target_measures
-        )
-        prev_has_notes = any(
-            not _is_rest_only_measure(ms[last_idx - 1])
-            for ms in part_measures_list
-            if len(ms) >= target_measures
-        )
-        if last_all_rest and shorter_count >= min_shorter_parts and prev_has_notes:
-            log.info(
-                "Page %d: trimmed ghost all-rest trailing measure %d (%d/%d parts shorter, dist=%s)",
-                page_num,
-                target_measures,
-                shorter_count,
-                len(parts),
-                dict(sorted(count_freq.items())),
+        full_parts = [ms for ms in part_measures_list if len(ms) >= target_measures]
+        n_full = len(full_parts)
+        last_all_rest = all(_is_rest_only_measure(ms[last_idx]) for ms in full_parts)
+        prev_has_notes = any(not _is_rest_only_measure(ms[last_idx - 1]) for ms in full_parts)
+        prev_dbl_count = sum(
+            1
+            for ms in full_parts
+            if any(
+                bs.text in ("light-light", "heavy-heavy")
+                for bs in ms[last_idx - 1].findall("barline/bar-style")
             )
+        )
+        cautionary_attr_count = sum(
+            1
+            for ms in full_parts
+            if ms[last_idx].find("./attributes/key") is not None
+            or ms[last_idx].find("./attributes/time") is not None
+        )
+        is_cautionary_tail = (
+            n_full > 0
+            and prev_dbl_count >= 0.50 * n_full
+            and cautionary_attr_count >= 0.50 * n_full
+        )
+        if last_all_rest and prev_has_notes and (shorter_count >= min_shorter_parts or is_cautionary_tail):
+            if shorter_count >= min_shorter_parts:
+                log.info(
+                    "Page %d: trimmed ghost all-rest trailing measure %d (%d/%d parts shorter, dist=%s)",
+                    page_num,
+                    target_measures,
+                    shorter_count,
+                    len(parts),
+                    dict(sorted(count_freq.items())),
+                )
+            else:
+                log.info(
+                    "Page %d: trimmed system-end cautionary key/time trailing stub %d (dbl=%d/%d, attrs=%d/%d)",
+                    page_num,
+                    target_measures,
+                    prev_dbl_count,
+                    n_full,
+                    cautionary_attr_count,
+                    n_full,
+                )
             target_measures -= 1
 
     log.info("Aligning page %d: part_measures_dist=%s, target_measures=%d", page_num, dict(sorted(count_freq.items())), target_measures)

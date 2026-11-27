@@ -188,6 +188,38 @@ def test_align_page_score_consensus_noise_trim_pad_and_inherited_ts():
     assert empty_ts == ("5", "4")
 
 
+def test_align_page_score_trims_cautionary_system_end_stub_without_shorter_parts():
+    # Page 13 pattern: ALL 4 parts have 3 bars, M2 ends with light-light double barline,
+    # M3 has only cautionary key/time (0 pitched notes anywhere) -> trimmed to 2 bars!
+    c_parts = [
+        _make_part("P1", [(False, ("4", "4")), (False, None), (True, ("8", "8"))], fifths="-3"),
+        _make_part("P2", [(True, ("4", "4")), (False, None), (True, ("8", "8"))], fifths="-3"),
+        _make_part("P3", [(True, ("4", "4")), (True, None), (True, ("8", "8"))], fifths="-3"),
+        _make_part("P4", [(True, ("4", "4")), (True, None), (True, ("8", "8"))], fifths="-3"),
+    ]
+    for _, part in c_parts[:3]:
+        m2 = part.findall("measure")[1]
+        bl = ET.SubElement(m2, "barline", location="right")
+        ET.SubElement(bl, "bar-style").text = "light-light"
+        m3 = part.findall("measure")[2]
+        ET.SubElement(m3.find("attributes"), "key").append(ET.Element("fifths"))
+        m3.find("./attributes/key/fifths").text = "-2"
+    c_root = _build_score(c_parts)
+    c_aligned, c_end_ts = align_page_score(c_root, page_num=13)
+    assert c_end_ts == ("4", "4")
+    assert [len(p.findall("measure")) for p in c_aligned.findall("part")] == [2, 2, 2, 2]
+
+    # Genuine all-rest 3rd bar WITHOUT double-barline + cautionary attrs is NOT trimmed
+    g_parts = [
+        _make_part("P1", [(False, ("4", "4")), (False, None), (True, None)], fifths="-3"),
+        _make_part("P2", [(True, ("4", "4")), (False, None), (True, None)], fifths="-3"),
+        _make_part("P3", [(True, ("4", "4")), (True, None), (True, None)], fifths="-3"),
+        _make_part("P4", [(True, ("4", "4")), (True, None), (True, None)], fifths="-3"),
+    ]
+    g_aligned, _ = align_page_score(_build_score(g_parts), page_num=14)
+    assert [len(p.findall("measure")) for p in g_aligned.findall("part")] == [3, 3, 3, 3]
+
+
 def test_reconcile_variable_staves_dp_and_stray_drop():
     # Master page (page 4): 4 instruments (Flute, Bassoon, Horn, Percussion)
     p4_parts = [

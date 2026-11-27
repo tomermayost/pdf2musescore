@@ -17,14 +17,14 @@ log = logging.getLogger(__name__)
 TR_OMR_MAX_WIDTH = 1280
 TR_OMR_MAX_HEIGHT = 256
 MIN_NATIVE_5LINE_PX = 36.0
-TARGET_MIN_5LINE_PX = 42.0
+TARGET_MIN_5LINE_PX = 40.0
 TARGET_MAX_5LINE_PX = 58.0
 MAX_CHUNKS_PER_STAFF = 4
 
 
 @dataclass(frozen=True)
 class StaffChunkPlan:
-    """Contiguous slice of whole measures inside a dewarped staff strip."""
+    """Contiguous slice of segments inside a dewarped staff strip."""
 
     measure_start: int
     measure_end: int
@@ -32,6 +32,8 @@ class StaffChunkPlan:
     x_end: int
     expected_5line_px: float
     crosses_tie_left: bool = False
+    keep_x_start: int = 0
+    keep_x_end: int = 0
 
 
 def _to_grayscale(image: np.ndarray) -> np.ndarray:
@@ -41,6 +43,14 @@ def _to_grayscale(image: np.ndarray) -> np.ndarray:
     if image.ndim == 3 and image.shape[2] == 1:
         return image[:, :, 0]
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+
+def _erase_staff_lines(gray: np.ndarray, unit: float) -> np.ndarray:
+    """Suppress thin horizontal staff lines via vertical morphological closing."""
+    k = max(5, int(round(0.42 * float(unit))) | 1)
+    kernel = np.ones((k, 1), dtype=np.uint8)
+    src = gray if gray.dtype == np.uint8 else np.clip(gray, 0, 255).astype(np.uint8)
+    return cv2.morphologyEx(src, cv2.MORPH_CLOSE, kernel)
 
 
 def _canvas_fit_size(height: int, width: int) -> tuple[int, int]:
@@ -351,23 +361,23 @@ def should_chunk_staff(
         except Exception:
             n_notes = 0
 
-    if n_notes >= 1:
+    if n_notes >= 3:
         return True, f"compressed:{full_5line_px:.1f}px,notes={n_notes}"
 
     # Check non-staff ink inside measure interiors so rest-only staves bypass fast
-    gray = _to_grayscale(image).astype(np.float32)
+    gray = _to_grayscale(image)
     h, w = int(gray.shape[0]), int(gray.shape[1])
     _cy, _u, cy_by_x = _staff_y_profile(staff, w, h)
-    half_band = max(4, int(round(1.1 * five_line_h)))
+    half_band = max(4, int(round(0.65 * five_line_h)))
     cy_mid = int(round(float(np.median(cy_by_x))))
     y0 = max(0, cy_mid - half_band)
     y1 = min(h, cy_mid + half_band + 1)
     if y1 <= y0 + 4:
         return True, f"compressed:{full_5line_px:.1f}px,narrow_band"
 
-    band = gray[y0:y1, :]
-    row_bg = np.median(band, axis=1, keepdims=True)
-    ink = np.maximum(0.0, row_bg - band) > 25.0
+    band = _erase_staff_lines(np.asarray(gray[y0:y1, :], dtype=np.uint8), unit)
+    row_bg = np.percentile(band, 90, axis=1, keepdims=True)
+    ink = np.maximum(0.0, row_bg - band.astype(np.float32)) > 35.0
     col_ink_rows = ink.sum(axis=0)
     active_cols = col_ink_rows >= 2
 
@@ -386,8 +396,8 @@ def should_chunk_staff(
         max_bar_cols = max(max_bar_cols, cnt)
         total_cols += cnt
 
-    max_thresh = max(16, int(round(0.32 * five_line_h)))
-    tot_thresh = max(36, int(round(0.65 * five_line_h * n_measures)))
+    max_thresh = max(24, int(round(0.48 * five_line_h)))
+    tot_thresh = max(48, int(round(0.55 * five_line_h * n_measures)))
     if max_bar_cols < max_thresh and total_cols < tot_thresh:
         return False, f"empty_rest_only:max_cols={max_bar_cols},total={total_cols}"
 
@@ -406,8 +416,20 @@ def _has_cross_barline_arc(
     if bar_x <= 4 or bar_x >= w - 4:
         return False
     gray = _to_grayscale(strip).astype(np.float32)
-    med_col = np.median(gray, axis=1, keepdims=True)
-    ink = np.maximum(0.0, med_col - gray) > 22.0
+    paper_bg = float(np.percentile(gray, 90))
+    ink = (paper_bg - gray) > 25.0
+
+    # Mask local horizontal staff lines around bar_x so wobbly dewarped lines never mimic ties
+    sy_lo = max(0, int(round(staff_y0)) - 3)
+    sy_hi = min(h, int(round(staff_y1)) + 4)
+    wx0 = max(0, int(round(bar_x - 4.0 * unit)))
+    wx1 = min(w, int(round(bar_x + 4.0 * unit)) + 1)
+    if sy_hi > sy_lo and wx1 > wx0:
+        win = gray[sy_lo:sy_hi, wx0:wx1]
+        is_line_row = np.percentile(win, 75, axis=1) < (paper_bg - 25.0)
+        if np.any(is_line_row):
+            dilated = np.convolve(is_line_row.astype(np.int32), np.ones(5, dtype=np.int32), mode="same") > 0
+            ink[sy_lo:sy_hi][dilated, :] = False
 
     y0 = max(0, int(round(staff_y0 - 2.2 * unit)))
     y1 = min(h, int(round(staff_y1 + 2.2 * unit)) + 1)
@@ -460,52 +482,69 @@ def plan_staff_chunks(
     unit: Optional[float] = None,
     tie_barline_flags: Optional[Sequence[bool]] = None,
 ) -> list[StaffChunkPlan]:
-    """Partition measures ``0..M-1`` into contiguous TrOMR chunks at native ~42-58px scale."""
-    n_bounds = len(strip_barlines_x)
-    n_meas = n_bounds - 1
-    if n_meas < 2:
+    """Partition ``[0 .. strip_w]`` at clean interior barlines with right-context overlap."""
+    if not strip_barlines_x:
         return []
 
     u = float(unit) if unit is not None else max(4.0, float(five_line_h) / 4.0)
-    bar_pad_right = max(6, int(round(0.45 * u)))
     bar_pad_left = max(4, int(round(0.30 * u)))
-    max_w = int(strip_width) if strip_width is not None else int(strip_barlines_x[-1]) + bar_pad_right + 8
-    header_est_w = min(int(strip_barlines_x[1] - strip_barlines_x[0]), max(40, int(round(4.5 * five_line_h))))
+    right_ctx = max(72, int(round(12.0 * u)))
+    max_w = int(strip_width) if strip_width is not None else int(strip_barlines_x[-1]) + max(6, int(round(0.45 * u))) + 8
+
+    # Build monotonic well-separated interior split points over [0 .. max_w]
+    edge_margin = max(60, int(round(3.5 * five_line_h)))
+    min_split_gap = max(50, int(round(2.5 * five_line_h)))
+    raw_ties = list(tie_barline_flags) if tie_barline_flags is not None else [False] * len(strip_barlines_x)
+    candidates = sorted(
+        ((int(bx), bool(raw_ties[i]) if i < len(raw_ties) else False) for i, bx in enumerate(strip_barlines_x)),
+        key=lambda item: item[0],
+    )
+    interior: list[int] = []
+    interior_ties: list[bool] = []
+    for bx, tflag in candidates:
+        if bx < edge_margin or bx > (max_w - edge_margin):
+            continue
+        if interior and (bx - interior[-1]) < min_split_gap:
+            continue
+        interior.append(bx)
+        interior_ties.append(tflag)
+
+    bounds = [0] + interior + [max_w]
+    bound_ties = [False] + interior_ties + [False]
+    n_segs = len(bounds) - 1
+    if len(bounds) < 3 or n_segs < 2:
+        return []
+
+    header_est_w = max(80, int(round(12.0 * u)))
     target_mid = 0.5 * (TARGET_MIN_5LINE_PX + TARGET_MAX_5LINE_PX)
 
-    def _chunk_bounds_and_scale(m_start: int, m_end: int) -> tuple[int, int, float]:
-        xe = min(max_w, int(strip_barlines_x[m_end]) + bar_pad_right)
-        if m_start == 0:
-            xs = 0
-            chunk_w = max(1, xe - xs)
-        else:
-            xs = max(0, int(strip_barlines_x[m_start]) + bar_pad_left)
-            chunk_w = max(1, (xe - xs) + header_est_w)
+    def _chunk_bounds_and_scale(m_start: int, m_end: int) -> tuple[int, int, int, int, float]:
+        keep_xs = int(bounds[m_start])
+        keep_xe = int(bounds[m_end])
+        xs = 0 if m_start == 0 else max(0, keep_xs + bar_pad_left)
+        xe = max_w if m_end == n_segs else min(max_w, keep_xe + right_ctx)
+        chunk_w = max(1, (xe - xs) + (0 if m_start == 0 else header_est_w))
         cw, _ch = _canvas_fit_size(max(1, int(strip_height)), chunk_w)
         five_px = float(five_line_h) * (float(cw) / float(chunk_w))
-        return xs, xe, five_px
+        return keep_xs, keep_xe, xs, xe, five_px
 
-    # Check if full strip already meets target (should have been caught by should_chunk_staff)
-    tie_flags = list(tie_barline_flags) if tie_barline_flags is not None else [False] * n_bounds
-
-    # DP over measure boundaries 0..n_meas: minimize (num_chunks, tie_splits, max_scale_penalty)
+    # DP over segment boundaries 0..n_segs: minimize (num_chunks, tie_splits, max_scale_penalty)
     inf_cost = (10**9, 10**9, 1e9)
-    dp: list[tuple[int, int, float]] = [inf_cost] * (n_meas + 1)
-    parent: list[Optional[tuple[int, int, int, float]]] = [None] * (n_meas + 1)
+    dp: list[tuple[int, int, float]] = [inf_cost] * (n_segs + 1)
+    parent: list[Optional[tuple[int, int, int, int, int, float]]] = [None] * (n_segs + 1)
     dp[0] = (0, 0, 0.0)
 
-    for end_m in range(1, n_meas + 1):
+    for end_m in range(1, n_segs + 1):
         for start_m in range(end_m):
             if dp[start_m] >= inf_cost:
                 continue
-            xs, xe, five_px = _chunk_bounds_and_scale(start_m, end_m)
-            # Reject chunks that remain below MIN target unless single measure already spans >= target width
+            keep_xs, keep_xe, xs, xe, five_px = _chunk_bounds_and_scale(start_m, end_m)
             if (end_m - start_m) > 1 and five_px < TARGET_MIN_5LINE_PX:
                 continue
             n_ch = dp[start_m][0] + 1
             if n_ch > MAX_CHUNKS_PER_STAFF and (end_m - start_m) > 1:
                 continue
-            crosses_tie = 1 if (start_m > 0 and start_m < len(tie_flags) and tie_flags[start_m]) else 0
+            crosses_tie = 1 if (0 < start_m < len(bound_ties) and bound_ties[start_m]) else 0
             t_splits = dp[start_m][1] + crosses_tie
             dev = abs(five_px - target_mid)
             if five_px < TARGET_MIN_5LINE_PX:
@@ -513,25 +552,24 @@ def plan_staff_chunks(
             cand_cost = (n_ch, t_splits, max(dp[start_m][2], dev))
             if cand_cost < dp[end_m]:
                 dp[end_m] = cand_cost
-                parent[end_m] = (start_m, xs, xe, five_px)
+                parent[end_m] = (start_m, keep_xs, keep_xe, xs, xe, five_px)
 
-    if dp[n_meas] >= inf_cost:
-        # Single measure wider than max_chunk_w edge case: fall back to 1-measure chunks
+    if dp[n_segs] >= inf_cost:
         plans: list[StaffChunkPlan] = []
-        for m_idx in range(n_meas):
-            xs, xe, five_px = _chunk_bounds_and_scale(m_idx, m_idx + 1)
-            t_flag = bool(m_idx > 0 and m_idx < len(tie_flags) and tie_flags[m_idx])
-            plans.append(StaffChunkPlan(m_idx, m_idx + 1, xs, xe, five_px, t_flag))
+        for m_idx in range(n_segs):
+            keep_xs, keep_xe, xs, xe, five_px = _chunk_bounds_and_scale(m_idx, m_idx + 1)
+            t_flag = bool(0 < m_idx < len(bound_ties) and bound_ties[m_idx])
+            plans.append(StaffChunkPlan(m_idx, m_idx + 1, xs, xe, five_px, t_flag, keep_xs, keep_xe))
         return plans
 
     rev_plans: list[StaffChunkPlan] = []
-    cur = n_meas
+    cur = n_segs
     while cur > 0:
         info = parent[cur]
         assert info is not None
-        start_m, xs, xe, five_px = info
-        t_flag = bool(start_m > 0 and start_m < len(tie_flags) and tie_flags[start_m])
-        rev_plans.append(StaffChunkPlan(start_m, cur, xs, xe, five_px, t_flag))
+        start_m, keep_xs, keep_xe, xs, xe, five_px = info
+        t_flag = bool(0 < start_m < len(bound_ties) and bound_ties[start_m])
+        rev_plans.append(StaffChunkPlan(start_m, cur, xs, xe, five_px, t_flag, keep_xs, keep_xe))
         cur = start_m
     rev_plans.reverse()
     return rev_plans
@@ -547,81 +585,54 @@ def extract_clef_key_header(
     chunk0_symbols: Sequence[Any],
     chunk0_x_in_strip: Sequence[Optional[float]],
 ) -> tuple[np.ndarray, int]:
-    """Slice cleanly ``[Clef + Key Signature]`` from ``strip`` and append a blank 5-line spacer."""
+    """Slice ``[Clef + Key Signature]`` from ``strip`` using Chunk 0 token coordinates + spacer."""
     h, w = int(strip.shape[0]), int(strip.shape[1])
     gray = _to_grayscale(strip)
     med_col = np.median(gray, axis=1, keepdims=True)
 
-    # Parse key signature count and first time-sig / dynamic / body-note X from Chunk 0 predictions
+    # Cut strictly between Chunk 0 clef/key tokens and first meter/dynamic/note/rest token
     key_fifths = 0
+    last_header_x: Optional[float] = None
     first_body_x: Optional[float] = None
     for idx, sym in enumerate(chunk0_symbols):
         rhythm = str(getattr(sym, "rhythm", ""))
         sx = chunk0_x_in_strip[idx] if idx < len(chunk0_x_in_strip) else None
+        valid_x = sx is not None and not math.isnan(sx)
         if rhythm.startswith("keySignature_") and first_body_x is None:
             try:
                 key_fifths = min(7, abs(int(rhythm.split("_", 1)[1])))
             except ValueError:
                 key_fifths = 0
+            if valid_x:
+                last_header_x = float(sx) if last_header_x is None else max(last_header_x, float(sx))
+        elif rhythm.startswith("clef_") and first_body_x is None:
+            if valid_x:
+                last_header_x = float(sx) if last_header_x is None else max(last_header_x, float(sx))
         elif rhythm.startswith(("timeSignature", "dynamic_", "note_", "rest_")):
-            if sx is not None and not math.isnan(sx) and sx > float(b0_x) + 1.5 * unit:
-                first_body_x = float(sx) if first_body_x is None else min(first_body_x, float(sx))
+            if valid_x and float(sx) > float(b0_x) + 1.5 * unit:
+                first_body_x = float(sx)
             break
-        elif "barline" in rhythm or "repeat" in rhythm:
-            if idx > 0:
-                break
-
-    band_y0 = max(0, int(round(staff_y0 - 1.3 * unit)))
-    band_y1 = min(h, int(round(staff_y1 + 1.3 * unit)) + 1)
-    core = gray[band_y0:band_y1, :].astype(np.float32)
-    core_bg = med_col[band_y0:band_y1, :]
-    ink = np.maximum(0.0, core_bg - core) > 24.0
-    col_active = ink.sum(axis=0) >= 2
-
-    search_lo = max(0, int(b0_x) + max(2, int(round(0.3 * unit))))
-    search_hi = min(w - 1, int(b1_x) - max(4, int(round(0.8 * unit))))
-    comps: list[list[int]] = []
-    merge_gap = max(3, int(round(0.35 * unit)))
-    for x in range(search_lo, max(search_lo, search_hi)):
-        if col_active[x]:
-            if not comps or (x - comps[-1][1]) > merge_gap:
-                comps.append([x, x])
-            else:
-                comps[-1][1] = x
-
-    max_header_x = float(b0_x) + (4.4 + 1.35 * key_fifths) * unit
-    if first_body_x is not None:
-        capped = first_body_x - 0.55 * unit
-        if capped >= float(b0_x) + 2.2 * unit:
-            max_header_x = min(max_header_x, capped)
-
-    selected: list[list[int]] = []
-    max_comps = 1 + key_fifths + 1
-    body_guard = (first_body_x - 0.35 * unit) if first_body_x is not None else None
-    for c_lo, c_hi in comps:
-        if float(c_lo) > max_header_x:
-            break
-        if body_guard is not None and float(c_hi) >= body_guard and len(selected) >= 1:
-            break
-        if first_body_x is not None and float(c_lo) - 2.0 <= first_body_x <= float(c_hi) + 2.0 and len(selected) >= 1:
-            break
-        if selected:
-            gap = c_lo - selected[-1][1]
-            if key_fifths == 0 and gap > 1.35 * unit:
-                break
-            if len(selected) >= max_comps and gap > 0.8 * unit:
-                break
-        selected.append([c_lo, c_hi])
-        if len(selected) >= max_comps:
+        elif _is_barline_token(rhythm) and idx > 0:
             break
 
-    if selected:
-        header_cut_x = selected[-1][1] + max(4, int(round(0.45 * unit)))
+    min_cut = min(w, max(6, int(round(float(b0_x) + 2.4 * unit))))
+    max_safe_x = float(b0_x) + (4.8 + 1.35 * key_fifths) * unit
+    max_cut = min(w, max(min_cut, int(round(min(max_safe_x, float(b1_x) - 0.8 * unit)))))
+
+    if last_header_x is not None and first_body_x is not None and first_body_x > last_header_x + 0.5 * unit:
+        ideal = min(
+            0.5 * (last_header_x + first_body_x),
+            last_header_x + 2.2 * unit,
+            first_body_x - 0.55 * unit,
+        )
+        header_cut_x = int(round(ideal))
+    elif last_header_x is not None:
+        header_cut_x = int(round(last_header_x + 2.0 * unit))
+    elif first_body_x is not None:
+        header_cut_x = int(round(first_body_x - 0.55 * unit))
     else:
-        header_cut_x = int(round(float(b0_x) + (3.5 + 1.15 * key_fifths) * unit))
+        header_cut_x = int(round(float(b0_x) + (3.6 + 1.15 * key_fifths) * unit))
 
-    min_cut = min(w, max(search_lo + max(6, int(round(2.0 * unit))), int(b0_x) + int(round(2.4 * unit))))
-    max_cut = min(w, max(min_cut, int(b1_x) - max(4, int(round(0.8 * unit)))))
     header_cut_x = max(min_cut, min(max_cut, header_cut_x))
 
     raw_hdr = strip[:, :header_cut_x].copy()
@@ -650,11 +661,12 @@ def extract_clef_key_header(
 
     header_img = np.concatenate([raw_hdr, spacer], axis=1)
     log.debug(
-        "Extracted clef/key header: cut_x=%d (b0=%d, b1=%d, fifths=%d, first_body_x=%s) -> %dx%d",
+        "Extracted clef/key header: cut_x=%d (b0=%d, b1=%d, fifths=%d, last_hx=%s, first_bx=%s) -> %dx%d",
         header_cut_x,
         b0_x,
         b1_x,
         key_fifths,
+        f"{last_header_x:.1f}" if last_header_x is not None else "None",
         f"{first_body_x:.1f}" if first_body_x is not None else "None",
         header_img.shape[1],
         header_img.shape[0],
@@ -664,10 +676,6 @@ def extract_clef_key_header(
 
 def _is_barline_token(rhythm: str) -> bool:
     return "barline" in rhythm or "repeat" in rhythm
-
-
-def _is_special_barline(rhythm: str) -> bool:
-    return _is_barline_token(rhythm) and rhythm != "barline"
 
 
 def _add_slur_mark(sym: Any, mark: str) -> None:
@@ -683,22 +691,162 @@ def _add_slur_mark(sym: Any, mark: str) -> None:
     sym.slur = "_".join(sorted(parts))
 
 
-def _trim_chunk_to_measure_count(
-    symbols: Sequence[Any], expected_measures: int
-) -> list[Any]:
-    """Keep symbols up through the ``expected_measures``-th closing barline."""
-    if expected_measures <= 0:
-        return list(symbols)
-    out: list[Any] = []
-    bars_seen = 0
+def _strip_chunk_header(
+    symbols: Sequence[Any],
+    strip_xs: Sequence[Optional[float]],
+    keep_start: float,
+    unit: float,
+) -> tuple[list[Any], Optional[str]]:
+    """Strip synthetic ``[Clef + Key]`` header tokens and leading boundary barlines from ``Chunks 1..K-1``."""
+    leading_repeat: Optional[str] = None
+    first_body_idx: Optional[int] = None
+    n_syms = len(symbols)
+
+    for idx, sym in enumerate(symbols):
+        rhythm = str(getattr(sym, "rhythm", ""))
+        sx = strip_xs[idx] if idx < len(strip_xs) else None
+        valid_x = sx is not None and not math.isnan(sx)
+
+        if rhythm.startswith(("clef_", "keySignature_")):
+            if not valid_x or float(sx) < keep_start + 0.5 * unit:
+                continue
+        elif rhythm.startswith(("timeSignature", "dynamic_")):
+            if valid_x and float(sx) < keep_start - 0.5 * unit:
+                continue
+        elif _is_barline_token(rhythm):
+            if "repeat" in rhythm:
+                leading_repeat = rhythm
+            continue
+
+        first_body_idx = idx
+        break
+
+    if first_body_idx is None:
+        return [], leading_repeat
+
+    body: list[Any] = []
+    for idx in range(first_body_idx, n_syms):
+        sym = symbols[idx]
+        sx = strip_xs[idx] if idx < len(strip_xs) else None
+        rhythm = str(getattr(sym, "rhythm", ""))
+        if (
+            not body
+            and sx is not None
+            and not math.isnan(sx)
+            and float(sx) < keep_start - 0.5 * unit
+            and rhythm.startswith(("clef_", "keySignature_"))
+        ):
+            continue
+        body.append(sym)
+    return body, leading_repeat
+
+
+def _extract_musical_slots(symbols: Sequence[Any]) -> list[tuple[str, frozenset[str]]]:
+    """Normalize ``note_*``/``rest_*`` symbols (collapsing chords) for overlap matching."""
+    slots: list[tuple[str, frozenset[str]]] = []
+    in_chord = False
     for sym in symbols:
         rhythm = str(getattr(sym, "rhythm", ""))
-        out.append(sym)
-        if _is_barline_token(rhythm):
-            bars_seen += 1
-            if bars_seen >= expected_measures:
-                break
-    return out
+        if rhythm == "chord":
+            in_chord = True
+            continue
+        if rhythm.startswith(("note_", "rest_")) or rhythm == "measureRest":
+            pitch = str(getattr(sym, "pitch", "_"))
+            p_set = frozenset({pitch}) if pitch not in ("_", ".", "") else frozenset()
+            if in_chord and slots:
+                prev_r, prev_p = slots[-1]
+                slots[-1] = (prev_r, prev_p | p_set)
+            else:
+                slots.append((rhythm, p_set))
+            in_chord = False
+        else:
+            in_chord = False
+    return slots
+
+
+def _slots_match_prefix(
+    stub_slots: Sequence[tuple[str, frozenset[str]]],
+    next_bar_slots: Sequence[tuple[str, frozenset[str]]],
+    *,
+    allow_equal_len: bool,
+) -> bool:
+    """Return True when ``stub_slots`` matches the opening sequence of ``next_bar_slots``."""
+    if not stub_slots or not next_bar_slots:
+        return False
+    if len(stub_slots) > len(next_bar_slots):
+        return False
+    if not allow_equal_len and len(stub_slots) == len(next_bar_slots):
+        return False
+    for (r1, p1), (r2, p2) in zip(stub_slots, next_bar_slots):
+        if r1 != r2:
+            return False
+        if p1 and p2 and not (p1 & p2):
+            return False
+    return True
+
+
+def _trim_chunk_overlap(
+    body: Sequence[Any],
+    next_body: Sequence[Any],
+    expected_bars: int,
+) -> list[Any]:
+    """Trim right-context overlap from a non-final chunk via coordinate-free sequence matching."""
+    bar_idxs = [i for i, sym in enumerate(body) if _is_barline_token(str(getattr(sym, "rhythm", "")))]
+    if not bar_idxs:
+        return list(body)
+
+    first_next_bar = next(
+        (i for i, sym in enumerate(next_body) if _is_barline_token(str(getattr(sym, "rhythm", "")))),
+        len(next_body),
+    )
+    next_bar_slots = _extract_musical_slots(next_body[:first_next_bar])
+
+    cut_end = bar_idxs[-1] + 1
+    while len(bar_idxs) >= 2:
+        b_prev = bar_idxs[-2]
+        b_last = bar_idxs[-1]
+        stub = body[b_prev + 1 : b_last]
+        stub_slots = _extract_musical_slots(stub)
+        excess_bars = expected_bars > 0 and len(bar_idxs) > expected_bars
+        is_empty_stub = len(stub_slots) == 0
+        is_prefix_overlap = _slots_match_prefix(
+            stub_slots,
+            next_bar_slots,
+            allow_equal_len=excess_bars,
+        )
+        if is_empty_stub or is_prefix_overlap or excess_bars:
+            log.debug(
+                "Trimmed overlap stub at barline %d/%d (expected_bars=%d, empty=%s, prefix=%s, excess=%s, stub=%s)",
+                len(bar_idxs) - 1,
+                len(bar_idxs),
+                expected_bars,
+                is_empty_stub,
+                is_prefix_overlap,
+                excess_bars,
+                [(r, sorted(p)) for r, p in stub_slots],
+            )
+            bar_idxs.pop()
+            cut_end = b_prev + 1
+        else:
+            break
+    return list(body[:cut_end])
+
+
+def _strip_trailing_cautionary_metadata(symbols: list[Any]) -> list[Any]:
+    """Drop trailing cautionary-only tokens after the final barline with no music in the bar."""
+    last_bar_idx = -1
+    for i, sym in enumerate(symbols):
+        if _is_barline_token(str(getattr(sym, "rhythm", ""))):
+            last_bar_idx = i
+    if last_bar_idx < 0 or last_bar_idx == len(symbols) - 1:
+        return symbols
+    trailing = symbols[last_bar_idx + 1 :]
+    if all(
+        str(getattr(s, "rhythm", "")).startswith(("timeSignature", "keySignature_", "clef_"))
+        for s in trailing
+    ):
+        return symbols[: last_bar_idx + 1]
+    return symbols
 
 
 def stitch_chunk_symbols(
@@ -706,78 +854,59 @@ def stitch_chunk_symbols(
     strip_barlines_x: Sequence[int],
     unit: float,
 ) -> list[Any]:
-    """Concatenate decoded chunks deterministically, stripping synthetic headers and bridging ties."""
+    """Concatenate decoded chunks via coordinate-free sequence overlap stitching and tie bridging."""
     if not chunk_results:
         return []
 
-    stitched: list[Any] = []
     n_total_chunks = len(chunk_results)
 
-    for chunk_idx, (plan, symbols, strip_xs, _header_w) in enumerate(chunk_results):
-        n_meas = max(1, plan.measure_end - plan.measure_start)
+    # Pre-clean Chunks 1..K-1 so each Chunk k can validate its overlap stub against Chunk k+1's clean opening
+    prepared_bodies: list[list[Any]] = [list(chunk_results[0][1])]
+    leading_repeats: list[Optional[str]] = [None]
+    for plan, symbols, strip_xs, _header_w in chunk_results[1:]:
+        keep_start = float(plan.keep_x_start if plan.keep_x_start > 0 else plan.x_start)
+        body, leading_rep = _strip_chunk_header(symbols, strip_xs, keep_start, unit)
+        prepared_bodies.append(body)
+        leading_repeats.append(leading_rep)
+
+    stitched: list[Any] = []
+    for chunk_idx, (plan, _symbols, _strip_xs, _header_w) in enumerate(chunk_results):
+        n_segs = max(1, plan.measure_end - plan.measure_start)
+        body = prepared_bodies[chunk_idx]
+
+        if chunk_idx < n_total_chunks - 1:
+            kept = _trim_chunk_overlap(body, prepared_bodies[chunk_idx + 1], n_segs)
+        else:
+            kept = _strip_trailing_cautionary_metadata(list(body))
+
         if chunk_idx == 0:
-            kept = _trim_chunk_to_measure_count(symbols, n_meas) if n_total_chunks > 1 else list(symbols)
             stitched.extend(kept)
             continue
 
-        # For Chunks 1..K-1, drop synthetic header tokens and optional duplicate boundary barline
-        n_syms = len(symbols)
-        first_body_idx: Optional[int] = None
-        for idx, sym in enumerate(symbols):
-            rhythm = str(getattr(sym, "rhythm", ""))
-            sx = strip_xs[idx] if idx < len(strip_xs) else None
-            in_header_zone = sx is not None and not math.isnan(sx) and sx <= float(plan.x_start) + 0.35 * unit
-            is_header_meta = rhythm.startswith(("clef_", "keySignature_")) or (
-                rhythm.startswith(("timeSignature", "dynamic_")) and in_header_zone
-            )
-            if is_header_meta:
-                continue
-            if _is_barline_token(rhythm) and first_body_idx is None:
-                # Duplicate boundary barline after synthetic header -> merge style into closing barline of prev chunk
-                if _is_special_barline(rhythm):
-                    for prev in reversed(stitched):
-                        if _is_barline_token(str(getattr(prev, "rhythm", ""))):
-                            prev.rhythm = rhythm
-                            break
-                continue
-            first_body_idx = idx
-            break
-
-        if first_body_idx is None:
+        if not kept and leading_repeats[chunk_idx] is None:
             continue
-
-        tail: list[Any] = []
-        for idx in range(first_body_idx, n_syms):
-            sym = symbols[idx]
-            sx = strip_xs[idx] if idx < len(strip_xs) else None
-            # Guard against stray header tokens appearing right before real notes without coordinates
-            rhythm = str(getattr(sym, "rhythm", ""))
-            if (
-                not tail
-                and sx is not None
-                and not math.isnan(sx)
-                and sx < float(plan.x_start) - 0.5 * unit
-                and rhythm.startswith(("clef_", "keySignature_"))
-            ):
-                continue
-            tail.append(sym)
-
-        kept_tail = _trim_chunk_to_measure_count(tail, n_meas) if chunk_idx < n_total_chunks - 1 else tail
 
         if stitched and not _is_barline_token(str(getattr(stitched[-1], "rhythm", ""))):
             stitched.append(type(stitched[-1])("barline"))
             log.debug(
-                "Inserted missing boundary barline before chunk at measure %d",
+                "Inserted missing boundary barline before chunk at segment %d",
                 plan.measure_start,
             )
 
-        if plan.crosses_tie_left and stitched and kept_tail:
+        rep = leading_repeats[chunk_idx]
+        if rep is not None and stitched and _is_barline_token(str(getattr(stitched[-1], "rhythm", ""))):
+            stitched[-1].rhythm = rep
+
+        if not kept:
+            continue
+
+        if plan.crosses_tie_left and stitched and kept:
             prev_note = next(
                 (s for s in reversed(stitched) if str(getattr(s, "rhythm", "")).startswith("note_")),
                 None,
             )
             next_note = next(
-                (s for s in kept_tail if str(getattr(s, "rhythm", "")).startswith("note_")),
+                (s for s in kept if str(getattr(s, "rhythm", "")).startswith("note_")),
                 None,
             )
             if (
@@ -790,13 +919,13 @@ def stitch_chunk_symbols(
                 _add_slur_mark(prev_note, "slurStart")
                 _add_slur_mark(next_note, "slurStop")
                 log.debug(
-                    "Bridged cross-chunk tie at boundary measure %d (pitch=%s%s)",
+                    "Bridged cross-chunk tie at boundary segment %d (pitch=%s%s)",
                     plan.measure_start,
                     getattr(prev_note, "pitch", "?"),
                     getattr(prev_note, "lift", ""),
                 )
 
-        stitched.extend(kept_tail)
+        stitched.extend(kept)
 
     return stitched
 
@@ -892,19 +1021,12 @@ def parse_staff_image_chunked(
             dx, dy = dewarp.dewarp_point((pt[0] - float(top_left1[0]), pt[1] - float(top_left1[1])))
             return dx - float(top_left2[0]), dy - float(top_left2[1])
 
-        strip_barlines_x = [int(round(_page_to_strip((float(bx), cy_page))[0])) for bx in barlines_x]
-        # Clamp first/last gently if slightly beyond edges while enforcing strictly increasing interior
         strip_w = int(strip.shape[1])
-        strip_barlines_x[0] = max(0, min(strip_w - 2, strip_barlines_x[0]))
-        strip_barlines_x[-1] = max(strip_barlines_x[0] + 2, min(strip_w - 1, strip_barlines_x[-1]))
-        if any(
-            strip_barlines_x[k + 1] <= strip_barlines_x[k] + max(10, int(round(3.0 * unit)))
-            for k in range(len(strip_barlines_x) - 1)
-        ):
-            log.warning("Staff %02d non-monotonic projected barlines %s — falling back", index, strip_barlines_x)
-            return _fallback_parse_staff(
-                orig_parse_staff_image, debug, index, staff, image, regions, config, page_to_input_image
-            )
+        raw_strip_bls = [
+            max(0, min(strip_w - 1, int(round(_page_to_strip((float(bx), cy_page))[0]))))
+            for bx in barlines_x
+        ]
+        strip_barlines_x = sorted(set(raw_strip_bls))
 
         _pts_0 = _page_to_strip((float(barlines_x[0]), float(getattr(staff, "min_y", cy_page - 2.0 * unit))))
         _pts_1 = _page_to_strip((float(barlines_x[0]), float(getattr(staff, "max_y", cy_page + 2.0 * unit))))
@@ -917,9 +1039,7 @@ def parse_staff_image_chunked(
         five_line_h = float(max(8, staff_y1 - staff_y0))
         tie_flags = [
             _has_cross_barline_arc(strip, bx, staff_y0, staff_y1, unit)
-            if 0 < k < len(strip_barlines_x) - 1
-            else False
-            for k, bx in enumerate(strip_barlines_x)
+            for bx in strip_barlines_x
         ]
 
         plans = plan_staff_chunks(
@@ -962,10 +1082,12 @@ def parse_staff_image_chunked(
         plan0 = plans[0]
         chunk0_img = strip[:, plan0.x_start : plan0.x_end]
         syms0, xs0 = _decode_chunk(chunk0_img, plan0, 0)
+        hdr_b0 = strip_barlines_x[0] if strip_barlines_x[0] < int(round(4.0 * five_line_h)) else 0
+        hdr_b1 = int(plan0.keep_x_end if plan0.keep_x_end > 0 else plan0.x_end)
         header_img, header_w = extract_clef_key_header(
             strip,
-            strip_barlines_x[0],
-            strip_barlines_x[1],
+            hdr_b0,
+            hdr_b1,
             staff_y0,
             staff_y1,
             unit,
