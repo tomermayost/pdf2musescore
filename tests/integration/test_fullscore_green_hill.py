@@ -892,3 +892,48 @@ def test_fullscore_green_hill_rehearsal_b_sync():
         if bs.text in ("heavy-heavy", "light-light")
     ]
     assert spurious_bars == []
+
+
+def test_fullscore_green_hill_page32_barline_tie_harmony():
+    _require_prereqs()
+    cfg = _make_config("page32_harmony")
+    out_mscz = OUT / "page32_harmony" / "green_hill_p32.mscz"
+    out_mscz.parent.mkdir(parents=True, exist_ok=True)
+
+    result = Pipeline(cfg).convert(
+        GREEN_HILL_PDF,
+        out_mscz,
+        pages_spec="32",
+        options=ConversionOptions(render_dpi=500, full_score=True),
+    )
+    assert result == out_mscz and zipfile.is_zipfile(out_mscz)
+
+    staged_xml = _newest_staged_xml(cfg.work_dir)
+    root = ET.parse(staged_xml).getroot()
+    summary = verify_fullscore_invariants(root)
+    assert summary["parts"] == 29
+    assert summary["measures"] == 6
+    _assert_no_overfull_measures(root)
+
+    with zipfile.ZipFile(out_mscz) as z:
+        mscx = [n for n in z.namelist() if n.endswith(".mscx")][0]
+        mscx_root = ET.fromstring(z.read(mscx))
+
+    mscx_staves = mscx_root.findall("./Score/Staff")
+    # Measure 5 on page 32 (score M147) holds the A-major/A7 chord tied from M4 (M146) across chunk boundary:
+    # P09 (Eb A. Cl.)=C#3 (49), P20 (C Tbn. 1)=E4 (64), P23 (C Bar.)=C#3+E3 (49,52), P24 (C Basses)=A1+E2 (33,40)
+    expected_m5 = {
+        9: {49},
+        20: {64},
+        23: {49, 52},
+        24: {33, 40},
+    }
+    for pid, exp_pitches in expected_m5.items():
+        m5 = mscx_staves[pid - 1].findall("Measure")[4]
+        notes = m5.findall("./voice/Chord/Note")
+        got_pitches = {int(n.findtext("pitch")) for n in notes}
+        assert got_pitches == exp_pitches, f"P{pid:02d} M5 pitches {got_pitches} != {exp_pitches}"
+        assert all(
+            any(sp.get("type") == "Tie" and sp.find("prev") is not None for sp in n.findall("Spanner"))
+            for n in notes
+        ), f"P{pid:02d} M5 missing <Tie><prev> on tied chord note(s)"

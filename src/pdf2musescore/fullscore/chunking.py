@@ -789,11 +789,11 @@ def _trim_chunk_overlap(
     body: Sequence[Any],
     next_body: Sequence[Any],
     expected_bars: int,
-) -> list[Any]:
-    """Trim right-context overlap from a non-final chunk via coordinate-free sequence matching."""
+) -> tuple[list[Any], list[Any]]:
+    """Trim right-context overlap from a non-final chunk, returning ``(kept, trimmed_overlap)``."""
     bar_idxs = [i for i, sym in enumerate(body) if _is_barline_token(str(getattr(sym, "rhythm", "")))]
     if not bar_idxs:
-        return list(body)
+        return list(body), []
 
     first_next_bar = next(
         (i for i, sym in enumerate(next_body) if _is_barline_token(str(getattr(sym, "rhythm", "")))),
@@ -829,7 +829,127 @@ def _trim_chunk_overlap(
             cut_end = b_prev + 1
         else:
             break
-    return list(body[:cut_end])
+    return list(body[:cut_end]), list(body[cut_end:])
+
+
+def _last_chord_notes(symbols: Sequence[Any]) -> list[Any]:
+    """Return the final note/chord notes before any trailing barline, or ``[]`` if rest/empty."""
+    idx = len(symbols) - 1
+    while idx >= 0 and _is_barline_token(str(getattr(symbols[idx], "rhythm", ""))):
+        idx -= 1
+    while idx >= 0:
+        rhythm = str(getattr(symbols[idx], "rhythm", ""))
+        if _is_barline_token(rhythm) or rhythm.startswith("rest_") or rhythm == "measureRest":
+            return []
+        if rhythm.startswith("note_"):
+            break
+        idx -= 1
+    if idx < 0:
+        return []
+    chord_notes = [symbols[idx]]
+    while idx >= 2 and str(getattr(symbols[idx - 1], "rhythm", "")) == "chord":
+        prev_sym = symbols[idx - 2]
+        if not str(getattr(prev_sym, "rhythm", "")).startswith("note_"):
+            break
+        chord_notes.append(prev_sym)
+        idx -= 2
+    chord_notes.reverse()
+    return chord_notes
+
+
+def _first_chord_notes(symbols: Sequence[Any]) -> list[Any]:
+    """Return the opening note/chord notes before any barline, or ``[]`` if rest/empty."""
+    n = len(symbols)
+    idx = 0
+    while idx < n:
+        rhythm = str(getattr(symbols[idx], "rhythm", ""))
+        if _is_barline_token(rhythm) or rhythm.startswith("rest_") or rhythm == "measureRest":
+            return []
+        if rhythm.startswith("note_"):
+            break
+        idx += 1
+    if idx >= n:
+        return []
+    chord_notes = [symbols[idx]]
+    while idx + 2 < n and str(getattr(symbols[idx + 1], "rhythm", "")) == "chord":
+        next_sym = symbols[idx + 2]
+        if not str(getattr(next_sym, "rhythm", "")).startswith("note_"):
+            break
+        chord_notes.append(next_sym)
+        idx += 2
+    return chord_notes
+
+
+def _bridge_chunk_boundary_ties(
+    stitched: Sequence[Any],
+    kept: Sequence[Any],
+    prev_overlap: Sequence[Any],
+    crosses_tie_left: bool,
+    measure_start: int,
+) -> None:
+    """Propagate overlap-confirmed accidentals and bridge cross-chunk ties for single notes and chords."""
+    prev_chord = _last_chord_notes(stitched)
+    next_chord = _first_chord_notes(kept)
+    if not prev_chord or not next_chord:
+        return
+
+    stub_chord = _first_chord_notes(prev_overlap)
+    prev_by_pitch = {
+        str(getattr(s, "pitch", "")): s
+        for s in prev_chord
+        if str(getattr(s, "pitch", ".")) not in (".", "_", "")
+    }
+    next_by_pitch = {
+        str(getattr(s, "pitch", "")): s
+        for s in next_chord
+        if str(getattr(s, "pitch", ".")) not in (".", "_", "")
+    }
+    stub_by_pitch = {
+        str(getattr(s, "pitch", "")): s
+        for s in stub_chord
+        if str(getattr(s, "pitch", ".")) not in (".", "_", "")
+    }
+
+    matching_pitches = [p for p in next_by_pitch if p in prev_by_pitch]
+    if not matching_pitches:
+        return
+
+    has_tie_signal = crosses_tie_left or any(
+        "slurStart" in str(getattr(prev_by_pitch[p], "slur", "_"))
+        or "slurStop" in str(getattr(next_by_pitch[p], "slur", "_"))
+        or (p in stub_by_pitch and "slurStop" in str(getattr(stub_by_pitch[p], "slur", "_")))
+        for p in matching_pitches
+    )
+    if not has_tie_signal:
+        return
+
+    for p in matching_pitches:
+        pn = prev_by_pitch[p]
+        nn = next_by_pitch[p]
+        sn = stub_by_pitch.get(p)
+        if (
+            sn is not None
+            and getattr(sn, "lift", None) == getattr(pn, "lift", None)
+            and getattr(nn, "lift", None) != getattr(pn, "lift", None)
+        ):
+            log.debug(
+                "Carried overlap-confirmed tied accidental at boundary segment %d (pitch=%s: %s -> %s)",
+                measure_start,
+                p,
+                getattr(nn, "lift", None),
+                getattr(pn, "lift", None),
+            )
+            nn.lift = pn.lift
+
+        if getattr(pn, "lift", None) == getattr(nn, "lift", None):
+            _add_slur_mark(pn, "slurStart")
+            _add_slur_mark(nn, "slurStop")
+            log.debug(
+                "Bridged cross-chunk tie at boundary segment %d (pitch=%s%s)",
+                measure_start,
+                p,
+                getattr(pn, "lift", ""),
+            )
 
 
 def _strip_trailing_cautionary_metadata(symbols: list[Any]) -> list[Any]:
@@ -870,20 +990,24 @@ def stitch_chunk_symbols(
         leading_repeats.append(leading_rep)
 
     stitched: list[Any] = []
+    prev_overlap: list[Any] = []
     for chunk_idx, (plan, _symbols, _strip_xs, _header_w) in enumerate(chunk_results):
         n_segs = max(1, plan.measure_end - plan.measure_start)
         body = prepared_bodies[chunk_idx]
 
         if chunk_idx < n_total_chunks - 1:
-            kept = _trim_chunk_overlap(body, prepared_bodies[chunk_idx + 1], n_segs)
+            kept, cur_overlap = _trim_chunk_overlap(body, prepared_bodies[chunk_idx + 1], n_segs)
         else:
             kept = _strip_trailing_cautionary_metadata(list(body))
+            cur_overlap = []
 
         if chunk_idx == 0:
             stitched.extend(kept)
+            prev_overlap = cur_overlap
             continue
 
         if not kept and leading_repeats[chunk_idx] is None:
+            prev_overlap = cur_overlap
             continue
 
         if stitched and not _is_barline_token(str(getattr(stitched[-1], "rhythm", ""))):
@@ -898,34 +1022,19 @@ def stitch_chunk_symbols(
             stitched[-1].rhythm = rep
 
         if not kept:
+            prev_overlap = cur_overlap
             continue
 
-        if plan.crosses_tie_left and stitched and kept:
-            prev_note = next(
-                (s for s in reversed(stitched) if str(getattr(s, "rhythm", "")).startswith("note_")),
-                None,
-            )
-            next_note = next(
-                (s for s in kept if str(getattr(s, "rhythm", "")).startswith("note_")),
-                None,
-            )
-            if (
-                prev_note is not None
-                and next_note is not None
-                and getattr(prev_note, "pitch", ".") not in (".", "_")
-                and getattr(prev_note, "pitch", None) == getattr(next_note, "pitch", None)
-                and getattr(prev_note, "lift", None) == getattr(next_note, "lift", None)
-            ):
-                _add_slur_mark(prev_note, "slurStart")
-                _add_slur_mark(next_note, "slurStop")
-                log.debug(
-                    "Bridged cross-chunk tie at boundary segment %d (pitch=%s%s)",
-                    plan.measure_start,
-                    getattr(prev_note, "pitch", "?"),
-                    getattr(prev_note, "lift", ""),
-                )
+        _bridge_chunk_boundary_ties(
+            stitched,
+            kept,
+            prev_overlap,
+            plan.crosses_tie_left,
+            plan.measure_start,
+        )
 
         stitched.extend(kept)
+        prev_overlap = cur_overlap
 
     return stitched
 

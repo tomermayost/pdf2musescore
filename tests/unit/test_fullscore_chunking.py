@@ -824,6 +824,235 @@ def test_sequence_overlap_stitching_prefix_empty_stub_and_missed_barline():
     assert [s.rhythm for s in stitched_skip] == ["clef_G2", "note_1", "barline"]
 
 
+def test_overlap_confirmed_tied_accidentals_and_chord_tie_bridging():
+    p0 = StaffChunkPlan(0, 1, 0, 1400, 50.0, False, keep_x_start=0, keep_x_end=1100)
+    p1 = StaffChunkPlan(1, 2, 1105, 2200, 50.0, False, keep_x_start=1100, keep_x_end=2200)
+
+    # 1. Single-note overlap-confirmed accidental handoff (P09 A3# -> A3_, P20 E4_ -> E4b)
+    out_p09 = stitch_chunk_symbols(
+        [
+            (
+                p0,
+                [
+                    _FakeSym("clef_G2"),
+                    _FakeSym("keySignature_1"),
+                    _FakeSym("note_1.", "A3", lift="#", slur="slurStart"),
+                    _FakeSym("barline"),
+                    _FakeSym("note_1.", "A3", lift="#", slur="slurStop"),
+                    _FakeSym("barline"),
+                ],
+                [50.0, 90.0, 400.0, 1080.0, 1200.0, 1390.0],
+                0,
+            ),
+            (
+                p1,
+                [
+                    _FakeSym("clef_G2"),
+                    _FakeSym("keySignature_1"),
+                    _FakeSym("note_1.", "A3", lift="_", slur="slurStop"),
+                    _FakeSym("barline"),
+                ],
+                [1020.0, 1060.0, 1200.0, 2100.0],
+                120,
+            ),
+        ],
+        [30, 1100, 2100],
+        unit=12.0,
+    )
+    assert out_p09[-2].pitch == "A3" and out_p09[-2].lift == "#"
+    assert "slurStart" in out_p09[2].slur and "slurStop" in out_p09[-2].slur
+
+    # 2. Multi-note chord tied accidental handoff & tie bridging (P23 & P24 patterns, crosses_tie_left=False)
+    out_p23 = stitch_chunk_symbols(
+        [
+            (
+                p0,
+                [
+                    _FakeSym("clef_F4"),
+                    _FakeSym("keySignature_-2"),
+                    _FakeSym("note_1.", "E3", lift="_", slur="slurStart"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_1.", "C3", lift="#"),
+                    _FakeSym("barline"),
+                    _FakeSym("note_1.", "E3", lift="_", slur="slurStop"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_1.", "C3", lift="#"),
+                    _FakeSym("barline"),
+                ],
+                [50.0, 90.0, 400.0, None, 400.0, 1080.0, 1200.0, None, 1200.0, 1390.0],
+                0,
+            ),
+            (
+                p1,
+                [
+                    _FakeSym("clef_F4"),
+                    _FakeSym("keySignature_-2"),
+                    _FakeSym("note_1.", "E3", lift="b", slur="slurStop"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_1.", "C3", lift="_"),
+                    _FakeSym("barline"),
+                ],
+                [1020.0, 1060.0, 1200.0, None, 1200.0, 2100.0],
+                120,
+            ),
+        ],
+        [30, 1100, 2100],
+        unit=12.0,
+    )
+    # Chunk 1 opening chord [E3, C3] gets both lifts restored and both voices bridged
+    c1_notes = [s for s in out_p23 if s.rhythm == "note_1."][-2:]
+    c0_notes = [s for s in out_p23 if s.rhythm == "note_1."][:2]
+    assert [(n.pitch, n.lift) for n in c1_notes] == [("E3", "_"), ("C3", "#")]
+    assert all("slurStart" in n.slur for n in c0_notes)
+    assert all("slurStop" in n.slur for n in c1_notes)
+
+    # P24 pattern where Chunk 0 omitted slurStart/slurStop on chord, but Chunk 1 has slurStop on top voice
+    out_p24 = stitch_chunk_symbols(
+        [
+            (
+                p0,
+                [
+                    _FakeSym("clef_F4"),
+                    _FakeSym("keySignature_-2"),
+                    _FakeSym("note_1.", "E2", lift="_"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_1.", "A1", lift="_"),
+                    _FakeSym("barline"),
+                    _FakeSym("note_1.", "E2", lift="_"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_1.", "A1", lift="_"),
+                    _FakeSym("barline"),
+                ],
+                [50.0, 90.0, 400.0, None, 400.0, 1080.0, 1200.0, None, 1200.0, 1390.0],
+                0,
+            ),
+            (
+                p1,
+                [
+                    _FakeSym("clef_F4"),
+                    _FakeSym("keySignature_-2"),
+                    _FakeSym("note_1.", "E2", lift="b", slur="slurStop"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_1.", "A1", lift="b"),
+                    _FakeSym("barline"),
+                ],
+                [1020.0, 1060.0, 1200.0, None, 1200.0, 2100.0],
+                120,
+            ),
+        ],
+        [30, 1100, 2100],
+        unit=12.0,
+    )
+    c1_p24 = [s for s in out_p24 if s.rhythm == "note_1."][-2:]
+    assert [(n.pitch, n.lift) for n in c1_p24] == [("E2", "_"), ("A1", "_")]
+    assert all("slurStop" in n.slur for n in c1_p24)
+
+    # 3. Regression guards:
+    # (a) Genuine chromatic change across barline (overlap confirms NEW accidental) must NOT be overwritten
+    out_chrom = stitch_chunk_symbols(
+        [
+            (
+                p0,
+                [
+                    _FakeSym("clef_G2"),
+                    _FakeSym("note_1.", "C4", lift="#", slur="slurStart"),
+                    _FakeSym("barline"),
+                    _FakeSym("note_1.", "C4", lift="_", slur="slurStop"),
+                    _FakeSym("barline"),
+                ],
+                [50.0, 400.0, 1080.0, 1200.0, 1390.0],
+                0,
+            ),
+            (
+                p1,
+                [_FakeSym("clef_G2"), _FakeSym("note_1.", "C4", lift="_", slur="slurStop"), _FakeSym("barline")],
+                [1020.0, 1200.0, 2100.0],
+                120,
+            ),
+        ],
+        [30, 1100, 2100],
+        unit=12.0,
+    )
+    assert out_chrom[-2].lift == "_"
+
+    # (b) Repeated pitch with NO tie signal (not crosses_tie_left and no slur) -> untouched
+    out_notie = stitch_chunk_symbols(
+        [
+            (
+                p0,
+                [
+                    _FakeSym("clef_G2"),
+                    _FakeSym("note_4", "C4", lift="#"),
+                    _FakeSym("barline"),
+                    _FakeSym("note_4", "C4", lift="#"),
+                    _FakeSym("barline"),
+                ],
+                [50.0, 900.0, 1080.0, 1200.0, 1390.0],
+                0,
+            ),
+            (
+                p1,
+                [_FakeSym("clef_G2"), _FakeSym("note_4", "C4", lift="_"), _FakeSym("barline")],
+                [1020.0, 1200.0, 2100.0],
+                120,
+            ),
+        ],
+        [30, 1100, 2100],
+        unit=12.0,
+    )
+    assert out_notie[-2].lift == "_" and out_notie[-2].slur == "_"
+
+    # (c) Phrasing slur on a DIFFERENT moving voice does not falsely tie stationary pitch B3
+    out_voice_slur = stitch_chunk_symbols(
+        [
+            (
+                p0,
+                [
+                    _FakeSym("clef_G2"),
+                    _FakeSym("note_4", "G4", slur="slurStart"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_4", "B3"),
+                    _FakeSym("barline"),
+                ],
+                [50.0, 900.0, None, 900.0, 1080.0],
+                0,
+            ),
+            (
+                p1,
+                [
+                    _FakeSym("clef_G2"),
+                    _FakeSym("note_4", "A4", slur="slurStop"),
+                    _FakeSym("chord"),
+                    _FakeSym("note_4", "B3"),
+                    _FakeSym("barline"),
+                ],
+                [1020.0, 1200.0, None, 1200.0, 2100.0],
+                120,
+            ),
+        ],
+        [30, 1100, 2100],
+        unit=12.0,
+    )
+    b3_notes = [s for s in out_voice_slur if s.pitch == "B3"]
+    assert all(n.slur == "_" for n in b3_notes)
+
+    # (d) Rest next to barline produces no tie
+    out_rest = stitch_chunk_symbols(
+        [
+            (p0, [_FakeSym("clef_G2"), _FakeSym("rest_1"), _FakeSym("barline")], [50.0, 400.0, 1080.0], 0),
+            (
+                StaffChunkPlan(1, 2, 1105, 2200, 50.0, True, keep_x_start=1100, keep_x_end=2200),
+                [_FakeSym("clef_G2"), _FakeSym("rest_4"), _FakeSym("note_4", "C4"), _FakeSym("barline")],
+                [1020.0, 1150.0, 1400.0, 2100.0],
+                120,
+            ),
+        ],
+        [30, 1100, 2100],
+        unit=12.0,
+    )
+    assert out_rest[-2].slur == "_"
+
+
 def test_parse_staff_image_chunked_orchestration_and_fallbacks():
     img, staves = _draw_synthetic_score(
         width=3600,
